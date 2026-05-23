@@ -20,4 +20,5 @@ private/
 # Local agent/tool runtime output.
 orchestrator/
 ops/autonomy/.autokeel.lock
+ops/autonomy/*.tmp
 *.log

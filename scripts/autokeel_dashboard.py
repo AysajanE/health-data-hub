@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import html
 import json
 from pathlib import Path
@@ -28,6 +29,8 @@ def render(root: Path) -> str:
     slices = read_json(root / "ops/autonomy/slices.json", [])
     failures = read_jsonl(root / "ops/autonomy/failure_ledger.jsonl")
     events = read_jsonl(root / "ops/autonomy/events.jsonl")[-25:]
+    counts = Counter(str(item.get("status", "unknown")) for item in slices)
+    count_rows = "\n".join(f"<li>{html.escape(status)}: {count}</li>" for status, count in sorted(counts.items()))
     rows = "\n".join(
         f"<tr><td>{html.escape(item.get('id', ''))}</td><td>{html.escape(item.get('name', ''))}</td><td>{html.escape(item.get('status', ''))}</td></tr>"
         for item in slices
@@ -54,6 +57,8 @@ code, pre {{ background: #f6f8fa; padding: 2px 4px; }}
 <h1>AutoKeel Dashboard</h1>
 <h2>State</h2>
 <pre>{html.escape(json.dumps(state, indent=2, sort_keys=True))}</pre>
+<h2>Status Counts</h2>
+<ul>{count_rows or '<li>none</li>'}</ul>
 <h2>Slices</h2>
 <table><tr><th>ID</th><th>Name</th><th>Status</th></tr>{rows}</table>
 <h2>Open Failures</h2>

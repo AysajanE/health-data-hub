@@ -22,6 +22,7 @@ if __package__ in {None, ""}:
 
 from scripts.check_autonomous_review_exists import check_review
 from scripts.check_no_tracked_data import check_no_tracked_data
+from scripts.validate_playbook_autonomous import validate_playbook
 
 
 CRITICAL_FAILURES = {
@@ -83,6 +84,22 @@ def scan_ui_language(root: Path) -> list[str]:
     return errors
 
 
+def command_allowed(command: str) -> bool:
+    argv = shlex.split(command)
+    if len(argv) >= 4 and argv[:3] == ["python", "-m", "pytest"]:
+        return True
+    if len(argv) >= 2 and argv[0] == "python" and argv[1].startswith("scripts/"):
+        return True
+    if len(argv) >= 3 and argv[:2] == ["python", "-m"] and argv[2].startswith("scripts"):
+        return True
+    return False
+
+
+def git_verify(root: Path, *argv: str) -> bool:
+    proc = subprocess.run(["git", *argv], cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    return proc.returncode == 0
+
+
 def run_acceptance(root: Path, command: str, timeout: int) -> dict[str, Any]:
     if "mark-manual-gate" in command:
         return {
@@ -90,6 +107,13 @@ def run_acceptance(root: Path, command: str, timeout: int) -> dict[str, Any]:
             "exit_code": 99,
             "stdout_tail": "",
             "stderr_tail": "forbidden manual-gate command",
+        }
+    if not command_allowed(command):
+        return {
+            "command": command,
+            "exit_code": 98,
+            "stdout_tail": "",
+            "stderr_tail": "acceptance command is not allowlisted",
         }
 
     try:
@@ -138,6 +162,26 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
         if item.get("status") == "complete" and not item.get("run_id"):
             warnings.append(f"completed slice has no run_id recorded: {slice_id}")
 
+        if item.get("status") == "complete":
+            ship_branch = item.get("ship_branch")
+            ship_commit = item.get("ship_commit")
+            if not ship_branch:
+                errors.append(f"{slice_id}: completed slice missing ship_branch")
+            elif not git_verify(root, "rev-parse", "--verify", str(ship_branch)):
+                errors.append(f"{slice_id}: ship_branch is not reachable: {ship_branch}")
+            if not ship_commit:
+                errors.append(f"{slice_id}: completed slice missing ship_commit")
+            elif not git_verify(root, "cat-file", "-e", str(ship_commit)):
+                errors.append(f"{slice_id}: ship_commit is not reachable: {ship_commit}")
+
+            playbook_rel = item.get("playbook")
+            if playbook_rel:
+                playbook_report = validate_playbook(root / playbook_rel, risk=item.get("risk"))
+                if playbook_report["status"] != "ok":
+                    errors.extend([f"{slice_id}: playbook validation failed: {err}" for err in playbook_report["errors"]])
+            else:
+                errors.append(f"{slice_id}: completed slice has no playbook path")
+
         for rel in item.get("deliverables", []):
             if not (root / rel).exists():
                 errors.append(f"{slice_id}: missing deliverable: {rel}")
@@ -149,6 +193,10 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
             for command in item.get("acceptance", []):
                 if "verify_v1" in command:
                     warnings.append(f"{slice_id}: skipped recursive verify_v1 command: {command}")
+                    continue
+                if not command_allowed(command):
+                    errors.append(f"{slice_id}: acceptance command is not allowlisted: {command}")
+                    command_results.append({"slice": slice_id, "command": command, "exit_code": 98, "stderr_tail": "acceptance command is not allowlisted"})
                     continue
                 result = run_acceptance(root, command, timeout=timeout)
                 result["slice"] = slice_id

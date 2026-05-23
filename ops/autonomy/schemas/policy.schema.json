@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AutoKeel policy",
   "type": "object",
-  "required": ["mode", "keel_root", "product_repo", "compile", "manual_gates", "external_evidence", "health_data", "loop", "slice_statuses"],
+  "required": ["mode", "keel_root", "product_repo", "compile", "autoplan", "manual_gates", "external_evidence", "health_data", "loop", "slice_statuses"],
   "properties": {
     "mode": {"const": "autonomous_zero_human"},
     "keel_root": {"type": "string"},
@@ -17,6 +17,8 @@
       }
     },
     "manual_gates": {"type": "object"},
+    "autoplan": {"type": "object"},
+    "lanes": {"type": "object"},
     "external_evidence": {"type": "object"},
     "health_data": {"type": "object"},
     "loop": {"type": "object"},

@@ -15,7 +15,8 @@ from typing import Any
 FORBIDDEN_PATH_RE = re.compile(
     r"(^|/)(data|private)(/|$)|(^|/)\.env($|\.)|"
     r"\.(duckdb|duckdb\.wal|sqlite|sqlite3|parquet)$|"
-    r"(^|/)(raw|secrets|quarantine|snapshots)(/|$)",
+    r"(^|/)(raw|secrets|quarantine|snapshots)(/|$)|"
+    r"(^|/)ops/autonomy/\.autokeel\.lock$",
     re.I,
 )
 
@@ -28,6 +29,8 @@ REQUIRED_GITIGNORE_PATTERNS = [
     "data/",
     "private/",
     ".env",
+    "ops/autonomy/.autokeel.lock",
+    "ops/autonomy/*.tmp",
 ]
 
 
@@ -54,16 +57,30 @@ def git_ls_files(root: Path) -> tuple[list[str], str | None]:
     return [part.decode("utf-8") for part in proc.stdout.split(b"\0") if part], None
 
 
+def git_untracked_files(root: Path) -> list[str]:
+    proc = run_git(root, ["status", "--porcelain", "-z", "--untracked-files=all"])
+    if proc.returncode != 0:
+        return []
+    paths: list[str] = []
+    for part in proc.stdout.split(b"\0"):
+        if not part:
+            continue
+        text = part.decode("utf-8", errors="replace")
+        if text.startswith("?? "):
+            paths.append(text[3:])
+    return paths
+
+
 def check_gitignore(root: Path) -> list[str]:
-    warnings: list[str] = []
+    errors: list[str] = []
     gitignore = root / ".gitignore"
     if not gitignore.exists():
         return ["missing .gitignore"]
     text = gitignore.read_text(encoding="utf-8", errors="replace")
     for pattern in REQUIRED_GITIGNORE_PATTERNS:
         if pattern not in text:
-            warnings.append(f".gitignore should include {pattern}")
-    return warnings
+            errors.append(f".gitignore must include {pattern}")
+    return errors
 
 
 def check_no_tracked_data(root: Path) -> dict[str, Any]:
@@ -81,7 +98,7 @@ def check_no_tracked_data(root: Path) -> dict[str, Any]:
     if git_error:
         errors.append(f"git ls-files failed: {git_error}")
 
-    warnings.extend(check_gitignore(root))
+    errors.extend(check_gitignore(root))
 
     for rel in tracked:
         if FORBIDDEN_PATH_RE.search(rel):
@@ -99,6 +116,10 @@ def check_no_tracked_data(root: Path) -> dict[str, Any]:
 
         if SECRET_CONTENT_RE.search(text):
             errors.append(f"tracked file appears to contain a secret/token value: {rel}")
+
+    for rel in git_untracked_files(root):
+        if FORBIDDEN_PATH_RE.search(rel):
+            errors.append(f"untracked sensitive path is present: {rel}")
 
     return {"status": "ok" if not errors else "error", "errors": errors, "warnings": warnings}
 

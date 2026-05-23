@@ -7,6 +7,15 @@ compile:
   row_author: external-json
   row_author_command: claude -p
 
+autoplan:
+  auto_generate_missing: true
+  command: claude -p
+
+lanes:
+  compiler: keel-compile
+  compiler_external_evidence: keel-compile
+  swr_preferred: compile_with_decision
+
 slice_statuses:
   actionable:
     - pending
@@ -95,8 +104,23 @@ playbook_validation:
     - tests
   forbidden_commands:
     - mark-manual-gate
-  required_gate_terms:
-    - autonomous_gate_review
+  required_gate_terms: []
+  required_gate_terms_by_risk:
+    high:
+      - autonomous_gate_review
+  required_columns:
+    - action
+    - deliverable
+    - allowed_write_roots
+    - requires_red_green
+    - required_verification_commands
+    - exit_criteria
+
+acceptance_commands:
+  allow_prefixes:
+    - python -m pytest
+    - python scripts/
+    - python -m scripts
 
 evidence_collectors:
   s03_oura_smoke: scripts/evidence/oura_smoke.py

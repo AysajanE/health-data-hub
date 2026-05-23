@@ -10,11 +10,18 @@ gates, records evidence/failures, and only marks a slice complete after
 
 ```bash
 python -m ops.autonomy.autokeel --doctor
+python -m ops.autonomy.autokeel --doctor --strict
 python -m ops.autonomy.autokeel --once --dry-run
+python -m ops.autonomy.autokeel --next-slice
 python -m ops.autonomy.autokeel --status --failures
 python -m ops.autonomy.autokeel --replay-events
+python -m ops.autonomy.autokeel --unblock-evidence S03 private/evidence/S03/request
 python -m ops.autonomy.autokeel --close-failure S01 manual_gate_leak --closure-evidence docs/reviews/example.md --closure-note "Reviewed replacement autonomous gate evidence."
 ```
+
+Missing autoplans are generated through the configured `autoplan.command`.
+When a slice enters `replan_required`, AutoKeel archives the existing playbook
+before recompiling so the same stale artifact is not reused.
 
 ## Safety Rules
 

@@ -11,9 +11,9 @@ VALID_PLAYBOOK = """# Playbook
 
 ## Ordered Execution Plan
 
-| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | manual_gate | external_check |
-|---|---|---|---|---|---|---|---|
-| 01 | Create DuckDB v1 schema file | src/db/schema.sql; tests/warehouse/test_schema.py | src/db; tests/warehouse | true | python -m pytest tests/warehouse -q | none | none |
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Create DuckDB v1 schema file | src/db/schema.sql; tests/warehouse/test_schema.py | src/db; tests/warehouse | true | python -m pytest tests/warehouse -q | schema tests pass | none | none |
 """
 
 

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def copy_autonomy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "ops", dst / "ops")
     shutil.copytree(ROOT / "scripts", dst / "scripts")
-    (dst / ".gitignore").write_text("data/\nprivate/\n.env\n", encoding="utf-8")
+    (dst / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
 
 
 class AutoKeelTests(unittest.TestCase):

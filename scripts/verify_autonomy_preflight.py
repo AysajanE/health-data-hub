@@ -35,7 +35,7 @@ def validate_policy_shape(root: Path) -> list[str]:
         policy = load_policy(root / "ops" / "autonomy" / "policy.yaml")
     except Exception as exc:
         return [f"policy.yaml does not parse: {exc}"]
-    required = ("mode", "keel_root", "manual_gates", "external_evidence", "health_data", "loop", "compile", "slice_statuses")
+    required = ("mode", "keel_root", "manual_gates", "external_evidence", "health_data", "loop", "compile", "autoplan", "slice_statuses")
     for key in required:
         if key not in policy:
             errors.append(f"policy.yaml missing required key: {key}")
@@ -43,6 +43,55 @@ def validate_policy_shape(root: Path) -> list[str]:
     for key in ("design_doc", "row_author", "row_author_command"):
         if key not in compile_policy:
             errors.append(f"policy.yaml compile missing required key: {key}")
+    return errors
+
+
+def validate_schema_minimal(instance: Any, schema: dict[str, Any], label: str) -> list[str]:
+    errors: list[str] = []
+    expected_type = schema.get("type")
+    if expected_type == "object" and not isinstance(instance, dict):
+        return [f"{label} must be an object"]
+    if expected_type == "array" and not isinstance(instance, list):
+        return [f"{label} must be an array"]
+    if isinstance(instance, dict):
+        for key in schema.get("required", []):
+            if key not in instance:
+                errors.append(f"{label} missing required schema key: {key}")
+    if isinstance(instance, list) and isinstance(schema.get("items"), dict):
+        item_schema = schema["items"]
+        required = item_schema.get("required", [])
+        for index, item in enumerate(instance):
+            if not isinstance(item, dict):
+                errors.append(f"{label}[{index}] must be an object")
+                continue
+            for key in required:
+                if key not in item:
+                    errors.append(f"{label}[{index}] missing required schema key: {key}")
+    return errors
+
+
+def validate_schema_files(root: Path) -> list[str]:
+    errors: list[str] = []
+    schema_dir = root / "ops" / "autonomy" / "schemas"
+    targets = [
+        ("policy.yaml", load_policy(root / "ops" / "autonomy" / "policy.yaml"), schema_dir / "policy.schema.json"),
+        ("slices.json", read_json(root / "ops" / "autonomy" / "slices.json", []), schema_dir / "slices.schema.json"),
+        ("autonomy_state.json", read_json(root / "ops" / "autonomy" / "autonomy_state.json", {}), schema_dir / "state.schema.json"),
+    ]
+    for label, instance, schema_path in targets:
+        if not schema_path.exists():
+            errors.append(f"missing schema file: {schema_path.relative_to(root)}")
+            continue
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        try:
+            import jsonschema  # type: ignore
+        except ImportError:
+            errors.extend(validate_schema_minimal(instance, schema, label))
+        else:
+            try:
+                jsonschema.validate(instance=instance, schema=schema)
+            except jsonschema.ValidationError as exc:
+                errors.append(f"{label} schema validation failed: {exc.message}")
     return errors
 
 
@@ -99,6 +148,7 @@ def preflight(root: Path, keel_root: Path, strict_tools: bool = False, run_keel_
 
     errors.extend(validate_policy_shape(root))
     errors.extend(validate_slices_shape(root))
+    errors.extend(validate_schema_files(root))
 
     in_git = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=str(root), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     checks["git_repo"] = in_git.returncode == 0 and in_git.stdout.strip() == "true"

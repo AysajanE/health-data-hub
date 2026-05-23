@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,19 @@ def close_failure(
 
     if closed:
         write_jsonl_atomic(ledger, rows)
+        event_path = root / "ops" / "autonomy" / "events.jsonl"
+        event = {
+            "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "event": "failure_closed",
+            "slice": slice_id,
+            "details": {
+                "failure_class": failure_class,
+                "closed": closed,
+                "closure_evidence": str(evidence_path.relative_to(root)),
+            },
+        }
+        with event_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, sort_keys=True) + "\n")
     return {"status": "ok" if closed else "error", "errors": [] if closed else ["no matching open failure"], "closed": closed}
 
 

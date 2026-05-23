@@ -38,6 +38,17 @@ def load_slices(root: Path) -> list[dict[str, Any]]:
     return json.loads((root / "ops" / "autonomy" / "slices.json").read_text(encoding="utf-8"))
 
 
+def command_allowed(command: str) -> bool:
+    argv = shlex.split(command)
+    if len(argv) >= 4 and argv[:3] == ["python", "-m", "pytest"]:
+        return True
+    if len(argv) >= 2 and argv[0] == "python" and argv[1].startswith("scripts/"):
+        return True
+    if len(argv) >= 3 and argv[:2] == ["python", "-m"] and argv[2].startswith("scripts"):
+        return True
+    return False
+
+
 def run_command(root: Path, command: str, timeout: int) -> dict[str, Any]:
     if "mark-manual-gate" in command:
         return {
@@ -45,6 +56,13 @@ def run_command(root: Path, command: str, timeout: int) -> dict[str, Any]:
             "exit_code": 99,
             "stdout_tail": "",
             "stderr_tail": "forbidden manual-gate command",
+        }
+    if not command_allowed(command):
+        return {
+            "command": command,
+            "exit_code": 98,
+            "stdout_tail": "",
+            "stderr_tail": "acceptance command is not allowlisted",
         }
 
     try:
@@ -93,7 +111,7 @@ def verify_slice(
     playbook_rel = target.get("playbook")
     if playbook_rel:
         playbook = root / playbook_rel
-        report = validate_playbook(playbook)
+        report = validate_playbook(playbook, risk=target.get("risk"))
         if report["status"] != "ok":
             errors.extend([f"playbook validation failed: {err}" for err in report["errors"]])
             warnings.extend([f"playbook warning: {warn}" for warn in report.get("warnings", [])])
@@ -112,6 +130,10 @@ def verify_slice(
     errors.extend(review["errors"])
 
     for command in target.get("acceptance", []):
+        if not command_allowed(command):
+            errors.append(f"acceptance command is not allowlisted: {command}")
+            command_results.append({"command": command, "exit_code": 98, "stderr_tail": "acceptance command is not allowlisted"})
+            continue
         if dry_run:
             command_results.append({"command": command, "exit_code": 0, "dry_run": True})
             continue

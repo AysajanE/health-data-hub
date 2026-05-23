@@ -23,8 +23,8 @@ def collect(root: Path, offline: bool = False) -> dict[str, object]:
         return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": ["missing OURA_ACCESS_TOKEN"]}
 
     if offline:
-        path = write_report(root, "oura_smoke", {"status": "ready", "network": "skipped", "env": redact_env({"OURA_ACCESS_TOKEN": token})})
-        return {"status": "ok", "evidence": str(path.relative_to(root)), "errors": []}
+        path = write_report(root, "oura_smoke", {"status": "blocked_external", "offline": True, "network": "skipped", "env": redact_env({"OURA_ACCESS_TOKEN": token})})
+        return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": ["offline mode cannot satisfy tripwire evidence"]}
 
     request = urllib.request.Request(
         "https://api.ouraring.com/v2/usercollection/personal_info",

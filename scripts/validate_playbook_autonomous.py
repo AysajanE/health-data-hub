@@ -38,6 +38,14 @@ V2_SCOPE_PATTERNS = (
     r"\bdinner timing\b",
 )
 CODE_PATH_PREFIXES = ("src/", "app/", "scripts/", "tests/")
+DEFAULT_REQUIRED_COLUMNS = {
+    "action",
+    "deliverable",
+    "allowed_write_roots",
+    "requires_red_green",
+    "required_verification_commands",
+    "exit_criteria",
+}
 
 
 def load_validation_policy(playbook_path: Path, explicit_policy: Path | None = None) -> dict[str, Any]:
@@ -119,7 +127,7 @@ def has_code_deliverable(row: dict[str, str]) -> bool:
     return any(prefix in combined for prefix in CODE_PATH_PREFIXES)
 
 
-def validate_playbook(path: Path, policy_path: Path | None = None) -> dict[str, Any]:
+def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | None = None) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
     if not path.exists():
@@ -128,14 +136,22 @@ def validate_playbook(path: Path, policy_path: Path | None = None) -> dict[str, 
     profile = load_validation_policy(path, policy_path)
     forbidden_commands = tuple(dict.fromkeys([*FORBIDDEN_COMMAND_PATTERNS, *profile.get("forbidden_commands", [])]))
     broad_roots = set(BROAD_ROOTS) | set(profile.get("forbidden_roots", []))
-    ui_banned_patterns = tuple([*UI_BANNED_PATTERNS, *[re.escape(term) for term in profile.get("banned_language", [])]])
+    banned_language = [str(term).lower() for term in profile.get("banned_language", [])]
+    ui_banned_patterns = tuple(UI_BANNED_PATTERNS)
     required_gate_terms = [str(term).lower() for term in profile.get("required_gate_terms", [])]
+    required_by_risk = profile.get("required_gate_terms_by_risk", {})
+    if risk and isinstance(required_by_risk, dict):
+        required_gate_terms.extend(str(term).lower() for term in required_by_risk.get(risk, []))
+    required_columns = set(profile.get("required_columns", [])) or DEFAULT_REQUIRED_COLUMNS
 
     text = path.read_text(encoding="utf-8")
     lowered = text.lower()
     for pattern in forbidden_commands:
         if pattern in lowered:
             errors.append(f"forbidden command in playbook: {pattern}")
+    for term in banned_language:
+        if term and term in lowered and f"not {term}" not in lowered:
+            errors.append(f"forbidden autonomous playbook language: {term}")
     for term in required_gate_terms:
         if term and term not in lowered:
             errors.append(f"playbook missing required autonomous gate term: {term}")
@@ -151,6 +167,10 @@ def validate_playbook(path: Path, policy_path: Path | None = None) -> dict[str, 
         errors.append("no markdown_playbook_v1 execution rows found")
 
     for idx, row in enumerate(candidate_rows, start=1):
+        for column in sorted(required_columns):
+            if column not in row or is_empty(row.get(column, "")):
+                errors.append(f"row {idx}: required column is missing or empty: {column}")
+
         manual_gate_value = row.get("manual_gate", "")
         if manual_gate_value and not is_empty(manual_gate_value):
             errors.append(f"row {idx}: active manual_gate is forbidden in autonomous mode")
@@ -179,7 +199,10 @@ def validate_playbook(path: Path, policy_path: Path | None = None) -> dict[str, 
 
         external = (row.get("external_check") or "").strip().lower()
         if external and external not in EMPTY_VALUES and "private/evidence" not in row_text(row) and "docs/evidence" not in row_text(row):
-            warnings.append(f"row {idx}: external_check should name private/evidence or docs/evidence local path")
+            if "blocked_external" in row_text(row).lower():
+                warnings.append(f"row {idx}: external_check expects blocked_external without local evidence path")
+            else:
+                errors.append(f"row {idx}: external_check must name private/evidence or docs/evidence local path")
 
         if is_ui_row(row):
             for pattern in ui_banned_patterns:
@@ -198,9 +221,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate an autonomous Keel playbook.")
     parser.add_argument("playbook")
     parser.add_argument("--policy")
+    parser.add_argument("--risk")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    report = validate_playbook(Path(args.playbook), policy_path=Path(args.policy) if args.policy else None)
+    report = validate_playbook(Path(args.playbook), policy_path=Path(args.policy) if args.policy else None, risk=args.risk)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:

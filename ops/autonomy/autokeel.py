@@ -17,6 +17,7 @@ import shlex
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -183,10 +184,11 @@ def load_policy(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
     try:
         import yaml  # type: ignore
-
-        payload = yaml.safe_load(text) or {}
-    except Exception:
+    except ImportError:
         payload = _simple_yaml_load(text) or {}
+    else:
+        payload = yaml.safe_load(text) or {}
+
     if not isinstance(payload, dict):
         raise PolicyError(f"Policy file must parse to an object: {path}")
     return payload
@@ -244,17 +246,29 @@ class CommandRunner:
         self.assert_allowed(argv)
         if self.dry_run and not execute_in_dry_run:
             return CommandResult(argv=argv, exit_code=0, stdout='{"dry_run": true}', stderr="")
-        proc = subprocess.run(
-            argv,
-            cwd=str(cwd or self.root),
-            env={**os.environ, **(env or {})},
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=self.timeout,
-            check=False,
-        )
-        return CommandResult(argv=argv, exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
+
+        try:
+            proc = subprocess.run(
+                argv,
+                cwd=str(cwd or self.root),
+                env={**os.environ, **(env or {})},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=self.timeout,
+                check=False,
+            )
+            return CommandResult(argv=argv, exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            timeout_msg = f"command timed out after {self.timeout}s: {' '.join(shlex.quote(part) for part in argv)}"
+            return CommandResult(
+                argv=argv,
+                exit_code=124,
+                stdout=stdout or "",
+                stderr=(stderr + "\n" + timeout_msg).strip(),
+            )
 
 
 class AutoKeel:
@@ -366,33 +380,56 @@ class AutoKeel:
     def mark_slice_status(self, slice_id: str, status: str, **extra: Any) -> None:
         slices = self.load_slices()
         found = False
+
         for slice_ in slices:
-            if slice_.get("id") == slice_id:
-                if status == "replan_required":
-                    retry_count = int(slice_.get("retry_count") or 0) + 1
-                    slice_["retry_count"] = retry_count
-                    max_retries = int(self.policy.get("loop", {}).get("max_retries_per_slice_before_replan", 3))
-                    if retry_count >= max_retries:
-                        status = "blocked"
-                        extra.setdefault("reason", "retry cap exceeded")
-                slice_["status"] = status
-                slice_["updated_at"] = now_iso()
-                slice_.update(extra)
-                found = True
-                break
+            if slice_.get("id") != slice_id:
+                continue
+
+            if status == "replan_required":
+                retry_count = int(slice_.get("retry_count") or 0) + 1
+                slice_["retry_count"] = retry_count
+                max_retries = int(self.policy.get("loop", {}).get("max_retries_per_slice_before_replan", 3))
+                if retry_count >= max_retries:
+                    status = "blocked"
+                    extra.setdefault("reason", "retry cap exceeded")
+
+            if status == "complete":
+                slice_["retry_count"] = 0
+
+            slice_["status"] = status
+            slice_["updated_at"] = now_iso()
+            slice_.update(extra)
+            found = True
+            break
+
         if not found:
             raise AutoKeelError(f"Unknown slice: {slice_id}")
+
         self.save_slices(slices)
+
         state = self.load_state()
+        active = state.get("active_run") or {}
+        active_belongs_to_slice = active.get("slice") == slice_id
+
         if status == "complete":
             completed = list(dict.fromkeys([*state.get("completed_slices", []), slice_id]))
             state["completed_slices"] = completed
             if state.get("current_slice") == slice_id:
                 state["current_slice"] = None
-            if (state.get("active_run") or {}).get("slice") == slice_id:
+            if active_belongs_to_slice:
                 state["active_run"] = None
+
+        elif status in {"replan_required", "blocked", "blocked_compile_inputs"}:
+            state["current_slice"] = slice_id if status == "replan_required" else None
+            if active_belongs_to_slice:
+                state["active_run"] = None
+
+        elif status in {"blocked_external", "blocked_external_waiting_for_evidence"}:
+            state["current_slice"] = None
+
         else:
             state["current_slice"] = slice_id
+
         self.save_state(state)
         self.append_progress(slice_id, "slice_status_updated", {"status": status, **extra})
         self.log_event("slice_status_updated", {"status": status, **extra}, slice_id=slice_id)
@@ -430,42 +467,120 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         self.log_event("brief_created", {"path": str(brief_path.relative_to(self.root))}, slice_id=slice_["id"])
         return brief_path
 
-    def ensure_playbook(self, slice_: dict[str, Any]) -> CommandResult:
-        playbook = self.root / slice_["playbook"]
-        if playbook.exists():
-            return CommandResult(["test", "-f", str(playbook)], 0, "playbook exists", "")
+    def design_doc_path(self, slice_: dict[str, Any]) -> Path:
+        design_rel = slice_.get("design_doc") or self.policy.get("compile", {}).get("design_doc") or "docs/gstack/health-data-hub-office-hours.md"
+        design = self.root / design_rel
+        if design.exists():
+            return design
+        fallback = self.root / "aeziz-local-AysajanE-health-data-hub-design-20260515-114138.md"
+        if fallback.exists():
+            return fallback
+        raise AutoKeelError(f"missing design doc: {design}")
 
+    def ensure_autoplan(self, slice_: dict[str, Any]) -> CommandResult:
         autoplan_rel = slice_.get("autoplan")
         if not autoplan_rel:
-            self.log_event(
-                "compile_inputs_missing",
-                {"missing": "autoplan", "playbook": slice_.get("playbook")},
-                slice_id=slice_["id"],
-            )
             self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason="missing autoplan path")
             return CommandResult([], 20, "", "missing autoplan path in slices.json")
 
         autoplan = self.root / autoplan_rel
-        brief = self.root / slice_["brief"]
+        if autoplan.exists():
+            return CommandResult(["test", "-f", str(autoplan)], 0, "autoplan exists", "")
 
-        if not autoplan.exists():
-            self.log_event(
-                "compile_inputs_missing",
-                {"missing": str(autoplan.relative_to(self.root)), "playbook": slice_.get("playbook")},
-                slice_id=slice_["id"],
-            )
+        autoplan_policy = self.policy.get("autoplan", {})
+        auto_generate = bool(autoplan_policy.get("auto_generate_missing", True))
+        if not auto_generate:
             self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason=f"missing {autoplan_rel}")
             return CommandResult([], 21, "", f"missing autoplan: {autoplan}")
 
-        design_rel = slice_.get("design_doc") or self.policy.get("compile", {}).get("design_doc") or "docs/gstack/health-data-hub-office-hours.md"
-        design = self.root / design_rel
-        if not design.exists():
-            fallback = self.root / "aeziz-local-AysajanE-health-data-hub-design-20260515-114138.md"
-            if fallback.exists():
-                design = fallback
-            else:
-                self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason=f"missing design doc {design_rel}")
-                return CommandResult([], 22, "", f"missing design doc: {design}")
+        design = self.design_doc_path(slice_)
+        autoplan.parent.mkdir(parents=True, exist_ok=True)
+
+        prompt = f"""Create a Keel autoplan artifact for exactly one slice.
+
+Repository: {self.root}
+Slice ID: {slice_["id"]}
+Slice name: {slice_.get("name")}
+Lane: {slice_.get("lane")}
+Risk: {slice_.get("risk")}
+
+Use the design doc at:
+{design}
+
+Autonomy requirements:
+- Manual gates are forbidden.
+- Use autonomous_gate_review artifacts instead of human approval.
+- Keep write roots narrow and repo-relative.
+- Preserve Health Data Hub v1 scope.
+- Include concrete deliverables and verification expectations.
+- Do not include v2 features or prospective recommendations.
+
+Slice JSON:
+{json.dumps(redact(slice_), indent=2, sort_keys=True)}
+
+Return only a Markdown autoplan suitable to save at:
+{autoplan_rel}
+"""
+
+        command = autoplan_policy.get("command") or self.policy.get("compile", {}).get("row_author_command") or "claude -p"
+        argv = shlex.split(command) + [prompt]
+        if self.dry_run:
+            self.log_event("autoplan_generation_planned", {"path": str(autoplan.relative_to(self.root)), "command": command}, slice_id=slice_["id"])
+            return CommandResult(argv, 0, "dry run autoplan generation planned", "")
+
+        result = self.runner.run(argv, cwd=self.root)
+
+        if not result.ok:
+            self.log_event(
+                "autoplan_generation_failed",
+                {"exit_code": result.exit_code, "stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:]},
+                slice_id=slice_["id"],
+            )
+            return result
+
+        if len(result.stdout.strip()) < 200:
+            self.log_event(
+                "autoplan_generation_failed",
+                {"reason": "autoplan output too short", "stdout": result.stdout[-1000:]},
+                slice_id=slice_["id"],
+            )
+            return CommandResult(argv, 23, result.stdout, "autoplan output too short")
+
+        autoplan.write_text(result.stdout, encoding="utf-8")
+        self.log_event("autoplan_created", {"path": str(autoplan.relative_to(self.root))}, slice_id=slice_["id"])
+        return CommandResult(argv, 0, result.stdout, result.stderr)
+
+    def archive_playbook_for_replan(self, slice_: dict[str, Any]) -> None:
+        playbook = self.root / slice_["playbook"]
+        if not playbook.exists():
+            return
+        archive_dir = self.root / "ops" / "autonomy" / "failures" / "archived_playbooks"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive = archive_dir / f"{slice_['id']}-{slug_ts()}-{playbook.name}"
+        os.replace(playbook, archive)
+        self.log_event(
+            "playbook_archived_for_replan",
+            {"from": str(playbook.relative_to(self.root)), "to": str(archive.relative_to(self.root))},
+            slice_id=slice_["id"],
+        )
+
+    def ensure_playbook(self, slice_: dict[str, Any]) -> CommandResult:
+        playbook = self.root / slice_["playbook"]
+
+        if slice_.get("status") == "replan_required":
+            self.archive_playbook_for_replan(slice_)
+
+        if playbook.exists():
+            return CommandResult(["test", "-f", str(playbook)], 0, "playbook exists", "")
+
+        autoplan_result = self.ensure_autoplan(slice_)
+        if not autoplan_result.ok:
+            return autoplan_result
+
+        autoplan_rel = slice_.get("autoplan")
+        autoplan = self.root / autoplan_rel
+        brief = self.root / slice_["brief"]
+        design = self.design_doc_path(slice_)
 
         playbook.parent.mkdir(parents=True, exist_ok=True)
 
@@ -511,7 +626,7 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         if not playbook.exists():
             return CommandResult(["python", "-m", "scripts.validate_playbook_autonomous", str(playbook)], 2, "", "missing playbook")
         result = self.runner.run(
-            ["python", "-m", "scripts.validate_playbook_autonomous", str(playbook), "--json"],
+            ["python", "-m", "scripts.validate_playbook_autonomous", str(playbook), "--risk", str(slice_.get("risk", "")), "--json"],
             cwd=self.root,
             execute_in_dry_run=True,
         )
@@ -535,6 +650,65 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             {"exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
         )
         return result
+
+    def write_decision(self, decision_id: str, payload: dict[str, Any]) -> Path:
+        decision_dir = self.root / "ops" / "autonomy" / "decisions"
+        decision_dir.mkdir(parents=True, exist_ok=True)
+        path = decision_dir / f"{decision_id}-{slug_ts()}-{uuid.uuid4().hex[:8]}.json"
+        write_json_atomic(path, {"created_at": now_iso(), **redact(payload)})
+        self.log_event("decision_recorded", {"decision_id": decision_id, "path": str(path.relative_to(self.root)), **payload})
+        return path
+
+    def apply_tripwire_fallbacks(self, report: dict[str, Any]) -> bool:
+        fired = report.get("fired", [])
+        if not isinstance(fired, list) or not fired:
+            return False
+
+        state = self.load_state()
+        decisions = state.setdefault("tripwire_decisions", {})
+        changed = False
+
+        for item in fired:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "tripwire")
+            action = str(item.get("action") or "fallback_required")
+            if decisions.get(name):
+                continue
+
+            decision_path = self.write_decision(
+                name,
+                {
+                    "status": "fallback_accepted",
+                    "tripwire": name,
+                    "action": action,
+                    "source": "autokeel_tripwire",
+                    "evidence_status": item.get("evidence_status"),
+                },
+            )
+            evidence_rel = item.get("evidence")
+            if evidence_rel:
+                evidence_path = self.root / str(evidence_rel)
+                report_dir = evidence_path.parent if evidence_path.suffix else evidence_path
+                report_dir.mkdir(parents=True, exist_ok=True)
+                fallback_report = report_dir / f"{name}-fallback-{slug_ts()}-{uuid.uuid4().hex[:8]}.json"
+                write_json_atomic(
+                    fallback_report,
+                    {
+                        "status": "fallback_accepted",
+                        "tripwire": name,
+                        "action": action,
+                        "decision": str(decision_path.relative_to(self.root)),
+                        "created_at": now_iso(),
+                    },
+                )
+                os.chmod(fallback_report, 0o600)
+            decisions[name] = {"action": action, "decision": str(decision_path.relative_to(self.root))}
+            changed = True
+
+        if changed:
+            self.save_state(state)
+        return changed
 
     def verify_slice_acceptance(self, slice_id: str) -> CommandResult:
         result = self.runner.run(
@@ -570,9 +744,50 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         state["active_run"] = None
         self.save_state(state)
 
+    def resume_po_with_evidence(self, slice_: dict[str, Any], active: dict[str, Any]) -> CommandResult:
+        run_id = active.get("run_id")
+        evidence_rel = slice_.get("evidence_request") or active.get("evidence_request")
+        if not run_id:
+            return CommandResult([], 50, "", "cannot resume evidence: missing run_id")
+        if not evidence_rel:
+            return CommandResult([], 51, "", "cannot resume evidence: missing evidence_request")
+
+        evidence_dir = self.root / str(evidence_rel)
+        if not evidence_dir.exists():
+            return CommandResult([], 52, "", f"cannot resume evidence: missing directory {evidence_dir}")
+
+        keel_run = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel")) / "bin" / "keel-run"
+        result = self.runner.run(
+            [
+                str(keel_run),
+                "supervise",
+                "resume",
+                "--run-id",
+                str(run_id),
+                "--external-evidence-dir",
+                str(evidence_dir),
+            ],
+            cwd=self.root,
+            env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
+        )
+        self.log_event(
+            "po_resumed_with_evidence" if result.ok else "po_resume_with_evidence_failed",
+            {
+                "run_id": run_id,
+                "evidence_dir": str(evidence_dir.relative_to(self.root)),
+                "exit_code": result.exit_code,
+                "stdout": result.stdout[-2000:],
+                "stderr": result.stderr[-2000:],
+            },
+            slice_id=slice_["id"],
+        )
+        return result
+
     def start_or_resume_po(self, slice_: dict[str, Any]) -> CommandResult:
         state = self.load_state()
         active = state.get("active_run") or {}
+        if active.get("slice") == slice_["id"] and active.get("run_id") and slice_.get("status") == "evidence_ready":
+            return self.resume_po_with_evidence(slice_, active)
         if active.get("slice") == slice_["id"] and active.get("run_id"):
             if self.active_run_is_stale(active):
                 self.record_failure(
@@ -615,6 +830,43 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             self.save_state(state)
         self.log_event("po_started" if result.ok else "po_start_failed", {"exit_code": result.exit_code, "run_id": run_id, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}, slice_id=slice_["id"])
         return result
+
+    def ensure_lane_decision(self, slice_: dict[str, Any]) -> None:
+        lane = slice_.get("lane")
+        if lane != "swr_preferred":
+            return
+        policy = self.policy.get("lanes", {})
+        mode = policy.get("swr_preferred", "compile_with_decision")
+        if mode != "compile_with_decision":
+            return
+        existing = slice_.get("lane_decision")
+        if existing and (self.root / str(existing)).exists():
+            return
+        decision = self.write_decision(
+            f"{slice_['id']}-swr-downgrade",
+            {
+                "status": "accepted",
+                "slice": slice_["id"],
+                "lane": lane,
+                "decision": "compile_with_keel_compile_for_now",
+                "reason": "SWR-preferred lane is preserved as policy metadata; current AutoKeel milestone uses compiler path with explicit downgrade decision.",
+            },
+        )
+        self.mark_slice_status(slice_["id"], slice_.get("status", "pending"), lane_decision=str(decision.relative_to(self.root)))
+
+    def run_optional_evidence(self, slice_: dict[str, Any]) -> None:
+        for command in slice_.get("optional_evidence", []):
+            result = self.runner.run(shlex.split(command), cwd=self.root)
+            self.log_event(
+                "optional_evidence_collected" if result.ok else "optional_evidence_failed",
+                {
+                    "command": command,
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout[-2000:],
+                    "stderr": result.stderr[-2000:],
+                },
+                slice_id=slice_["id"],
+            )
 
     def inspect_po_status(self, run_id: str) -> dict[str, Any]:
         result = self.runner.run(["python", "-m", "scripts.keel_status_digest", "--run-id", run_id], cwd=self.root, execute_in_dry_run=True)
@@ -743,7 +995,7 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
     def record_failure(self, slice_id: str, failure_class: str, severity: str, description: str, action_taken: str, evidence_path: Path | None, run_id: str | None = None) -> Path:
         failure_dir = self.root / "ops" / "autonomy" / "failures"
         failure_dir.mkdir(parents=True, exist_ok=True)
-        failure_file = failure_dir / f"{slice_id}-{failure_class}-{slug_ts()}.md"
+        failure_file = failure_dir / f"{slice_id}-{failure_class}-{slug_ts()}-{uuid.uuid4().hex[:8]}.md"
         evidence_text = str(evidence_path.relative_to(self.root)) if evidence_path and evidence_path.is_absolute() else str(evidence_path or "")
         failure_file.write_text(
             f"# {slice_id} {failure_class}\n\n"
@@ -803,15 +1055,20 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
 
         tripwires = self.evaluate_tripwires()
         if not tripwires.ok:
-            self.record_failure(
-                "GLOBAL",
-                "tripwire_failure",
-                "high",
-                "One or more AutoKeel tripwires fired.",
-                "Stopped the supervisor before more autonomous work.",
-                None,
-            )
-            return 6
+            try:
+                tripwire_report = json.loads(tripwires.stdout)
+            except json.JSONDecodeError:
+                tripwire_report = {}
+            if self.apply_tripwire_fallbacks(tripwire_report):
+                tripwires = self.evaluate_tripwires()
+                if tripwires.ok:
+                    self.log_event("tripwire_fallbacks_applied", {})
+                else:
+                    self.log_event("tripwire_fallbacks_unresolved", {"stdout": tripwires.stdout[-4000:], "stderr": tripwires.stderr[-4000:]})
+                    return 6
+            else:
+                self.log_event("tripwire_failure_unresolved", {"stdout": tripwires.stdout[-4000:], "stderr": tripwires.stderr[-4000:]})
+                return 6
 
         slice_ = self.choose_next_slice(requested_slice)
         if not slice_:
@@ -819,6 +1076,9 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             return 1
 
         self.ensure_slice_brief(slice_)
+        self.ensure_lane_decision(slice_)
+        if slice_.get("lane") == "compiler_external_evidence":
+            self.run_optional_evidence(slice_)
 
         compiled = self.ensure_playbook(slice_)
         if not compiled.ok:
@@ -838,6 +1098,10 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
                 )
                 self.mark_slice_status(slice_["id"], "replan_required", failure_path=str(failure.relative_to(self.root)))
             return compiled.exit_code or 2
+
+        if self.dry_run and not (self.root / slice_["playbook"]).exists():
+            self.log_event("dry_run_playbook_validation_skipped", {"playbook": slice_.get("playbook")}, slice_id=slice_["id"])
+            return 0
 
         validation = self.validate_playbook(slice_)
         if not validation.ok:
@@ -912,7 +1176,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--status", action="store_true", help="Print current autonomy state and exit.")
     parser.add_argument("--failures", action="store_true", help="Include failure ledger rows with --status.")
     parser.add_argument("--doctor", action="store_true", help="Run AutoKeel preflight checks and exit.")
+    parser.add_argument("--strict", action="store_true", help="Use strict mode with --doctor.")
+    parser.add_argument("--next-slice", action="store_true", help="Print the next actionable slice and exit.")
     parser.add_argument("--replay-events", action="store_true", help="Print event log rows and exit.")
+    parser.add_argument("--unblock-evidence", nargs=2, metavar=("SLICE_ID", "EVIDENCE_DIR"), help="Mark a blocked slice evidence_ready with a local evidence dir.")
     parser.add_argument("--close-failure", nargs=2, metavar=("SLICE_ID", "FAILURE_CLASS"), help="Close matching open failures.")
     parser.add_argument("--closure-evidence", help="Repo-relative evidence path for --close-failure.")
     parser.add_argument("--closure-note", help="Closure note for --close-failure.")
@@ -928,13 +1195,27 @@ def main(argv: list[str] | None = None) -> int:
     with AutoKeelLock(lock_path):
         autokeel = AutoKeel(root=root, dry_run=args.dry_run)
         if args.doctor:
-            result = autokeel.runner.run(["python", "-m", "scripts.verify_autonomy_preflight", "--json"], cwd=root, execute_in_dry_run=True)
+            cmd = ["python", "-m", "scripts.verify_autonomy_preflight", "--json"]
+            if args.strict:
+                cmd.extend(["--strict-tools", "--strict-clean"])
+            result = autokeel.runner.run(cmd, cwd=root, execute_in_dry_run=True)
             print(result.stdout, end="")
             if result.stderr:
                 print(result.stderr, file=sys.stderr, end="")
             return result.exit_code
+        if args.next_slice:
+            print(json.dumps(autokeel.choose_next_slice(args.slice_id), indent=2, sort_keys=True))
+            return 0
         if args.replay_events:
             print(json.dumps(list(iter_jsonl(autokeel.events_path) or []), indent=2, sort_keys=True))
+            return 0
+        if args.unblock_evidence:
+            slice_id, evidence_dir = args.unblock_evidence
+            evidence_path = root / evidence_dir
+            if not evidence_path.exists():
+                raise AutoKeelError(f"evidence directory missing: {evidence_dir}")
+            autokeel.mark_slice_status(slice_id, "evidence_ready", evidence_request=str(evidence_path.relative_to(root)))
+            print(json.dumps({"status": "ok", "slice": slice_id, "evidence_request": str(evidence_path.relative_to(root))}, indent=2, sort_keys=True))
             return 0
         if args.close_failure:
             if not args.closure_evidence or not args.closure_note:

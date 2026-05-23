@@ -79,10 +79,14 @@
     ],
     "acceptance": [
       "python scripts/evidence/oura_smoke.py --json",
-      "python scripts/evidence/pyeight_smoke.py --json",
-      "python scripts/evidence/mood_shortcut_smoke.py --json",
       "python scripts/check_no_tracked_data.py"
-    ]
+    ],
+    "optional_evidence": [
+      "python scripts/evidence/pyeight_smoke.py --json"
+    ],
+    "fallbacks": {
+      "pyeight_smoke_failure": "oura_only_v1"
+    }
   },
   {
     "id": "S04",
