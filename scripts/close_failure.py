@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Close an AutoKeel failure ledger entry with local evidence."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+
+def iter_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return rows
+
+
+def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def close_failure(
+    root: Path,
+    slice_id: str,
+    failure_class: str,
+    evidence: str,
+    note: str,
+) -> dict[str, Any]:
+    root = root.resolve()
+    evidence_path = root / evidence
+    errors: list[str] = []
+    if not evidence_path.exists():
+        errors.append(f"closure evidence missing: {evidence}")
+    if evidence_path.is_absolute() and not evidence_path.resolve().is_relative_to(root):
+        errors.append(f"closure evidence must be under repo root: {evidence}")
+    if errors:
+        return {"status": "error", "errors": errors, "closed": 0}
+
+    ledger = root / "ops" / "autonomy" / "failure_ledger.jsonl"
+    rows = iter_jsonl(ledger)
+    closed = 0
+    for row in rows:
+        if row.get("slice") != slice_id:
+            continue
+        if row.get("failure_class") != failure_class:
+            continue
+        if not row.get("open", True):
+            continue
+        row["open"] = False
+        row["closed_at"] = __import__("datetime").datetime.now().astimezone().isoformat(timespec="seconds")
+        row["closure_evidence"] = str(evidence_path.relative_to(root))
+        row["closure_note"] = note
+        closed += 1
+
+    if closed:
+        write_jsonl_atomic(ledger, rows)
+    return {"status": "ok" if closed else "error", "errors": [] if closed else ["no matching open failure"], "closed": closed}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Close open AutoKeel failure records with local evidence.")
+    parser.add_argument("slice_id")
+    parser.add_argument("failure_class")
+    parser.add_argument("--evidence", required=True, help="Repo-relative closure evidence path.")
+    parser.add_argument("--note", required=True)
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    report = close_failure(Path(args.root).resolve(), args.slice_id, args.failure_class, args.evidence, args.note)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for error in report["errors"]:
+            print(f"ERROR: {error}", file=sys.stderr)
+        print(report["status"])
+    return 0 if report["status"] == "ok" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

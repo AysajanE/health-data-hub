@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutoKeel slices",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "slug", "name", "status", "required", "playbook", "brief", "autoplan"],
+    "properties": {
+      "id": {"type": "string", "pattern": "^S[0-9]{2}$"},
+      "slug": {"type": "string"},
+      "name": {"type": "string"},
+      "status": {"type": "string"},
+      "required": {"type": "boolean"},
+      "lane": {"type": "string"},
+      "risk": {"type": "string"},
+      "playbook": {"type": "string"},
+      "brief": {"type": "string"},
+      "autoplan": {"type": "string"},
+      "depends_on": {"type": "array", "items": {"type": "string"}},
+      "deliverables": {"type": "array", "items": {"type": "string"}},
+      "review_artifacts": {"type": "array", "items": {"type": "string"}},
+      "acceptance": {"type": "array", "items": {"type": "string"}}
+    }
+  }
+}

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def copy_autonomy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "ops", dst / "ops")
     shutil.copytree(ROOT / "scripts", dst / "scripts")
+    (dst / ".gitignore").write_text("data/\nprivate/\n.env\n", encoding="utf-8")
 
 
 class AutoKeelTests(unittest.TestCase):
@@ -73,7 +74,7 @@ class AutoKeelTests(unittest.TestCase):
             self.assertEqual(len(evidence_roots), 1)
             self.assertTrue((evidence_roots[0] / "README.md").exists())
 
-    def test_verify_v1_pass_sets_state_complete(self) -> None:
+    def test_verify_v1_does_not_pass_without_real_deliverables(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_autonomy_fixture(root)
@@ -85,9 +86,9 @@ class AutoKeelTests(unittest.TestCase):
             write_json_atomic(root / "ops/autonomy/slices.json", slices)
             op = AutoKeel(root=root, dry_run=False)
             result = op.run_verify_v1()
-            self.assertTrue(result.ok)
+            self.assertFalse(result.ok)
             state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
-            self.assertTrue(state["v1_complete"])
+            self.assertFalse(state.get("v1_complete", False))
 
 
 if __name__ == "__main__":

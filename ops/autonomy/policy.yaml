@@ -2,6 +2,24 @@ mode: autonomous_zero_human
 keel_root: /Users/aeziz-local/keel
 product_repo: /Users/aeziz-local/health-data-hub
 
+compile:
+  design_doc: docs/gstack/health-data-hub-office-hours.md
+  row_author: external-json
+  row_author_command: claude -p
+
+slice_statuses:
+  actionable:
+    - pending
+    - waiting_for_playbook
+    - replan_required
+    - evidence_ready
+  blocked:
+    - blocked
+    - blocked_external
+    - blocked_external_waiting_for_evidence
+    - blocked_compile_inputs
+    - complete
+
 manual_gates:
   allowed: false
   if_detected: record_failure_and_recompile
@@ -43,6 +61,47 @@ tripwires:
   on_mood_transport_failure_week_4: streamlit_mobile_form
   on_mood_compliance_failure_week_8: stop_modeling_fix_logging
   on_baseline_gate_failure_week_9: collecting_state_no_override
+
+tripwire_deadlines:
+  on_oura_failure_week_1:
+    date: 2026-05-30
+    action: direct_oura_oauth
+    evidence: private/evidence/S03/oura_smoke
+  on_pyeight_failure_week_2:
+    date: 2026-06-06
+    action: oura_only_v1
+    evidence: private/evidence/S03/pyeight_smoke
+  on_mood_transport_failure_week_4:
+    date: 2026-06-20
+    action: streamlit_mobile_form
+    evidence: private/evidence/S03/mood_shortcut_smoke
+  on_mood_compliance_failure_week_8:
+    date: 2026-07-18
+    action: stop_modeling_fix_logging
+    evidence: docs/reviews/s07-autonomous-ui-language-review.md
+  on_baseline_gate_failure_week_9:
+    date: 2026-07-25
+    action: collecting_state_no_override
+    evidence: docs/reviews/s05-autonomous-model-gate-review.md
+
+playbook_validation:
+  banned_language:
+    - manual approval
+    - human approval
+    - manual_gate
+  forbidden_roots:
+    - .
+    - src
+    - tests
+  forbidden_commands:
+    - mark-manual-gate
+  required_gate_terms:
+    - autonomous_gate_review
+
+evidence_collectors:
+  s03_oura_smoke: scripts/evidence/oura_smoke.py
+  s03_pyeight_smoke: scripts/evidence/pyeight_smoke.py
+  s03_mood_shortcut_smoke: scripts/evidence/mood_shortcut_smoke.py
 
 reviews:
   security_requires_two_ai_reviews: true

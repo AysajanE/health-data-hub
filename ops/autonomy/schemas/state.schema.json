@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutoKeel runtime state",
+  "type": "object",
+  "properties": {
+    "active_run": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["slice", "run_id"],
+          "properties": {
+            "slice": {"type": "string"},
+            "run_id": {"type": "string"},
+            "started_at": {"type": "string"},
+            "evidence_request": {"type": "string"}
+          }
+        }
+      ]
+    },
+    "completed_slices": {"type": "array", "items": {"type": "string"}},
+    "current_slice": {"type": ["string", "null"]},
+    "last_event_id": {"type": "integer"},
+    "v1_complete": {"type": "boolean"}
+  }
+}

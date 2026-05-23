@@ -9,6 +9,7 @@
     "risk": "medium",
     "playbook": "docs/playbooks/s01-warehouse.playbook.md",
     "brief": "docs/briefs/s01-warehouse.autonomous-brief.md",
+    "autoplan": "docs/gstack/s01-warehouse-autoplan.md",
     "review_artifacts": [
       "docs/reviews/s01-autonomous-schema-review.md"
     ],
@@ -50,6 +51,7 @@
     "risk": "high",
     "playbook": "docs/playbooks/s02-mood-api.playbook.md",
     "brief": "docs/briefs/s02-mood-api.autonomous-brief.md",
+    "autoplan": "docs/gstack/s02-mood-api-autoplan.md",
     "review_artifacts": [
       "docs/reviews/s02-autonomous-security-review.md",
       "docs/reviews/s02-autonomous-privacy-review.md"
@@ -70,11 +72,15 @@
     "risk": "high",
     "playbook": "docs/playbooks/s03-ingestion-provider.playbook.md",
     "brief": "docs/briefs/s03-ingestion-provider.autonomous-brief.md",
+    "autoplan": "docs/gstack/s03-ingestion-provider-autoplan.md",
     "evidence_dirs": [
       "private/evidence/S03",
       "docs/evidence/ingestion"
     ],
     "acceptance": [
+      "python scripts/evidence/oura_smoke.py --json",
+      "python scripts/evidence/pyeight_smoke.py --json",
+      "python scripts/evidence/mood_shortcut_smoke.py --json",
       "python scripts/check_no_tracked_data.py"
     ]
   },
@@ -88,6 +94,12 @@
     "risk": "medium",
     "playbook": "docs/playbooks/s04-feature-engineering.playbook.md",
     "brief": "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+    "autoplan": "docs/gstack/s04-feature-engineering-autoplan.md",
+    "depends_on": [
+      "S01",
+      "S02",
+      "S03"
+    ],
     "acceptance": [
       "python -m pytest tests/test_features.py -q",
       "python scripts/check_no_tracked_data.py"
@@ -103,6 +115,10 @@
     "risk": "high",
     "playbook": "docs/playbooks/s05-model-lifecycle.playbook.md",
     "brief": "docs/briefs/s05-model-lifecycle.autonomous-brief.md",
+    "autoplan": "docs/gstack/s05-model-lifecycle-autoplan.md",
+    "depends_on": [
+      "S04"
+    ],
     "review_artifacts": [
       "docs/reviews/s05-autonomous-model-gate-review.md"
     ],
@@ -122,6 +138,10 @@
     "risk": "high",
     "playbook": "docs/playbooks/s06-counterfactual-generator.playbook.md",
     "brief": "docs/briefs/s06-counterfactual-generator.autonomous-brief.md",
+    "autoplan": "docs/gstack/s06-counterfactual-generator-autoplan.md",
+    "depends_on": [
+      "S05"
+    ],
     "review_artifacts": [
       "docs/reviews/s06-autonomous-causal-framing-review.md"
     ],
@@ -141,6 +161,12 @@
     "risk": "medium",
     "playbook": "docs/playbooks/s07-read-api-streamlit-ui.playbook.md",
     "brief": "docs/briefs/s07-read-api-streamlit-ui.autonomous-brief.md",
+    "autoplan": "docs/gstack/s07-read-api-streamlit-ui-autoplan.md",
+    "depends_on": [
+      "S02",
+      "S05",
+      "S06"
+    ],
     "review_artifacts": [
       "docs/reviews/s07-autonomous-ui-language-review.md"
     ],
@@ -160,6 +186,10 @@
     "risk": "high",
     "playbook": "docs/playbooks/s08-launchd-backups-restore.playbook.md",
     "brief": "docs/briefs/s08-launchd-backups-restore.autonomous-brief.md",
+    "autoplan": "docs/gstack/s08-launchd-backups-restore-autoplan.md",
+    "depends_on": [
+      "S07"
+    ],
     "review_artifacts": [
       "docs/reviews/s08-autonomous-restore-review.md",
       "docs/reviews/s08-autonomous-secrets-logging-review.md"
@@ -180,6 +210,10 @@
     "risk": "medium",
     "playbook": "docs/playbooks/s09-testing-v1-evaluation.playbook.md",
     "brief": "docs/briefs/s09-testing-v1-evaluation.autonomous-brief.md",
+    "autoplan": "docs/gstack/s09-testing-v1-evaluation-autoplan.md",
+    "depends_on": [
+      "S08"
+    ],
     "acceptance": [
       "python -m pytest -q",
       "python scripts/check_no_tracked_data.py"

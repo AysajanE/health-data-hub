@@ -15,13 +15,61 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_no_tracked_data import check_no_tracked_data
+from ops.autonomy.autokeel import load_policy, read_json
 
 
 def command_exists(command: str) -> bool:
     return shutil.which(command) is not None
 
 
-def preflight(root: Path, keel_root: Path, strict_tools: bool = False, run_keel_smoke: bool = False) -> dict[str, Any]:
+def git_status(root: Path) -> tuple[bool, str]:
+    proc = subprocess.run(["git", "status", "--porcelain"], cwd=str(root), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if proc.returncode != 0:
+        return False, proc.stderr.strip()
+    return proc.stdout.strip() == "", proc.stdout
+
+
+def validate_policy_shape(root: Path) -> list[str]:
+    errors: list[str] = []
+    try:
+        policy = load_policy(root / "ops" / "autonomy" / "policy.yaml")
+    except Exception as exc:
+        return [f"policy.yaml does not parse: {exc}"]
+    required = ("mode", "keel_root", "manual_gates", "external_evidence", "health_data", "loop", "compile", "slice_statuses")
+    for key in required:
+        if key not in policy:
+            errors.append(f"policy.yaml missing required key: {key}")
+    compile_policy = policy.get("compile", {})
+    for key in ("design_doc", "row_author", "row_author_command"):
+        if key not in compile_policy:
+            errors.append(f"policy.yaml compile missing required key: {key}")
+    return errors
+
+
+def validate_slices_shape(root: Path) -> list[str]:
+    errors: list[str] = []
+    slices = read_json(root / "ops" / "autonomy" / "slices.json", [])
+    if not isinstance(slices, list):
+        return ["slices.json must contain a list"]
+    seen: set[str] = set()
+    for idx, slice_ in enumerate(slices, start=1):
+        slice_id = slice_.get("id")
+        if not slice_id:
+            errors.append(f"slice {idx} missing id")
+            continue
+        if slice_id in seen:
+            errors.append(f"duplicate slice id: {slice_id}")
+        seen.add(slice_id)
+        for key in ("slug", "status", "required", "playbook", "brief", "autoplan"):
+            if key not in slice_:
+                errors.append(f"{slice_id} missing required key: {key}")
+        for dep in slice_.get("depends_on", []):
+            if dep not in seen and not any(item.get("id") == dep for item in slices):
+                errors.append(f"{slice_id} depends on unknown slice: {dep}")
+    return errors
+
+
+def preflight(root: Path, keel_root: Path, strict_tools: bool = False, run_keel_smoke: bool = False, strict_clean: bool = False) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
     checks: dict[str, Any] = {}
@@ -49,6 +97,20 @@ def preflight(root: Path, keel_root: Path, strict_tools: bool = False, run_keel_
         if not (root / rel).exists():
             errors.append(f"missing autonomy file: {rel}")
 
+    errors.extend(validate_policy_shape(root))
+    errors.extend(validate_slices_shape(root))
+
+    in_git = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=str(root), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    checks["git_repo"] = in_git.returncode == 0 and in_git.stdout.strip() == "true"
+    if not checks["git_repo"]:
+        errors.append(f"not a git repository: {root}")
+    else:
+        clean, status_text = git_status(root)
+        checks["git_clean"] = clean
+        if not clean:
+            (errors if strict_clean else warnings).append("git worktree has uncommitted or untracked files")
+            checks["git_status_porcelain"] = status_text.splitlines()[:20]
+
     tracked = check_no_tracked_data(root)
     errors.extend(tracked["errors"])
     warnings.extend(tracked.get("warnings", []))
@@ -67,10 +129,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".")
     parser.add_argument("--keel-root", default="/Users/aeziz-local/keel")
     parser.add_argument("--strict-tools", action="store_true")
+    parser.add_argument("--strict-clean", action="store_true")
     parser.add_argument("--run-keel-smoke", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    report = preflight(Path(args.root).resolve(), Path(args.keel_root).resolve(), strict_tools=args.strict_tools, run_keel_smoke=args.run_keel_smoke)
+    report = preflight(
+        Path(args.root).resolve(),
+        Path(args.keel_root).resolve(),
+        strict_tools=args.strict_tools,
+        run_keel_smoke=args.run_keel_smoke,
+        strict_clean=args.strict_clean,
+    )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:

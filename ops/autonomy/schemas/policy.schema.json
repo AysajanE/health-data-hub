@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutoKeel policy",
+  "type": "object",
+  "required": ["mode", "keel_root", "product_repo", "compile", "manual_gates", "external_evidence", "health_data", "loop", "slice_statuses"],
+  "properties": {
+    "mode": {"const": "autonomous_zero_human"},
+    "keel_root": {"type": "string"},
+    "product_repo": {"type": "string"},
+    "compile": {
+      "type": "object",
+      "required": ["design_doc", "row_author", "row_author_command"],
+      "properties": {
+        "design_doc": {"type": "string"},
+        "row_author": {"type": "string"},
+        "row_author_command": {"type": "string"}
+      }
+    },
+    "manual_gates": {"type": "object"},
+    "external_evidence": {"type": "object"},
+    "health_data": {"type": "object"},
+    "loop": {"type": "object"},
+    "slice_statuses": {"type": "object"}
+  }
+}

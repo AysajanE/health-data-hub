@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Global v1 verification gate for AutoKeel."""
+"""Global v1 verification gate for AutoKeel.
+
+This is the final while-loop exit condition. It must be strict: a slice being
+marked complete is not enough. Required deliverables, reviews, acceptance
+commands, data-safety checks, and state consistency must all pass.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import re
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,11 +20,32 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.check_autonomous_review_exists import check_review
 from scripts.check_no_tracked_data import check_no_tracked_data
 
 
-CRITICAL_FAILURES = {"manual_gate_leak", "secret_leak_risk", "unsafe_write_root", "forbidden_ui_language", "state_divergence", "ship_failure"}
-UI_BANNED_RE = re.compile(r"\b(biggest drivers|drivers|what made you tired|caused|you should|you would have felt|tomorrow prediction)\b", re.I)
+CRITICAL_FAILURES = {
+    "manual_gate_leak",
+    "secret_leak_risk",
+    "unsafe_write_root",
+    "forbidden_ui_language",
+    "state_divergence",
+    "ship_failure",
+}
+
+UI_BANNED_RE = re.compile(
+    r"\b(biggest drivers|drivers|what made you tired|caused|you should|you would have felt|tomorrow prediction)\b",
+    re.I,
+)
+
+SECRET_RE = re.compile(
+    r"(?i)(access_token|refresh_token|mood_token|x-mood-token|client_secret|password|authorization)"
+    r"([\"']?\s*[:=]\s*[\"']?)([^\"'\s,}]{8,})"
+)
+
+
+def redact_text(text: str) -> str:
+    return SECRET_RE.sub(r"\1\2[REDACTED]", text)
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -55,20 +83,88 @@ def scan_ui_language(root: Path) -> list[str]:
     return errors
 
 
-def verify_v1(root: Path) -> dict[str, Any]:
+def run_acceptance(root: Path, command: str, timeout: int) -> dict[str, Any]:
+    if "mark-manual-gate" in command:
+        return {
+            "command": command,
+            "exit_code": 99,
+            "stdout_tail": "",
+            "stderr_tail": "forbidden manual-gate command",
+        }
+
+    try:
+        proc = subprocess.run(
+            shlex.split(command),
+            cwd=str(root),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+        return {
+            "command": command,
+            "exit_code": proc.returncode,
+            "stdout_tail": redact_text(proc.stdout[-2000:]),
+            "stderr_tail": redact_text(proc.stderr[-2000:]),
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": command,
+            "exit_code": 124,
+            "stdout_tail": redact_text((exc.stdout or "")[-2000:] if isinstance(exc.stdout, str) else ""),
+            "stderr_tail": f"timeout after {timeout}s",
+        }
+
+
+def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 900) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
+    command_results: list[dict[str, Any]] = []
+
     slices = load_json(root / "ops" / "autonomy" / "slices.json", [])
+    if not isinstance(slices, list):
+        errors.append("ops/autonomy/slices.json must contain a list")
+        slices = []
+
     required = [item for item in slices if item.get("required")]
-    incomplete = [item["id"] for item in required if item.get("status") != "complete"]
+    incomplete = [item.get("id", "<unknown>") for item in required if item.get("status") != "complete"]
     if incomplete:
         errors.append(f"required slices incomplete: {', '.join(incomplete)}")
+
+    for item in required:
+        slice_id = item.get("id", "<unknown>")
+
+        if item.get("status") == "complete" and not item.get("run_id"):
+            warnings.append(f"completed slice has no run_id recorded: {slice_id}")
+
+        for rel in item.get("deliverables", []):
+            if not (root / rel).exists():
+                errors.append(f"{slice_id}: missing deliverable: {rel}")
+
+        review = check_review(root, slice_id)
+        errors.extend([f"{slice_id}: {err}" for err in review["errors"]])
+
+        if run_acceptance_commands and item.get("status") == "complete":
+            for command in item.get("acceptance", []):
+                if "verify_v1" in command:
+                    warnings.append(f"{slice_id}: skipped recursive verify_v1 command: {command}")
+                    continue
+                result = run_acceptance(root, command, timeout=timeout)
+                result["slice"] = slice_id
+                command_results.append(result)
+                if result["exit_code"] != 0:
+                    errors.append(f"{slice_id}: acceptance command failed ({result['exit_code']}): {command}")
 
     failures = list(iter_jsonl(root / "ops" / "autonomy" / "failure_ledger.jsonl") or [])
     open_critical = [
         item
         for item in failures
-        if item.get("open", True) and (item.get("severity") in {"high", "critical"} or item.get("failure_class") in CRITICAL_FAILURES)
+        if item.get("open", True)
+        and (
+            item.get("severity") in {"high", "critical"}
+            or item.get("failure_class") in CRITICAL_FAILURES
+        )
     ]
     if open_critical:
         errors.append(f"open critical/high failures: {len(open_critical)}")
@@ -76,28 +172,40 @@ def verify_v1(root: Path) -> dict[str, Any]:
     tracked = check_no_tracked_data(root)
     errors.extend(tracked["errors"])
     warnings.extend(tracked.get("warnings", []))
+
     errors.extend(scan_ui_language(root))
 
     state = load_json(root / "ops" / "autonomy" / "autonomy_state.json", {})
     if state.get("active_run"):
-        warnings.append("active_run still present in autonomy_state.json")
+        errors.append("active_run still present in autonomy_state.json")
+    if state.get("current_slice"):
+        warnings.append(f"current_slice still set: {state.get('current_slice')}")
 
     return {
         "status": "ok" if not errors else "error",
         "errors": errors,
         "warnings": warnings,
-        "required_slices": [item["id"] for item in required],
+        "required_slices": [item.get("id") for item in required],
         "incomplete_slices": incomplete,
         "open_critical_failures": len(open_critical),
+        "commands": command_results,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify Health Data Hub v1 autonomous completion.")
     parser.add_argument("--root", default=".")
+    parser.add_argument("--skip-acceptance", action="store_true")
+    parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    report = verify_v1(Path(args.root).resolve())
+
+    report = verify_v1(
+        Path(args.root).resolve(),
+        run_acceptance_commands=not args.skip_acceptance,
+        timeout=args.timeout,
+    )
+
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
