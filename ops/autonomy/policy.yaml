@@ -1,0 +1,70 @@
+mode: autonomous_zero_human
+keel_root: /Users/aeziz-local/keel
+product_repo: /Users/aeziz-local/health-data-hub
+
+manual_gates:
+  allowed: false
+  if_detected: record_failure_and_recompile
+  forbidden_commands:
+    - keel-run mark-manual-gate
+    - mark-manual-gate
+
+external_evidence:
+  ai_operator_may_collect: true
+  must_store_locally: true
+  allowed_dirs:
+    - private/evidence
+    - docs/evidence
+  must_redact_secrets: true
+
+health_data:
+  raw_data_in_git: false
+  secrets_in_git: false
+  full_payloads_in_general_logs: false
+  forbidden_tracked_roots:
+    - data
+    - private
+  forbidden_tracked_names:
+    - .env
+    - warehouse.duckdb
+
+model_outputs:
+  may_override_baseline_gate: false
+  may_override_n_model_gate: false
+  may_override_sign_stability_gate: false
+  n_model_ui_threshold: 37
+  baseline_gate_required: true
+  sign_stability_counterfactual_threshold: 0.90
+
+tripwires:
+  apply_design_doc_tripwires: true
+  on_oura_failure_week_1: direct_oura_oauth
+  on_pyeight_failure_week_2: oura_only_v1
+  on_mood_transport_failure_week_4: streamlit_mobile_form
+  on_mood_compliance_failure_week_8: stop_modeling_fix_logging
+  on_baseline_gate_failure_week_9: collecting_state_no_override
+
+reviews:
+  security_requires_two_ai_reviews: true
+  model_requires_two_ai_reviews: true
+  ui_language_requires_banned_word_scan: true
+  required_review_root: docs/reviews
+
+loop:
+  stop_only_when: scripts/verify_v1.py
+  max_retries_per_slice_before_replan: 3
+  stale_run_minutes: 60
+  heartbeat_path: ops/autonomy/heartbeats/latest.json
+
+commands:
+  optional_tools:
+    - claude
+    - codex
+    - gh
+    - jq
+  keel_wrappers:
+    - keel-smoke
+    - keel-compile
+    - keel-run
+    - keel-doctor
+    - keel-swr

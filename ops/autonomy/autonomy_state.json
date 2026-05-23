@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "mode": "autonomous_zero_human",
+  "project": "health-data-hub",
+  "current_slice": null,
+  "active_run": null,
+  "completed_slices": [],
+  "run_history": [],
+  "last_event_id": 0,
+  "last_heartbeat_at": null,
+  "v1_complete": false
+}

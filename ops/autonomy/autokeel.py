@@ -1,0 +1,586 @@
+#!/usr/bin/env python3
+"""Keel-native autonomous supervisor for the Health Data Hub build.
+
+AutoKeel is intentionally a thin wrapper around Keel. It owns durable
+autonomy state, policy enforcement, event/failure logging, and terminal-state
+routing. Keel and plan-orchestrator remain the execution kernel.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Iterable
+
+
+class AutoKeelError(RuntimeError):
+    """Base exception for AutoKeel failures."""
+
+
+class PolicyError(AutoKeelError):
+    """Raised when a requested action violates autonomy policy."""
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    argv: list[str]
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.exit_code == 0
+
+
+def now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def slug_ts() -> str:
+    return datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+
+
+def read_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return default
+    return json.loads(text)
+
+
+def write_json_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            yield json.loads(line)
+
+
+def _parse_scalar(value: str) -> Any:
+    value = value.strip()
+    if value in {"", "null", "Null", "NULL", "~"}:
+        return None
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_scalar(part.strip()) for part in inner.split(",")]
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def _simple_yaml_load(text: str) -> Any:
+    """Load the small YAML subset used by policy.yaml without a dependency."""
+    lines: list[tuple[int, str]] = []
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        content = raw.split(" #", 1)[0].rstrip()
+        lines.append((len(content) - len(content.lstrip(" ")), content.lstrip(" ")))
+
+    def parse_block(index: int, indent: int) -> tuple[Any, int]:
+        if index >= len(lines):
+            return {}, index
+        is_list = lines[index][1].startswith("- ")
+        if is_list:
+            result: list[Any] = []
+            while index < len(lines) and lines[index][0] == indent and lines[index][1].startswith("- "):
+                item = lines[index][1][2:].strip()
+                if item:
+                    result.append(_parse_scalar(item))
+                    index += 1
+                else:
+                    child, index = parse_block(index + 1, lines[index + 1][0])
+                    result.append(child)
+            return result, index
+
+        result_dict: dict[str, Any] = {}
+        while index < len(lines) and lines[index][0] == indent and not lines[index][1].startswith("- "):
+            line = lines[index][1]
+            if ":" not in line:
+                raise ValueError(f"Unsupported YAML line: {line}")
+            key, raw_value = line.split(":", 1)
+            key = key.strip()
+            raw_value = raw_value.strip()
+            index += 1
+            if raw_value:
+                result_dict[key] = _parse_scalar(raw_value)
+                continue
+            if index < len(lines) and lines[index][0] > indent:
+                child, index = parse_block(index, lines[index][0])
+                result_dict[key] = child
+            else:
+                result_dict[key] = {}
+        return result_dict, index
+
+    payload, final = parse_block(0, lines[0][0] if lines else 0)
+    if final != len(lines):
+        raise ValueError("Could not parse complete YAML document")
+    return payload
+
+
+def load_policy(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    try:
+        import yaml  # type: ignore
+
+        payload = yaml.safe_load(text) or {}
+    except Exception:
+        payload = _simple_yaml_load(text) or {}
+    if not isinstance(payload, dict):
+        raise PolicyError(f"Policy file must parse to an object: {path}")
+    return payload
+
+
+SECRET_KEY_RE = re.compile(r"(token|secret|password|api[_-]?key|authorization)", re.I)
+SECRET_VALUE_RE = re.compile(
+    r"(?i)(token|secret|password|api[_-]?key|authorization|x-mood-token)"
+    r"([\"']?\s*[:=]\s*[\"']?)([^\"'\s,}]{8,})"
+)
+RAW_PATH_RE = re.compile(r"(?i)(data/(raw|secrets|quarantine|snapshots)|warehouse\.duckdb)")
+
+
+def redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            if SECRET_KEY_RE.search(str(key)):
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = redact(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact(item) for item in value]
+    if isinstance(value, str):
+        value = SECRET_VALUE_RE.sub(r"\1\2[REDACTED]", value)
+        value = RAW_PATH_RE.sub("[SENSITIVE_PATH]", value)
+        return value
+    return value
+
+
+class CommandRunner:
+    def __init__(self, root: Path, policy: dict[str, Any], dry_run: bool = False, timeout: int = 600):
+        self.root = root
+        self.policy = policy
+        self.dry_run = dry_run
+        self.timeout = timeout
+
+    def assert_allowed(self, argv: list[str]) -> None:
+        text = " ".join(shlex.quote(part) for part in argv)
+        forbidden = self.policy.get("manual_gates", {}).get("forbidden_commands", [])
+        for command in forbidden:
+            if command and command in text:
+                raise PolicyError(f"Forbidden command under autonomous policy: {command}")
+        if any("mark-manual-gate" in part for part in argv):
+            raise PolicyError("Forbidden command under autonomous policy: mark-manual-gate")
+
+    def run(
+        self,
+        argv: list[str],
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        execute_in_dry_run: bool = False,
+    ) -> CommandResult:
+        self.assert_allowed(argv)
+        if self.dry_run and not execute_in_dry_run:
+            return CommandResult(argv=argv, exit_code=0, stdout='{"dry_run": true}', stderr="")
+        proc = subprocess.run(
+            argv,
+            cwd=str(cwd or self.root),
+            env={**os.environ, **(env or {})},
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=self.timeout,
+            check=False,
+        )
+        return CommandResult(argv=argv, exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
+
+
+class AutoKeel:
+    def __init__(self, root: Path, dry_run: bool = False):
+        self.root = root.resolve()
+        self.autonomy_dir = self.root / "ops" / "autonomy"
+        self.policy_path = self.autonomy_dir / "policy.yaml"
+        self.slices_path = self.autonomy_dir / "slices.json"
+        self.state_path = self.autonomy_dir / "autonomy_state.json"
+        self.events_path = self.autonomy_dir / "events.jsonl"
+        self.failure_path = self.autonomy_dir / "failure_ledger.jsonl"
+        self.progress_path = self.autonomy_dir / "progress.md"
+        self.policy = load_policy(self.policy_path)
+        self.runner = CommandRunner(self.root, self.policy, dry_run=dry_run)
+        self.dry_run = dry_run
+
+    def load_state(self) -> dict[str, Any]:
+        return read_json(self.state_path, {})
+
+    def save_state(self, state: dict[str, Any]) -> None:
+        write_json_atomic(self.state_path, state)
+
+    def load_slices(self) -> list[dict[str, Any]]:
+        payload = read_json(self.slices_path, [])
+        if not isinstance(payload, list):
+            raise AutoKeelError("slices.json must contain a list")
+        return payload
+
+    def save_slices(self, slices: list[dict[str, Any]]) -> None:
+        write_json_atomic(self.slices_path, slices)
+
+    def log_event(self, event_type: str, details: dict[str, Any] | None = None, slice_id: str | None = None) -> dict[str, Any]:
+        state = self.load_state()
+        event_id = int(state.get("last_event_id") or 0) + 1
+        payload = {
+            "event_id": event_id,
+            "ts": now_iso(),
+            "event": event_type,
+            "slice": slice_id,
+            "details": redact(details or {}),
+        }
+        append_jsonl(self.events_path, payload)
+        state["last_event_id"] = event_id
+        self.save_state(state)
+        return payload
+
+    def log_heartbeat(self) -> None:
+        state = self.load_state()
+        heartbeat = {
+            "ts": now_iso(),
+            "mode": self.policy.get("mode"),
+            "current_slice": state.get("current_slice"),
+            "active_run": state.get("active_run"),
+            "v1_complete": bool(state.get("v1_complete")),
+        }
+        heartbeat_path = self.root / self.policy.get("loop", {}).get("heartbeat_path", "ops/autonomy/heartbeats/latest.json")
+        write_json_atomic(heartbeat_path, heartbeat)
+        state["last_heartbeat_at"] = heartbeat["ts"]
+        self.save_state(state)
+        self.log_event("heartbeat", heartbeat)
+
+    def choose_next_slice(self, requested: str | None = None) -> dict[str, Any] | None:
+        slices = self.load_slices()
+        if requested:
+            for slice_ in slices:
+                if slice_.get("id") == requested or slice_.get("slug") == requested:
+                    if slice_.get("status") == "complete":
+                        return None
+                    return slice_
+            raise AutoKeelError(f"Unknown slice: {requested}")
+        for slice_ in slices:
+            if slice_.get("required") and slice_.get("status") not in {"complete", "blocked"}:
+                return slice_
+        return None
+
+    def mark_slice_status(self, slice_id: str, status: str, **extra: Any) -> None:
+        slices = self.load_slices()
+        found = False
+        for slice_ in slices:
+            if slice_.get("id") == slice_id:
+                slice_["status"] = status
+                slice_["updated_at"] = now_iso()
+                slice_.update(extra)
+                found = True
+                break
+        if not found:
+            raise AutoKeelError(f"Unknown slice: {slice_id}")
+        self.save_slices(slices)
+        state = self.load_state()
+        if status == "complete":
+            completed = list(dict.fromkeys([*state.get("completed_slices", []), slice_id]))
+            state["completed_slices"] = completed
+            if state.get("current_slice") == slice_id:
+                state["current_slice"] = None
+            if (state.get("active_run") or {}).get("slice") == slice_id:
+                state["active_run"] = None
+        else:
+            state["current_slice"] = slice_id
+        self.save_state(state)
+        self.log_event("slice_status_updated", {"status": status, **extra}, slice_id=slice_id)
+
+    def ensure_slice_brief(self, slice_: dict[str, Any]) -> Path:
+        brief_path = self.root / slice_["brief"]
+        if brief_path.exists():
+            return brief_path
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        deliverables = "\n".join(f"- `{path}`" for path in slice_.get("deliverables", [])) or "- See slice playbook."
+        constraints = "\n".join(f"- {item}" for item in slice_.get("hard_constraints", [])) or "- Preserve Health Data Hub v1 invariants."
+        text = f"""# {slice_['id']} {slice_['name']} Autonomous Brief
+
+Autonomy profile: true.
+
+Manual gates are forbidden for this autonomous run. Any former signoff must be represented as an `autonomous_gate_review` artifact, deterministic tests, and recorded evidence.
+
+## Deliverables
+
+{deliverables}
+
+## Hard Constraints
+
+{constraints}
+
+## Required Policy
+
+- Never emit active `manual_gate` rows.
+- Never call `keel-run mark-manual-gate`.
+- Use narrow repo-relative write roots only.
+- Keep raw health data, secrets, tokens, quarantine payloads, snapshots, and DuckDB files out of git and general logs.
+- Preserve the retrospective-only v1 scope and statistical gates from the design document.
+"""
+        brief_path.write_text(text, encoding="utf-8")
+        self.log_event("brief_created", {"path": str(brief_path.relative_to(self.root))}, slice_id=slice_["id"])
+        return brief_path
+
+    def validate_playbook(self, slice_: dict[str, Any]) -> CommandResult:
+        playbook = self.root / slice_["playbook"]
+        if not playbook.exists():
+            return CommandResult(["python", "-m", "scripts.validate_playbook_autonomous", str(playbook)], 2, "", "missing playbook")
+        result = self.runner.run(
+            ["python", "-m", "scripts.validate_playbook_autonomous", str(playbook), "--json"],
+            cwd=self.root,
+            execute_in_dry_run=True,
+        )
+        event = "playbook_validated" if result.ok else "playbook_rejected"
+        self.log_event(event, {"playbook": str(playbook.relative_to(self.root)), "exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}, slice_id=slice_["id"])
+        return result
+
+    def run_verify_v1(self) -> CommandResult:
+        result = self.runner.run(["python", "-m", "scripts.verify_v1", "--json"], cwd=self.root, execute_in_dry_run=True)
+        self.log_event("verify_v1_passed" if result.ok else "verify_v1_failed", {"exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]})
+        if result.ok:
+            state = self.load_state()
+            state["v1_complete"] = True
+            self.save_state(state)
+        return result
+
+    def start_or_resume_po(self, slice_: dict[str, Any]) -> CommandResult:
+        state = self.load_state()
+        active = state.get("active_run") or {}
+        if active.get("slice") == slice_["id"] and active.get("run_id"):
+            self.log_event("po_resume_existing", active, slice_id=slice_["id"])
+            return CommandResult([], 0, json.dumps(active), "")
+
+        playbook = self.root / slice_["playbook"]
+        if not playbook.exists():
+            self.log_event("playbook_missing", {"playbook": str(playbook.relative_to(self.root))}, slice_id=slice_["id"])
+            return CommandResult([], 3, "", f"missing playbook: {playbook}")
+        result = self.runner.run(
+            [
+                str(Path(self.policy.get("keel_root", "/Users/aeziz-local/keel")) / "bin" / "keel-run"),
+                "supervise",
+                "run",
+                "--playbook",
+                str(playbook.relative_to(self.root)),
+                "--next",
+            ],
+            cwd=self.root,
+            env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
+        )
+        run_id = self._extract_run_id(result.stdout) or self._extract_run_id(result.stderr)
+        if run_id:
+            state["active_run"] = {"slice": slice_["id"], "run_id": run_id, "started_at": now_iso()}
+            state["current_slice"] = slice_["id"]
+            history = state.setdefault("run_history", [])
+            history.append({"slice": slice_["id"], "run_id": run_id, "started_at": now_iso()})
+            self.save_state(state)
+        self.log_event("po_started" if result.ok else "po_start_failed", {"exit_code": result.exit_code, "run_id": run_id, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}, slice_id=slice_["id"])
+        return result
+
+    def inspect_po_status(self, run_id: str) -> dict[str, Any]:
+        result = self.runner.run(["python", "-m", "scripts.keel_status_digest", "--run-id", run_id], cwd=self.root, execute_in_dry_run=True)
+        if not result.ok:
+            self.log_event("po_status_failed", {"run_id": run_id, "stderr": result.stderr})
+            return {"terminal_state": "unknown", "run_id": run_id, "error": result.stderr}
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return {"terminal_state": "unknown", "run_id": run_id, "raw": result.stdout}
+
+    def handle_po_status(self, slice_id: str, run_id: str, status: dict[str, Any]) -> str:
+        terminal = str(status.get("terminal_state") or status.get("state") or "unknown")
+        self.log_event("po_status", {"run_id": run_id, "terminal_state": terminal, "status": status}, slice_id=slice_id)
+        if terminal == "passed":
+            self.ship_slice(slice_id, run_id)
+            self.mark_slice_status(slice_id, "complete", run_id=run_id, completed_at=now_iso())
+            return "complete"
+        if terminal == "blocked_external":
+            evidence = self.create_external_evidence_request(slice_id, run_id, status)
+            self.record_failure(slice_id, "blocked_external_missing_evidence", "medium", "PO requires local external evidence before the run can continue.", "Created local evidence request directory; did not fabricate evidence.", evidence, run_id=run_id)
+            self.mark_slice_status(slice_id, "blocked_external", run_id=run_id, evidence_request=str(evidence))
+            return "blocked_external"
+        if terminal == "awaiting_human_gate":
+            failure = self.record_failure(slice_id, "manual_gate_leak", "high", "PO reached awaiting_human_gate in autonomous mode.", "Rejected terminal state; replan/recompile without manual gates.", None, run_id=run_id)
+            self.mark_slice_status(slice_id, "replan_required", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
+            return "manual_gate_leak"
+        if terminal == "escalated":
+            failure = self.record_failure(slice_id, "audit_failure", "high", "PO escalated the slice.", "Recorded escalation for diagnosis and bounded replan.", None, run_id=run_id)
+            self.mark_slice_status(slice_id, "replan_required", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
+            return "escalated"
+        return "live"
+
+    def create_external_evidence_request(self, slice_id: str, run_id: str, status: dict[str, Any]) -> Path:
+        evidence_dir = self.root / "private" / "evidence" / slice_id / f"{slug_ts()}-{run_id}"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        (evidence_dir / "README.md").write_text(
+            "# External Evidence Request\n\n"
+            f"Slice: {slice_id}\n\n"
+            f"Run ID: {run_id}\n\n"
+            "AutoKeel stopped here because PO requested evidence outside the repo.\n"
+            "Place real local evidence files in this directory, redact secrets, then resume PO with "
+            "`keel-run supervise resume --external-evidence-dir <this-dir>`.\n\n"
+            "Status digest:\n\n"
+            f"```json\n{json.dumps(redact(status), indent=2, sort_keys=True)}\n```\n",
+            encoding="utf-8",
+        )
+        self.log_event("evidence_request_created", {"path": str(evidence_dir.relative_to(self.root))}, slice_id=slice_id)
+        return evidence_dir
+
+    def record_failure(self, slice_id: str, failure_class: str, severity: str, description: str, action_taken: str, evidence_path: Path | None, run_id: str | None = None) -> Path:
+        failure_dir = self.root / "ops" / "autonomy" / "failures"
+        failure_dir.mkdir(parents=True, exist_ok=True)
+        failure_file = failure_dir / f"{slice_id}-{failure_class}-{slug_ts()}.md"
+        evidence_text = str(evidence_path.relative_to(self.root)) if evidence_path and evidence_path.is_absolute() else str(evidence_path or "")
+        failure_file.write_text(
+            f"# {slice_id} {failure_class}\n\n"
+            f"- Timestamp: {now_iso()}\n"
+            f"- Severity: {severity}\n"
+            f"- Run ID: {run_id or ''}\n"
+            f"- Evidence: {evidence_text}\n\n"
+            f"## Description\n\n{description}\n\n"
+            f"## Action Taken\n\n{action_taken}\n",
+            encoding="utf-8",
+        )
+        payload = {"ts": now_iso(), "slice": slice_id, "run_id": run_id, "failure_class": failure_class, "severity": severity, "description": description, "action_taken": action_taken, "evidence_path": evidence_text or str(failure_file.relative_to(self.root)), "open": True}
+        append_jsonl(self.failure_path, redact(payload))
+        self.log_event("failure_recorded", payload, slice_id=slice_id)
+        return failure_file
+
+    def ship_slice(self, slice_id: str, run_id: str) -> None:
+        branch = f"ship/{slice_id.lower()}"
+        self.log_event("slice_ship_ready", {"run_id": run_id, "ship_branch": branch}, slice_id=slice_id)
+
+    def run_once(self, requested_slice: str | None = None) -> int:
+        self.log_heartbeat()
+        verify = self.run_verify_v1()
+        if verify.ok:
+            self.log_event("v1_complete", {})
+            return 0
+
+        slice_ = self.choose_next_slice(requested_slice)
+        if not slice_:
+            self.log_event("no_pending_slice", {})
+            return 1
+
+        self.ensure_slice_brief(slice_)
+        validation = self.validate_playbook(slice_)
+        if validation.exit_code == 2:
+            self.log_event("waiting_for_playbook", {"playbook": slice_.get("playbook")}, slice_id=slice_["id"])
+            self.mark_slice_status(slice_["id"], "waiting_for_playbook")
+            return 2
+        if not validation.ok:
+            self.record_failure(slice_["id"], "unsafe_write_root", "high", "Autonomous playbook validation failed.", "Rejected playbook before PO execution.", self.root / slice_["playbook"])
+            self.mark_slice_status(slice_["id"], "replan_required")
+            return 3
+
+        run = self.start_or_resume_po(slice_)
+        if not run.ok:
+            self.record_failure(slice_["id"], "test_failure", "medium", "PO did not start or resume successfully.", "Recorded failure and left slice pending for diagnosis.", None)
+            return run.exit_code or 4
+
+        state = self.load_state()
+        run_id = (state.get("active_run") or {}).get("run_id") or self._extract_run_id(run.stdout)
+        if not run_id:
+            self.log_event("po_run_id_missing", {"stdout": run.stdout, "stderr": run.stderr}, slice_id=slice_["id"])
+            return 5
+        status = self.inspect_po_status(run_id)
+        self.handle_po_status(slice_["id"], run_id, status)
+        return 0
+
+    def run_loop(self, max_loops: int | None = None, requested_slice: str | None = None) -> int:
+        loops = 0
+        while True:
+            code = self.run_once(requested_slice=requested_slice)
+            loops += 1
+            if code == 0 and self.load_state().get("v1_complete"):
+                return 0
+            if max_loops is not None and loops >= max_loops:
+                return code
+            time.sleep(30)
+
+    @staticmethod
+    def _extract_run_id(text: str) -> str | None:
+        if not text:
+            return None
+        try:
+            payload = json.loads(text)
+            for key in ("run_id", "id"):
+                if isinstance(payload, dict) and payload.get(key):
+                    return str(payload[key])
+        except json.JSONDecodeError:
+            pass
+        match = re.search(r"\b(run[_-][A-Za-z0-9_.:-]+)\b", text)
+        if match:
+            return match.group(1)
+        return None
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run the AutoKeel autonomous supervisor.")
+    parser.add_argument("--root", default=".", help="Product repo root.")
+    parser.add_argument("--once", action="store_true", help="Run one supervisor iteration.")
+    parser.add_argument("--dry-run", action="store_true", help="Log intended commands without executing them.")
+    parser.add_argument("--max-loops", type=int, default=None, help="Maximum loop count before exiting.")
+    parser.add_argument("--slice", dest="slice_id", default=None, help="Force a specific slice id or slug.")
+    parser.add_argument("--status", action="store_true", help="Print current autonomy state and exit.")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    root = Path(args.root).resolve()
+    autokeel = AutoKeel(root=root, dry_run=args.dry_run)
+    if args.status:
+        print(json.dumps({"state": autokeel.load_state(), "slices": autokeel.load_slices()}, indent=2, sort_keys=True))
+        return 0
+    if args.once:
+        return autokeel.run_once(requested_slice=args.slice_id)
+    return autokeel.run_loop(max_loops=args.max_loops, requested_slice=args.slice_id)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

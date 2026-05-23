@@ -1,0 +1,22 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.local/
+.conductor/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Health Data Hub local data and sensitive evidence.
+data/
+private/
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+*.parquet
+
+# Local agent/tool runtime output.
+orchestrator/
+*.log

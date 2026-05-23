@@ -1,0 +1,2408 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Health Data Hub × Keel — Operational Build Playbook</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#f6f8fb;
+    --panel:#ffffff;
+    --ink:#172033;
+    --muted:#657287;
+    --line:#dce4ef;
+    --deep:#0f172a;
+    --plan:#ea580c;
+    --compile:#2563eb;
+    --contract:#7c3aed;
+    --review:#e11d48;
+    --execute:#16a34a;
+    --audit:#0891b2;
+    --ship:#0f766e;
+    --health:#22c55e;
+    --model:#8b5cf6;
+    --data:#0ea5e9;
+    --risk:#f59e0b;
+    --bad:#b91c1c;
+    --good:#047857;
+    --shadow:0 18px 44px rgba(15,23,42,.10);
+    --radius:18px;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+    --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:linear-gradient(180deg,#eef4ff 0%,var(--bg) 320px);
+    color:var(--ink);
+    font-family:var(--sans);
+    line-height:1.56;
+  }
+  a{color:#1d4ed8;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .layout{
+    display:grid;
+    grid-template-columns:300px minmax(0,1fr);
+    gap:24px;
+    max-width:1540px;
+    margin:0 auto;
+    padding:22px;
+  }
+  aside{
+    position:sticky;
+    top:18px;
+    height:calc(100vh - 36px);
+    overflow:auto;
+    background:rgba(255,255,255,.88);
+    backdrop-filter:blur(12px);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    padding:18px;
+  }
+  aside h2{
+    margin:0 0 12px;
+    font-size:14px;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    color:var(--muted);
+  }
+  aside a{
+    display:block;
+    padding:8px 10px;
+    margin:2px 0;
+    border-radius:10px;
+    color:#334155;
+    font-size:14px;
+  }
+  aside a:hover{
+    background:#eef4ff;
+    text-decoration:none;
+    color:#0f3a8a;
+  }
+  main{min-width:0}
+  .hero{
+    position:relative;
+    overflow:hidden;
+    background:
+      radial-gradient(circle at 8% 0%,rgba(34,197,94,.18),transparent 34%),
+      radial-gradient(circle at 82% 6%,rgba(37,99,235,.18),transparent 36%),
+      radial-gradient(circle at 62% 100%,rgba(139,92,246,.16),transparent 34%),
+      #ffffff;
+    border:1px solid var(--line);
+    border-radius:28px;
+    padding:42px;
+    box-shadow:var(--shadow);
+    margin-bottom:24px;
+  }
+  .hero h1{
+    font-size:clamp(34px,5vw,66px);
+    line-height:1.02;
+    margin:0 0 16px;
+    letter-spacing:-.055em;
+  }
+  .hero p{
+    max-width:1040px;
+    font-size:19px;
+    color:#354155;
+    margin:0 0 18px;
+  }
+  .meta{
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:12px;
+    margin:22px 0 0;
+  }
+  .meta div{
+    border:1px solid var(--line);
+    background:rgba(255,255,255,.82);
+    border-radius:16px;
+    padding:14px;
+  }
+  .meta b{display:block;color:#0f172a;margin-bottom:4px}
+  .badge-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+  .badge{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    border:1px solid var(--line);
+    background:#f8fafc;
+    border-radius:999px;
+    padding:8px 12px;
+    font-size:13px;
+    color:#475569;
+    white-space:nowrap;
+  }
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .dot.plan{background:var(--plan)}
+  .dot.compile{background:var(--compile)}
+  .dot.contract{background:var(--contract)}
+  .dot.review{background:var(--review)}
+  .dot.execute{background:var(--execute)}
+  .dot.audit{background:var(--audit)}
+  .dot.ship{background:var(--ship)}
+  .dot.health{background:var(--health)}
+  section{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:30px;
+    margin:22px 0;
+    box-shadow:0 8px 28px rgba(15,23,42,.055);
+  }
+  section h2{
+    margin:0 0 14px;
+    font-size:clamp(24px,3vw,36px);
+    line-height:1.13;
+    letter-spacing:-.03em;
+  }
+  section h3{margin:26px 0 10px;font-size:21px;letter-spacing:-.015em}
+  section h4{margin:18px 0 8px;font-size:16px}
+  section p{color:#39475e}
+  .lead{font-size:18px;color:#334155;max-width:1040px}
+  .mini{font-size:13px;color:var(--muted)}
+  .grid{display:grid;gap:18px}
+  .grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .grid.four{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .card{
+    border:1px solid var(--line);
+    border-radius:16px;
+    padding:18px;
+    background:#fbfdff;
+  }
+  .card h3,.card h4{margin-top:0}
+  .card p:last-child{margin-bottom:0}
+  .callout{
+    border-left:5px solid var(--compile);
+    background:#eef5ff;
+    padding:16px 18px;
+    border-radius:14px;
+    color:#21314d;
+    margin:18px 0;
+  }
+  .callout.good{border-left-color:var(--good);background:#ecfdf5}
+  .callout.warn{border-left-color:var(--risk);background:#fff7ed}
+  .callout.bad{border-left-color:var(--bad);background:#fef2f2}
+  .pill{
+    display:inline-flex;
+    align-items:center;
+    border-radius:999px;
+    padding:5px 10px;
+    font-size:12px;
+    font-weight:850;
+    letter-spacing:.02em;
+    color:#fff;
+    margin:3px;
+    white-space:nowrap;
+  }
+  .pill.plan{background:var(--plan)}
+  .pill.compile{background:var(--compile)}
+  .pill.contract{background:var(--contract)}
+  .pill.review{background:var(--review)}
+  .pill.execute{background:var(--execute)}
+  .pill.audit{background:var(--audit)}
+  .pill.ship{background:var(--ship)}
+  .pill.health{background:var(--health)}
+  .pill.model{background:var(--model)}
+  .pill.data{background:var(--data)}
+  .pill.risk{background:var(--risk)}
+  .pill.bad{background:var(--bad)}
+  .pill.gray{background:#64748b}
+  .term{
+    position:relative;
+    display:inline-block;
+    border-bottom:1px dotted #64748b;
+    cursor:help;
+    color:#172554;
+    font-weight:650;
+  }
+  .term:hover::after{
+    content:attr(data-tip);
+    position:absolute;
+    left:50%;
+    bottom:calc(100% + 10px);
+    transform:translateX(-50%);
+    min-width:260px;
+    max-width:390px;
+    background:#0f172a;
+    color:white;
+    padding:10px 12px;
+    border-radius:12px;
+    font-size:13px;
+    line-height:1.35;
+    z-index:30;
+    box-shadow:0 16px 40px rgba(0,0,0,.22);
+    font-weight:500;
+  }
+  .term:hover::before{
+    content:"";
+    position:absolute;
+    left:50%;
+    bottom:calc(100% + 2px);
+    transform:translateX(-50%);
+    border:8px solid transparent;
+    border-top-color:#0f172a;
+    z-index:31;
+  }
+  details{
+    border:1px solid var(--line);
+    border-radius:14px;
+    background:#fcfdff;
+    padding:0;
+    margin:12px 0;
+    overflow:hidden;
+  }
+  summary{
+    cursor:pointer;
+    padding:14px 16px;
+    font-weight:850;
+    color:#1e293b;
+    background:#f8fafc;
+  }
+  details .inside{padding:0 16px 16px}
+  pre,code{
+    font-family:var(--mono);
+    background:#0f172a;
+    color:#e2e8f0;
+    border-radius:12px;
+  }
+  code{padding:2px 6px;font-size:.9em}
+  pre{
+    padding:16px;
+    overflow:auto;
+    line-height:1.45;
+    font-size:13px;
+  }
+  .inline-code{
+    font-family:var(--mono);
+    background:#eef2ff;
+    color:#312e81;
+    border-radius:7px;
+    padding:2px 6px;
+    font-size:.9em;
+  }
+  .svg-wrap{
+    overflow:auto;
+    border:1px solid var(--line);
+    border-radius:18px;
+    background:linear-gradient(180deg,#fff,#f8fbff);
+    padding:14px;
+    margin:18px 0;
+  }
+  svg text{font-family:var(--sans)}
+  .node-btn{cursor:pointer;transition:filter .15s,opacity .15s,transform .15s}
+  .node-btn:hover{filter:brightness(1.05)}
+  .node-btn.dim{opacity:.24}
+  .node-btn.active rect,.node-btn.active circle{stroke:#0f172a;stroke-width:4}
+  .panel{
+    border:1px solid var(--line);
+    border-radius:16px;
+    background:#ffffff;
+    padding:18px;
+    margin:14px 0;
+  }
+  .panel-title{font-weight:900;font-size:18px;margin:0 0 6px}
+  button,.button{
+    appearance:none;
+    border:1px solid #cbd5e1;
+    background:#fff;
+    color:#1e293b;
+    padding:10px 13px;
+    border-radius:12px;
+    cursor:pointer;
+    font-weight:850;
+    font-family:var(--sans);
+    transition:transform .08s,box-shadow .08s,background .12s;
+  }
+  button:hover,.button:hover{
+    transform:translateY(-1px);
+    box-shadow:0 8px 18px rgba(15,23,42,.08);
+    background:#f8fafc;
+    text-decoration:none;
+  }
+  button.primary{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+  button.active{background:#0f172a;color:#fff;border-color:#0f172a}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}
+  table{
+    width:100%;
+    border-collapse:separate;
+    border-spacing:0;
+    overflow:hidden;
+    border:1px solid var(--line);
+    border-radius:14px;
+    background:#fff;
+  }
+  th,td{
+    text-align:left;
+    border-bottom:1px solid var(--line);
+    padding:12px;
+    vertical-align:top;
+  }
+  th{background:#f8fafc;color:#334155;font-size:13px;text-transform:uppercase;letter-spacing:.05em}
+  tr:last-child td{border-bottom:none}
+  .matrix{
+    display:grid;
+    grid-template-columns:150px repeat(3,minmax(0,1fr));
+    gap:8px;
+    align-items:stretch;
+  }
+  .matrix > div{
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:12px;
+    background:#fff;
+  }
+  .matrix .head{background:#f1f5f9;font-weight:900;color:#334155}
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .compare .side{
+    border:1px solid var(--line);
+    border-radius:16px;
+    padding:18px;
+    background:#fff;
+  }
+  .side.good{background:#ecfdf5}
+  .side.warn{background:#fff7ed}
+  .side.bad{background:#fef2f2}
+  .bar{
+    height:14px;
+    background:#e2e8f0;
+    border-radius:999px;
+    overflow:hidden;
+    margin:8px 0;
+  }
+  .bar span{
+    display:block;
+    height:100%;
+    width:40%;
+    border-radius:999px;
+    background:#2563eb;
+    transition:width .25s ease;
+  }
+  .timeline{
+    position:relative;
+    padding:24px 0 6px;
+    margin:20px 0;
+  }
+  .timeline::before{
+    content:"";
+    position:absolute;
+    left:22px;
+    top:0;
+    bottom:0;
+    width:3px;
+    background:#dbe4f0;
+    border-radius:99px;
+  }
+  .time-item{
+    position:relative;
+    display:grid;
+    grid-template-columns:58px 1fr;
+    gap:12px;
+    margin:0 0 16px;
+    cursor:pointer;
+  }
+  .time-dot{
+    width:46px;height:46px;border-radius:50%;
+    background:#fff;
+    border:3px solid #94a3b8;
+    display:flex;align-items:center;justify-content:center;
+    font-weight:900;
+    color:#475569;
+    z-index:2;
+  }
+  .time-item.active .time-dot{border-color:#1d4ed8;background:#dbeafe;color:#1e40af}
+  .time-card{
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:12px 14px;
+    background:#fff;
+  }
+  .time-card strong{display:block}
+  .tag{
+    display:inline-block;
+    border-radius:999px;
+    padding:4px 9px;
+    font-size:12px;
+    font-weight:900;
+    background:#eef2ff;
+    color:#3730a3;
+    margin:2px;
+  }
+  .tag.safe{background:#ecfdf5;color:#047857}
+  .tag.risk{background:#fff7ed;color:#9a3412}
+  .tag.stop{background:#fff1f2;color:#be123c}
+  .tag.info{background:#eff6ff;color:#1d4ed8}
+  .tag.data{background:#ecfeff;color:#0e7490}
+  .tag.model{background:#f5f3ff;color:#6d28d9}
+  .source-list li{margin:8px 0}
+  .mobile-toc{display:none}
+  .kbd{
+    font-family:var(--mono);
+    border:1px solid #cbd5e1;
+    background:#f8fafc;
+    border-bottom-width:2px;
+    border-radius:7px;
+    padding:2px 6px;
+    font-size:12px;
+  }
+  .dashboard{
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:14px;
+    margin:18px 0;
+  }
+  .dash-card{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:16px;
+    padding:16px;
+    box-shadow:0 4px 18px rgba(15,23,42,.055);
+  }
+  .dash-card b{display:block;font-size:26px;color:#0f172a;margin-bottom:2px}
+  .dash-card span{color:var(--muted);font-size:13px}
+  .slice-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .slice-card{
+    border:1px solid var(--line);
+    border-radius:16px;
+    background:#fff;
+    padding:14px;
+    cursor:pointer;
+    transition:transform .08s,box-shadow .08s,border-color .12s;
+  }
+  .slice-card:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(15,23,42,.08)}
+  .slice-card.active{border-color:#0f172a;box-shadow:0 0 0 3px rgba(15,23,42,.08)}
+  .slice-card h4{margin:6px 0 6px;font-size:16px}
+  .command-box{
+    background:#0f172a;
+    color:#e2e8f0;
+    border-radius:14px;
+    padding:16px;
+    overflow:auto;
+    white-space:pre;
+    font-family:var(--mono);
+    font-size:12.5px;
+    line-height:1.5;
+  }
+  .input-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  input,select{
+    font-family:var(--sans);
+    border:1px solid #cbd5e1;
+    border-radius:12px;
+    padding:10px;
+    background:#fff;
+    color:#1e293b;
+    max-width:100%;
+  }
+  input[type="range"]{width:min(480px,100%)}
+  .checklist{list-style:none;padding:0;margin:10px 0}
+  .checklist li{
+    border:1px solid var(--line);
+    background:#fff;
+    border-radius:12px;
+    padding:10px 12px;
+    margin:8px 0;
+  }
+  .checklist input{margin-right:8px}
+  .split{display:grid;grid-template-columns:1.1fr .9fr;gap:18px;align-items:start}
+  .small-table td,.small-table th{font-size:13px}
+  .row-ok{background:#ecfdf5}
+  .row-warn{background:#fff7ed}
+  .row-bad{background:#fef2f2}
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+  .legend span{font-size:12px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:5px 9px}
+  @media (max-width:1120px){
+    .layout{display:block;padding:12px}
+    aside{display:none}
+    .mobile-toc{
+      display:block;
+      margin:12px 0 18px;
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:12px;
+    }
+    .mobile-toc select{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line)}
+    .grid.two,.grid.three,.grid.four,.compare,.meta,.dashboard,.slice-grid,.split{grid-template-columns:1fr}
+    .matrix{grid-template-columns:1fr}
+    .hero{padding:26px}
+    section{padding:22px}
+  }
+</style>
+</head>
+
+<body>
+<div class="layout">
+  <aside aria-label="Table of contents">
+    <h2>Operational playbook</h2>
+    <a href="#overview">1. Where we are</a>
+    <a href="#scratchpad">2. Planning map</a>
+    <a href="#truths">3. Product truths</a>
+    <a href="#roles">4. Team roles</a>
+    <a href="#master-loop">5. Master Keel loop</a>
+    <a href="#artifact-map">6. Artifact map</a>
+    <a href="#build-roadmap">7. Build roadmap</a>
+    <a href="#slice-runbook">8. Slice runbook</a>
+    <a href="#keel-ops">9. Keel operations</a>
+    <a href="#po-state">10. PO state machine</a>
+    <a href="#health-architecture">11. Health app architecture</a>
+    <a href="#data-model">12. Data model and schema gates</a>
+    <a href="#model-gates">13. Model gates</a>
+    <a href="#tripwires">14. Tripwires</a>
+    <a href="#first-two-weeks">15. First two weeks</a>
+    <a href="#quality">16. Quality bar</a>
+    <a href="#failure-modes">17. Failure modes</a>
+    <a href="#cheatsheet">18. Command sheet</a>
+    <a href="#sources">19. Sources</a>
+  </aside>
+
+  <main>
+    <nav class="mobile-toc" aria-label="Mobile table of contents">
+      <select onchange="location.hash=this.value">
+        <option value="#overview">1. Where we are</option>
+        <option value="#scratchpad">2. Planning map</option>
+        <option value="#truths">3. Product truths</option>
+        <option value="#roles">4. Team roles</option>
+        <option value="#master-loop">5. Master Keel loop</option>
+        <option value="#artifact-map">6. Artifact map</option>
+        <option value="#build-roadmap">7. Build roadmap</option>
+        <option value="#slice-runbook">8. Slice runbook</option>
+        <option value="#keel-ops">9. Keel operations</option>
+        <option value="#po-state">10. PO state machine</option>
+        <option value="#health-architecture">11. Health architecture</option>
+        <option value="#data-model">12. Data model</option>
+        <option value="#model-gates">13. Model gates</option>
+        <option value="#tripwires">14. Tripwires</option>
+        <option value="#first-two-weeks">15. First two weeks</option>
+        <option value="#quality">16. Quality bar</option>
+        <option value="#failure-modes">17. Failure modes</option>
+        <option value="#cheatsheet">18. Command sheet</option>
+        <option value="#sources">19. Sources</option>
+      </select>
+    </nav>
+
+```
+<header class="hero">
+  <h1>Building the Health Data Hub with Keel</h1>
+  <p>
+    This is the operational playbook for taking the approved <strong>Sleep + Mood Retrospective Explainer</strong> design from zero code to a shipped local-first app using the Keel toolchain.
+  </p>
+  <p>
+    The team should use this as the source of “what happens next”: which artifact to create, which Keel lane to use, which human gate applies, what evidence must exist, and what must never be delegated to an agent.
+  </p>
+  <div class="meta">
+    <div><b>Scope</b><span class="mini">Health Data Hub v1: Oura + mood required, 8 Sleep optional, local-first, retrospective-only, no causal claims.</span></div>
+    <div><b>Confidence</b><span class="mini">0.90. The workflow is grounded in the provided design doc plus current public Keel, compiler, PO, SWR, and gstack docs inspected on May 23, 2026.</span></div>
+    <div><b>Perspective</b><span class="mini">Treat this as a trust-building operating system, not a prompt recipe. The artifact trail is the product.</span></div>
+  </div>
+  <div class="badge-row">
+    <span class="badge"><span class="dot plan"></span>gstack planning</span>
+    <span class="badge"><span class="dot compile"></span>compiler / SWR</span>
+    <span class="badge"><span class="dot contract"></span>playbook contract</span>
+    <span class="badge"><span class="dot execute"></span>plan-orchestrator</span>
+    <span class="badge"><span class="dot audit"></span>dual audit</span>
+    <span class="badge"><span class="dot review"></span>human gates</span>
+    <span class="badge"><span class="dot ship"></span>ship and learn</span>
+  </div>
+</header>
+
+<section id="overview">
+  <h2>1. Where the project is right now</h2>
+  <p class="lead">
+    The project has a strong design and no implementation. That is exactly where Keel helps: it turns a reviewed plan into a narrow playbook, executes it one row at a time, audits the evidence, and stops where a human must decide.
+  </p>
+
+  <div class="dashboard">
+    <div class="dash-card"><b>1</b><span>Approved design doc, locked 2026-05-15 after six revisions and three external expert reviews.</span></div>
+    <div class="dash-card"><b>0</b><span>Application code exists. No warehouse, API, model, UI, cron, backup, or tests yet.</span></div>
+    <div class="dash-card"><b>16</b><span>Calendar-week target plan on evenings/weekends, with realistic slippage risk.</span></div>
+    <div class="dash-card"><b>37</b><span>Model-ready-day UI threshold before retrospective model output may appear.</span></div>
+  </div>
+
+  <div class="grid three">
+    <div class="card">
+      <h3>What is already done</h3>
+      <ul>
+        <li>v1 scope selected: Sleep + Mood Retrospective Explainer.</li>
+        <li>Architecture selected: layered backend + Streamlit.</li>
+        <li>Critical statistical gates defined.</li>
+        <li>Tripwires and fallback policies defined.</li>
+        <li>UI language discipline defined.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>What must start immediately</h3>
+      <ul>
+        <li>Daily mood logging in structured Apple Notes.</li>
+        <li>Keel/gstack/toolchain preflight.</li>
+        <li>Product repo artifact structure.</li>
+        <li>First slice planning for the warehouse foundation.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>What must not happen</h3>
+      <ul>
+        <li>Do not compile the full 16-week design into one giant playbook.</li>
+        <li>Do not let any agent clear manual gates.</li>
+        <li>Do not show model output before same-day mood is logged.</li>
+        <li>Do not weaken model gates just to make the UI look interesting.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout good">
+    <strong>The first real code slice should be the warehouse foundation.</strong> It has no external API dependency, has concrete files, and gives the team a clean first Keel run: schema, insert functions, validation, quarantine, permissions, and tests.
+  </div>
+</section>
+
+<section id="scratchpad">
+  <h2>2. Scratchpad: how this playbook is organized</h2>
+  <p class="lead">
+    The build has two jobs at once: build the health app and validate the Keel operating model on a real project. This playbook separates the product architecture from the toolchain process so the team does not confuse “what we are building” with “how a slice gets safely built.”
+  </p>
+
+  <div class="grid two">
+    <div class="card">
+      <h3>Main sections</h3>
+      <ol>
+        <li>Current state and non-negotiable product truths.</li>
+        <li>Team roles and safety boundaries.</li>
+        <li>Keel master loop and artifact trail.</li>
+        <li>Roadmap sliced into executable playbooks.</li>
+        <li>Per-slice operating procedure.</li>
+        <li>Health app architecture and data flow.</li>
+        <li>Model, tripwire, and launch gates.</li>
+        <li>Command sheet and failure protocols.</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3>What gets visualized</h3>
+      <p><strong>Flowcharts</strong> show the idea → playbook → PO → audit → ship loop.</p>
+      <p><strong>Diagrams</strong> show artifact ownership, data architecture, and PO terminal states.</p>
+      <p><strong>Dashboards</strong> show slice risk, lane choice, model gate status, and tripwire actions.</p>
+    </div>
+    <div class="card">
+      <h3>Simplification rule</h3>
+      <p>A playbook is a recipe. A worktree is a sealed copy. A gate is a locked door. Evidence is a file the team can open. If a step cannot be explained that way, it is too vague to run.</p>
+    </div>
+    <div class="card">
+      <h3>Operating principle</h3>
+      <p>The team should prefer a boring failed gate over an impressive unchecked result. Keel’s value is not speed alone; it is reviewable progress.</p>
+    </div>
+  </div>
+</section>
+
+<section id="truths">
+  <h2>3. Product truths the team must preserve</h2>
+  <p class="lead">
+    These rules are not polish. They are the product. Every gstack plan, compiler row, PO run, audit, and PR must preserve them.
+  </p>
+
+  <div class="grid three">
+    <div class="card">
+      <h3>Retrospective only</h3>
+      <p>v1 explains a logged day after the user has logged mood. It does not predict tomorrow and does not recommend interventions.</p>
+      <span class="tag safe">v1 scope</span>
+    </div>
+    <div class="card">
+      <h3>Correlation, not causation</h3>
+      <p>Use “model contributors” and “associated with.” Avoid “drivers,” “caused,” “you should,” and “what made you tired.”</p>
+      <span class="tag stop">UI language gate</span>
+    </div>
+    <div class="card">
+      <h3>Local-first</h3>
+      <p>DuckDB on the Mac, home Wi-Fi only, token-gated FastAPI, encrypted snapshots, no hosted backend in v1.</p>
+      <span class="tag safe">privacy boundary</span>
+    </div>
+    <div class="card">
+      <h3>Oura + mood are required</h3>
+      <p>8 Sleep is optional under the week-2 tripwire. Garmin, Withings, chest strap, nutrition, and action variables are v2+.</p>
+      <span class="tag info">dependency rule</span>
+    </div>
+    <div class="card">
+      <h3>Four model features</h3>
+      <p>v1 model uses exactly: <span class="inline-code">total_sleep_min</span>, <span class="inline-code">hrv_z</span>, <span class="inline-code">deep_sleep_pct</span>, <span class="inline-code">prior_day_feeling</span>.</p>
+      <span class="tag model">feature gate</span>
+    </div>
+    <div class="card">
+      <h3>No hidden magic output</h3>
+      <p>Below model gates, the UI says “collecting model-ready days” or “model is not yet better than baseline.” Empty output is a trust-preserving result.</p>
+      <span class="tag risk">trust rule</span>
+    </div>
+  </div>
+
+  <h3>Words checklist for every UI and API response</h3>
+  <div class="compare">
+    <div class="side bad">
+      <h3>Forbidden in v1</h3>
+      <ul>
+        <li>“biggest drivers”</li>
+        <li>“what made you tired”</li>
+        <li>“you would have felt 7/10”</li>
+        <li>“caused”</li>
+        <li>“you should sleep more”</li>
+        <li>“tomorrow’s feeling prediction”</li>
+      </ul>
+    </div>
+    <div class="side good">
+      <h3>Use instead</h3>
+      <ul>
+        <li>“top model contributors”</li>
+        <li>“patterns associated with this rating”</li>
+        <li>“model-estimated change in your past data”</li>
+        <li>“correlation, not proven causation”</li>
+        <li>“retrospective explanation”</li>
+        <li>“insufficient stable signal”</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="roles">
+  <h2>4. Team roles for the first Keel deployment</h2>
+  <p class="lead">
+    One person can hold multiple roles, but the role boundaries must be explicit. The biggest operational risk is letting an agent or a convenience wrapper cross a human-only boundary.
+  </p>
+
+  <div class="grid three">
+    <div class="card">
+      <h3>Product owner</h3>
+      <p>Owns scope, tripwires, UI language, and final launch decisions. Approves briefs before compile.</p>
+      <span class="pill plan">gstack gate</span>
+    </div>
+    <div class="card">
+      <h3>Keel operator</h3>
+      <p>Runs <span class="inline-code">keel-compile</span>, <span class="inline-code">keel-run</span>, <span class="inline-code">keel-doctor</span>, and <span class="inline-code">keel-swr</span>. Watches status and keeps run notes.</p>
+      <span class="pill execute">run control</span>
+    </div>
+    <div class="card">
+      <h3>Gate reviewer</h3>
+      <p>Reads gate packets and records manual-gate decisions from a human-held terminal. This role must not be delegated to a worker agent.</p>
+      <span class="pill review">human only</span>
+    </div>
+    <div class="card">
+      <h3>Evidence librarian</h3>
+      <p>Keeps external evidence directories, smoke-test reports, screenshots, sanitized logs, and restore proof organized.</p>
+      <span class="pill audit">evidence</span>
+    </div>
+    <div class="card">
+      <h3>Security/privacy reviewer</h3>
+      <p>Checks tokens, local network rules, file permissions, logs, quarantine, encrypted snapshots, and raw-data boundaries.</p>
+      <span class="pill risk">privacy gate</span>
+    </div>
+    <div class="card">
+      <h3>Release owner</h3>
+      <p>Creates ship branches, runs gstack review/ship/land, writes release notes, and closes the slice with a retro.</p>
+      <span class="pill ship">ship</span>
+    </div>
+  </div>
+
+  <div class="callout bad">
+    <strong>Non-negotiable:</strong> never brief an agent with “complete the run” or “handle whatever approvals are needed.” Use explicit stop wording: “Run until the first <span class="inline-code">awaiting_human_gate</span> or <span class="inline-code">blocked_external</span>, then stop and summarize.”
+  </div>
+</section>
+
+<section id="master-loop">
+  <h2>5. The master Keel loop for this project</h2>
+  <p class="lead">
+    The loop is the same for every slice. Click each stage to see what it means for the Health Data Hub.
+  </p>
+
+  <div class="svg-wrap">
+    <svg id="loopSvg" viewBox="0 0 1280 430" role="img" aria-label="Health Data Hub Keel master loop">
+      <defs>
+        <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#94a3b8"></path>
+        </marker>
+      </defs>
+      <path d="M150 115 H245" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)"/>
+      <path d="M395 115 H490" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)"/>
+      <path d="M640 115 H735" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)"/>
+      <path d="M885 115 H980" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)"/>
+      <path d="M1070 150 C1115 210 1090 275 1010 290" stroke="#94a3b8" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+      <path d="M855 290 H720" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)"/>
+      <path d="M600 290 H465" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)"/>
+      <path d="M325 290 C165 290 80 235 90 155" stroke="#94a3b8" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+
+      <g class="node-btn active" data-loop="0" transform="translate(30,70)">
+        <rect width="150" height="90" rx="22" fill="#fff7ed" stroke="#f59e0b" stroke-width="3"></rect>
+        <text x="75" y="38" text-anchor="middle" font-weight="900" fill="#92400e">0. Slice</text>
+        <text x="75" y="62" text-anchor="middle" font-size="12" fill="#92400e">one bounded target</text>
+      </g>
+      <g class="node-btn" data-loop="1" transform="translate(245,70)">
+        <rect width="180" height="90" rx="22" fill="#ffedd5" stroke="#ea580c" stroke-width="3"></rect>
+        <text x="90" y="38" text-anchor="middle" font-weight="900" fill="#9a3412">1. gstack plan</text>
+        <text x="90" y="62" text-anchor="middle" font-size="12" fill="#9a3412">approved brief</text>
+      </g>
+      <g class="node-btn" data-loop="2" transform="translate(490,70)">
+        <rect width="180" height="90" rx="22" fill="#eff6ff" stroke="#2563eb" stroke-width="3"></rect>
+        <text x="90" y="35" text-anchor="middle" font-weight="900" fill="#1d4ed8">2. Compile</text>
+        <text x="90" y="58" text-anchor="middle" font-size="12" fill="#1d4ed8">or SWR lane</text>
+      </g>
+      <g class="node-btn" data-loop="3" transform="translate(735,70)">
+        <rect width="180" height="90" rx="22" fill="#f5f3ff" stroke="#7c3aed" stroke-width="3"></rect>
+        <text x="90" y="35" text-anchor="middle" font-weight="900" fill="#6d28d9">3. Playbook</text>
+        <text x="90" y="58" text-anchor="middle" font-size="12" fill="#6d28d9">review contract</text>
+      </g>
+      <g class="node-btn" data-loop="4" transform="translate(980,70)">
+        <rect width="190" height="90" rx="22" fill="#ecfdf5" stroke="#16a34a" stroke-width="3"></rect>
+        <text x="95" y="35" text-anchor="middle" font-weight="900" fill="#047857">4. PO run</text>
+        <text x="95" y="58" text-anchor="middle" font-size="12" fill="#047857">worktree items</text>
+      </g>
+      <g class="node-btn" data-loop="5" transform="translate(850,245)">
+        <rect width="180" height="90" rx="22" fill="#ecfeff" stroke="#0891b2" stroke-width="3"></rect>
+        <text x="90" y="35" text-anchor="middle" font-weight="900" fill="#0e7490">5. Audit</text>
+        <text x="90" y="58" text-anchor="middle" font-size="12" fill="#0e7490">Codex + Claude</text>
+      </g>
+      <g class="node-btn" data-loop="6" transform="translate(570,245)">
+        <rect width="180" height="90" rx="22" fill="#fff1f2" stroke="#e11d48" stroke-width="3"></rect>
+        <text x="90" y="35" text-anchor="middle" font-weight="900" fill="#be123c">6. Gates</text>
+        <text x="90" y="58" text-anchor="middle" font-size="12" fill="#be123c">human/evidence</text>
+      </g>
+      <g class="node-btn" data-loop="7" transform="translate(300,245)">
+        <rect width="180" height="90" rx="22" fill="#ccfbf1" stroke="#0f766e" stroke-width="3"></rect>
+        <text x="90" y="35" text-anchor="middle" font-weight="900" fill="#115e59">7. Ship</text>
+        <text x="90" y="58" text-anchor="middle" font-size="12" fill="#115e59">PR + learn</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="panel" id="loopPanel">
+    <p class="panel-title">0. Choose one bounded slice</p>
+    <p>Do not ask Keel to build “the Health Data Hub.” Ask it to build one slice: warehouse schema, mood API, feature engineering, model gate, counterfactual generator, Streamlit page, backup/restore, or tests.</p>
+  </div>
+</section>
+
+<section id="artifact-map">
+  <h2>6. Artifact map: what lives where</h2>
+  <p class="lead">
+    Keel works because every handoff is a file. The team should know which files are source of truth, which are runtime-only, and which must never enter git.
+  </p>
+
+  <div class="controls">
+    <button class="active art-btn" data-art="design">Design</button>
+    <button class="art-btn" data-art="brief">Brief</button>
+    <button class="art-btn" data-art="playbook">Playbook</button>
+    <button class="art-btn" data-art="run">Run evidence</button>
+    <button class="art-btn" data-art="external">External evidence</button>
+    <button class="art-btn" data-art="ship">Ship branch</button>
+    <button class="art-btn" data-art="data">Health data</button>
+  </div>
+
+  <div class="svg-wrap">
+    <svg viewBox="0 0 1220 450" role="img" aria-label="Artifact topology">
+      <defs>
+        <marker id="artArrow" markerWidth="12" markerHeight="12" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#94a3b8"></path>
+        </marker>
+      </defs>
+      <path d="M255 105 H360" stroke="#94a3b8" stroke-width="3" marker-end="url(#artArrow)"></path>
+      <path d="M560 105 H665" stroke="#94a3b8" stroke-width="3" marker-end="url(#artArrow)"></path>
+      <path d="M865 105 H970" stroke="#94a3b8" stroke-width="3" marker-end="url(#artArrow)"></path>
+      <path d="M760 160 V250" stroke="#94a3b8" stroke-width="3" marker-end="url(#artArrow)"></path>
+      <path d="M1070 160 V250" stroke="#94a3b8" stroke-width="3" marker-end="url(#artArrow)"></path>
+      <path d="M780 345 H970" stroke="#94a3b8" stroke-width="3" marker-end="url(#artArrow)"></path>
+
+      <g class="node-btn artifact-node active" data-art-node="design" transform="translate(40,55)">
+        <rect width="220" height="105" rx="22" fill="#ffedd5" stroke="#ea580c" stroke-width="3"></rect>
+        <text x="110" y="38" text-anchor="middle" font-weight="900" fill="#9a3412">Design doc</text>
+        <text x="110" y="64" text-anchor="middle" font-size="12" fill="#9a3412">docs/gstack/</text>
+        <text x="110" y="84" text-anchor="middle" font-size="12" fill="#9a3412">promoted from ~/.gstack</text>
+      </g>
+      <g class="node-btn artifact-node" data-art-node="brief" transform="translate(365,55)">
+        <rect width="220" height="105" rx="22" fill="#fff7ed" stroke="#f59e0b" stroke-width="3"></rect>
+        <text x="110" y="38" text-anchor="middle" font-weight="900" fill="#92400e">Approved slice brief</text>
+        <text x="110" y="64" text-anchor="middle" font-size="12" fill="#92400e">docs/briefs/</text>
+        <text x="110" y="84" text-anchor="middle" font-size="12" fill="#92400e">human-approved scope</text>
+      </g>
+      <g class="node-btn artifact-node" data-art-node="playbook" transform="translate(670,55)">
+        <rect width="220" height="105" rx="22" fill="#f5f3ff" stroke="#7c3aed" stroke-width="3"></rect>
+        <text x="110" y="38" text-anchor="middle" font-weight="900" fill="#6d28d9">Playbook</text>
+        <text x="110" y="64" text-anchor="middle" font-size="12" fill="#6d28d9">docs/playbooks/</text>
+        <text x="110" y="84" text-anchor="middle" font-size="12" fill="#6d28d9">markdown_playbook_v1</text>
+      </g>
+      <g class="node-btn artifact-node" data-art-node="run" transform="translate(975,55)">
+        <rect width="220" height="105" rx="22" fill="#ecfdf5" stroke="#16a34a" stroke-width="3"></rect>
+        <text x="110" y="38" text-anchor="middle" font-weight="900" fill="#047857">PO run</text>
+        <text x="110" y="64" text-anchor="middle" font-size="12" fill="#047857">orchestrator/run/...</text>
+        <text x="110" y="84" text-anchor="middle" font-size="12" fill="#047857">worktrees + run_state</text>
+      </g>
+      <g class="node-btn artifact-node" data-art-node="external" transform="translate(600,260)">
+        <rect width="260" height="105" rx="22" fill="#fff1f2" stroke="#e11d48" stroke-width="3"></rect>
+        <text x="130" y="38" text-anchor="middle" font-weight="900" fill="#be123c">External evidence</text>
+        <text x="130" y="64" text-anchor="middle" font-size="12" fill="#be123c">private/evidence/</text>
+        <text x="130" y="84" text-anchor="middle" font-size="12" fill="#be123c">sanitized summary in docs/</text>
+      </g>
+      <g class="node-btn artifact-node" data-art-node="ship" transform="translate(980,260)">
+        <rect width="220" height="105" rx="22" fill="#ccfbf1" stroke="#0f766e" stroke-width="3"></rect>
+        <text x="110" y="38" text-anchor="middle" font-weight="900" fill="#115e59">Ship branch</text>
+        <text x="110" y="64" text-anchor="middle" font-size="12" fill="#115e59">ship/&lt;slice&gt;</text>
+        <text x="110" y="84" text-anchor="middle" font-size="12" fill="#115e59">PR + release notes</text>
+      </g>
+      <g class="node-btn artifact-node" data-art-node="data" transform="translate(40,260)">
+        <rect width="280" height="105" rx="22" fill="#ecfeff" stroke="#0ea5e9" stroke-width="3"></rect>
+        <text x="140" y="38" text-anchor="middle" font-weight="900" fill="#0369a1">Health data</text>
+        <text x="140" y="64" text-anchor="middle" font-size="12" fill="#0369a1">data/ raw/secrets/snapshots</text>
+        <text x="140" y="84" text-anchor="middle" font-size="12" fill="#0369a1">never committed</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="panel">
+    <p class="panel-title" id="artifactTitle">Design doc</p>
+    <p id="artifactText">The /office-hours design exists in ~/.gstack. Promote a copy into the product repo as docs/gstack/health-data-hub-office-hours.md so the team can review, compile, and version the starting point.</p>
+  </div>
+
+  <h3>Recommended product repo folders</h3>
+  <pre><code>docs/
+```
+
+gstack/                  # promoted office-hours design, autoplan outputs, review artifacts
+briefs/                  # slice-specific approved briefs
+playbooks/               # markdown_playbook_v1 files + compiler sidecars
+reviews/                 # human signoffs, playbook reviews, PR reviews
+evidence/                # sanitized evidence summaries safe for git
+runbooks/                # human procedures: restore, token rotation, launchd, mood shortcut
+private/                   # gitignored local notes and sensitive evidence summaries
+private/evidence/          # local external evidence dirs passed to PO
+data/                      # gitignored health data, secrets, quarantine, snapshots</code></pre>
+
+```
+  <div class="callout warn">
+    <strong>Rule:</strong> <span class="inline-code">~/.gstack</span> is live runtime memory, not the product source of truth. Promote the approved design and slice briefs into the product repo before compiling.
+  </div>
+</section>
+
+<section id="build-roadmap">
+  <h2>7. Build roadmap: tracks and slices</h2>
+  <p class="lead">
+    The team should run the project as a sequence of small Keel slices, not one giant run. Some work starts before code because the model needs real mood labels.
+  </p>
+
+  <h3>Three tracks that run together</h3>
+  <div class="grid three">
+    <div class="card">
+      <h3>Track A — Data clock</h3>
+      <p>Start mood logging immediately in Apple Notes. This is not waiting for code. Every day matters for <span class="inline-code">N_model</span>.</p>
+      <span class="pill health">human habit</span>
+    </div>
+    <div class="card">
+      <h3>Track B — Keel code slices</h3>
+      <p>Build repo scaffold, warehouse, API, features, model, UI, backup, tests, and restore as separate playbooks.</p>
+      <span class="pill execute">Keel loop</span>
+    </div>
+    <div class="card">
+      <h3>Track C — External evidence</h3>
+      <p>Smoke-test Oura and 8 Sleep paths. Feed verified evidence into the relevant ingestion playbooks. Apply tripwires on schedule.</p>
+      <span class="pill review">external gates</span>
+    </div>
+  </div>
+
+  <h3>Recommended slice sequence</h3>
+  <p class="mini">Click a slice to inspect lane, risk, inputs, outputs, gates, and why it is ordered there.</p>
+
+  <div class="slice-grid" id="sliceGrid"></div>
+
+  <div class="panel">
+    <p class="panel-title" id="sliceTitle">S00 — Start the data clock and setup the shell</p>
+    <p id="sliceDescription">Mood logging starts immediately outside the codebase. In parallel, install Keel/gstack and promote the design into the repo. This is a setup slice, not a PO execution slice.</p>
+    <div id="sliceDetails"></div>
+  </div>
+
+  <div class="callout">
+    <strong>Lane rule:</strong> use the compiler for low/medium-risk implementation slices with concrete files. Use SWR for slices where planning quality matters more than speed: security, secrets, backup/restore, model/counterfactual framing, and broad ambiguous changes.
+  </div>
+</section>
+
+<section id="slice-runbook">
+  <h2>8. Slice runbook: exactly how one slice moves</h2>
+  <p class="lead">
+    Pick a slice, make a slice-specific approved brief, compile or stage it into a playbook, human-review the playbook, execute with PO, resolve gates, then ship through gstack.
+  </p>
+
+  <div class="controls">
+    <button class="active runbook-btn" data-runbook="compiler">Fast compiler lane</button>
+    <button class="runbook-btn" data-runbook="swr">High-stakes SWR lane</button>
+    <button class="runbook-btn" data-runbook="external">External evidence lane</button>
+  </div>
+
+  <div class="panel">
+    <p class="panel-title" id="runbookTitle">Fast compiler lane</p>
+    <p id="runbookText">Use this for bounded slices with concrete files and clear tests: warehouse, feature engineering, straightforward API read endpoints, tests, and UI components.</p>
+    <pre id="runbookCmd"># 1. Produce a slice-specific approved brief with gstack.
+```
+
+/autoplan docs/gstack/health-data-hub-office-hours.md
+
+# Save the slice outputs:
+
+# docs/gstack/s01-warehouse-autoplan.md
+
+# docs/briefs/s01-warehouse.approved-brief.md
+
+# 2. Compile the approved brief into markdown_playbook_v1.
+
+source ~/keel/keel.env
+export PRODUCT_REPO="$HOME/health-data-hub"
+
+keel-compile compile 
+--repo-root "$PRODUCT_REPO" 
+--design "$PRODUCT_REPO/docs/gstack/health-data-hub-office-hours.md" 
+--autoplan "$PRODUCT_REPO/docs/gstack/s01-warehouse-autoplan.md" 
+--approved-brief "$PRODUCT_REPO/docs/briefs/s01-warehouse.approved-brief.md" 
+--out "$PRODUCT_REPO/docs/playbooks/s01-warehouse.playbook.md" 
+--row-author external-json 
+--row-author-command "claude -p" 
+--plan-orchestrator-root "$KEEL_PO_ROOT" 
+--human-approved-by "$USER"</pre> </div>
+
+```
+  <h3>Playbook row anatomy</h3>
+  <p>
+    Every playbook row should be boring, specific, and checkable. The compiler can only produce good rows if the slice brief names concrete paths and verification expectations.
+  </p>
+
+  <div class="controls">
+    <button class="active row-btn" data-row="good">Good row</button>
+    <button class="row-btn" data-row="bad">Bad row</button>
+    <button class="row-btn" data-row="gate">Gate row</button>
+  </div>
+
+  <div class="panel" id="rowPanel">
+    <p class="panel-title">Good row: warehouse schema</p>
+    <table class="small-table">
+      <thead><tr><th>Column</th><th>Example</th><th>Why it is good</th></tr></thead>
+      <tbody>
+        <tr><td>action</td><td>Create DuckDB v1 schema file</td><td>Concrete, not “build warehouse.”</td></tr>
+        <tr><td>repo_surfaces</td><td>docs/gstack/health-data-hub-office-hours.md</td><td>Uses the approved design as input.</td></tr>
+        <tr><td>deliverable</td><td>src/db/schema.sql; tests/warehouse/test_schema.py</td><td>Specific output files.</td></tr>
+        <tr><td>allowed_write_roots</td><td>src/db; tests/warehouse</td><td>Narrow write scope.</td></tr>
+        <tr><td>requires_red_green</td><td>true</td><td>Schema behavior must be tested.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Allowed write-root safety check</h3>
+  <div class="input-row">
+    <label for="rootType"><strong>Slice type:</strong></label>
+    <select id="rootType" onchange="updateRootSafety()">
+      <option value="warehouse">Warehouse</option>
+      <option value="api">Mood API / security</option>
+      <option value="model">Model / counterfactual</option>
+      <option value="backup">Backup / secrets</option>
+      <option value="ui">Streamlit UI</option>
+    </select>
+    <label for="rootsInput"><strong>Allowed roots:</strong></label>
+    <input id="rootsInput" value="src/db, src/warehouse, tests/warehouse" size="55" oninput="updateRootSafety()">
+  </div>
+
+  <div class="panel row-ok" id="rootSafetyPanel">
+    <p class="panel-title" id="rootSafetyTitle">Safe enough: narrow slice roots</p>
+    <p id="rootSafetyText">These roots are specific and repo-relative. They allow a warehouse item to work without giving it the whole repository.</p>
+  </div>
+</section>
+
+<section id="keel-ops">
+  <h2>9. Keel operations: preflight, compile, review, execute, ship</h2>
+  <p class="lead">
+    This is the operational procedure the team should follow for every code slice. Keep this section open during the first run.
+  </p>
+
+  <h3>A. Preflight before the first real run</h3>
+  <div class="grid two">
+    <div class="card">
+      <h3>Toolchain checks</h3>
+      <pre><code>git clone https://github.com/AysajanE/keel.git ~/keel
+```
+
+cd ~/keel
+./install.sh
+source ~/keel/keel.env
+keel-smoke
+
+codex --version
+claude --version
+git config user.name
+git config user.email</code></pre> </div> <div class="card"> <h3>Product repo checks</h3> <pre><code>export PRODUCT_REPO="$HOME/health-data-hub"
+git clone [git@github.com](mailto:git@github.com):AysajanE/longevity-analytics.git "$PRODUCT_REPO"
+cd "$PRODUCT_REPO"
+
+mkdir -p docs/gstack docs/briefs docs/playbooks docs/reviews docs/evidence docs/runbooks
+mkdir -p private/evidence data/raw data/secrets data/quarantine data/snapshots
+
+git status --short</code></pre> </div> </div>
+
+```
+  <h3>B. Promote the design doc</h3>
+  <pre><code>cd "$PRODUCT_REPO"
+```
+
+cp ~/.gstack/projects/AysajanE-longevity-analytics/aeziz-local-AysajanE-health-data-hub-design-20260515-114138.md 
+docs/gstack/health-data-hub-office-hours.md
+
+git add docs/gstack/health-data-hub-office-hours.md
+git commit -m "Add approved health data hub design"</code></pre>
+
+```
+  <h3>C. Validate a playbook before execution</h3>
+  <pre><code>keel-run list-items --playbook "$PRODUCT_REPO/docs/playbooks/s01-warehouse.playbook.md"
+```
+
+keel-doctor --playbook "$PRODUCT_REPO/docs/playbooks/s01-warehouse.playbook.md" --format json</code></pre>
+
+```
+  <h3>D. Execute under supervision</h3>
+  <pre><code>cd "$PRODUCT_REPO"
+```
+
+export PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED=1
+
+keel-run supervise run 
+--playbook docs/playbooks/s01-warehouse.playbook.md 
+--next
+
+keel-run supervise status --run-id <RUN_ID> --format json --exit-code
+keel-run status --run-id <RUN_ID> --format json
+keel-run doctor --run-id <RUN_ID> --format json</code></pre>
+
+```
+  <h3>E. Resolve gates correctly</h3>
+  <div class="compare">
+    <div class="side warn">
+      <h3>Manual gate</h3>
+      <pre><code>keel-run mark-manual-gate \
+```
+
+--run-id <RUN_ID> 
+--item <ITEM_ID> 
+--decision approved 
+--by "$USER" 
+--note "Reviewed the gate packet and approve continuation." 
+--evidence-path "$PRODUCT_REPO/docs/reviews/s01-schema-signoff.md" 
+--approval-token-file /secure/local/manual-gate-token.txt
+
+keel-run supervise resume --run-id <RUN_ID></code></pre> </div> <div class="side warn"> <h3>External evidence</h3> <pre><code># Put local evidence under private/evidence.
+mkdir -p "$PRODUCT_REPO/private/evidence/oura-smoke-2026-05-xx"
+
+keel-run supervise resume 
+--run-id <RUN_ID> 
+--external-evidence-dir "$PRODUCT_REPO/private/evidence/oura-smoke-2026-05-xx"</code></pre> </div> </div>
+
+```
+  <h3>F. Ship from a ship branch, never from the run branch</h3>
+  <pre><code>cd "$PRODUCT_REPO"
+```
+
+git fetch origin
+git checkout -b ship/s01-warehouse orchestrator/run/<RUN_ID>
+
+# In Claude Code:
+
+# /review
+
+# /ship
+
+# /land-and-deploy
+
+# /document-release
+
+# /retro
+
+# /learn</code></pre>
+
+```
+  <div class="callout bad">
+    <strong>Do not ship directly from <span class="inline-code">orchestrator/run/&lt;RUN_ID&gt;</span>.</strong> Create a normal <span class="inline-code">ship/&lt;slice&gt;</span> branch first so release work is separated from PO’s internal run branch.
+  </div>
+</section>
+
+<section id="po-state">
+  <h2>10. Plan-orchestrator state machine</h2>
+  <p class="lead">
+    PO is the execution kernel. It is not the planner and it is not the shipper. Its job is to run a reviewed playbook row by row, verify, audit, and stop truthfully.
+  </p>
+
+  <div class="svg-wrap">
+    <svg id="poSvg" viewBox="0 0 1260 500" role="img" aria-label="Plan-orchestrator state machine">
+      <defs>
+        <marker id="poArrow" markerWidth="12" markerHeight="12" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#94a3b8"></path>
+        </marker>
+      </defs>
+      <path d="M145 135 H235" stroke="#94a3b8" stroke-width="3" marker-end="url(#poArrow)"></path>
+      <path d="M345 135 H435" stroke="#94a3b8" stroke-width="3" marker-end="url(#poArrow)"></path>
+      <path d="M545 135 H635" stroke="#94a3b8" stroke-width="3" marker-end="url(#poArrow)"></path>
+      <path d="M745 135 H835" stroke="#94a3b8" stroke-width="3" marker-end="url(#poArrow)"></path>
+      <path d="M945 135 H1035" stroke="#94a3b8" stroke-width="3" marker-end="url(#poArrow)"></path>
+      <path d="M1090 180 V250" stroke="#94a3b8" stroke-width="3" marker-end="url(#poArrow)"></path>
+      <path d="M1090 340 V390" stroke="#94a3b8" stroke-width="3" marker-end="url(#poArrow)"></path>
+      <path d="M990 295 H905" stroke="#94a3b8" stroke-width="3" marker-end="url(#poArrow)"></path>
+      <path d="M790 295 H705" stroke="#94a3b8" stroke-width="3" marker-end="url(#poArrow)"></path>
+      <path d="M605 315 C520 380 350 380 320 180" stroke="#94a3b8" stroke-width="3" fill="none" marker-end="url(#poArrow)"></path>
+
+      <g class="node-btn po-state active" data-state="setup" transform="translate(35,95)">
+        <rect width="135" height="80" rx="18" fill="#eff6ff" stroke="#2563eb" stroke-width="3"></rect>
+        <text x="67" y="35" text-anchor="middle" font-weight="900" fill="#1d4ed8">setup</text>
+        <text x="67" y="57" text-anchor="middle" font-size="12" fill="#1d4ed8">worktree</text>
+      </g>
+      <g class="node-btn po-state" data-state="execute" transform="translate(235,95)">
+        <rect width="135" height="80" rx="18" fill="#ecfdf5" stroke="#16a34a" stroke-width="3"></rect>
+        <text x="67" y="35" text-anchor="middle" font-weight="900" fill="#047857">execute</text>
+        <text x="67" y="57" text-anchor="middle" font-size="12" fill="#047857">mutate</text>
+      </g>
+      <g class="node-btn po-state" data-state="verify" transform="translate(435,95)">
+        <rect width="135" height="80" rx="18" fill="#fff7ed" stroke="#f59e0b" stroke-width="3"></rect>
+        <text x="67" y="35" text-anchor="middle" font-weight="900" fill="#92400e">verify</text>
+        <text x="67" y="57" text-anchor="middle" font-size="12" fill="#92400e">tests</text>
+      </g>
+      <g class="node-btn po-state" data-state="packet" transform="translate(635,95)">
+        <rect width="135" height="80" rx="18" fill="#f5f3ff" stroke="#7c3aed" stroke-width="3"></rect>
+        <text x="67" y="35" text-anchor="middle" font-weight="900" fill="#6d28d9">packet</text>
+        <text x="67" y="57" text-anchor="middle" font-size="12" fill="#6d28d9">freeze</text>
+      </g>
+      <g class="node-btn po-state" data-state="audit" transform="translate(835,95)">
+        <rect width="135" height="80" rx="18" fill="#ecfeff" stroke="#0891b2" stroke-width="3"></rect>
+        <text x="67" y="35" text-anchor="middle" font-weight="900" fill="#0e7490">audit</text>
+        <text x="67" y="57" text-anchor="middle" font-size="12" fill="#0e7490">2 lanes</text>
+      </g>
+      <g class="node-btn po-state" data-state="triage" transform="translate(1035,95)">
+        <rect width="135" height="80" rx="18" fill="#f8fafc" stroke="#64748b" stroke-width="3"></rect>
+        <text x="67" y="35" text-anchor="middle" font-weight="900" fill="#334155">triage</text>
+        <text x="67" y="57" text-anchor="middle" font-size="12" fill="#475569">decide</text>
+      </g>
+      <g class="node-btn po-state" data-state="fix" transform="translate(790,255)">
+        <rect width="135" height="80" rx="18" fill="#fff7ed" stroke="#f59e0b" stroke-width="3"></rect>
+        <text x="67" y="35" text-anchor="middle" font-weight="900" fill="#92400e">fix loop</text>
+        <text x="67" y="57" text-anchor="middle" font-size="12" fill="#92400e">bounded</text>
+      </g>
+      <g class="node-btn po-state" data-state="passed" transform="translate(1035,395)">
+        <rect width="135" height="70" rx="18" fill="#ecfdf5" stroke="#16a34a" stroke-width="3"></rect>
+        <text x="67" y="40" text-anchor="middle" font-weight="900" fill="#047857">passed</text>
+      </g>
+      <g class="node-btn po-state" data-state="human" transform="translate(35,255)">
+        <rect width="190" height="80" rx="18" fill="#fff1f2" stroke="#e11d48" stroke-width="3"></rect>
+        <text x="95" y="35" text-anchor="middle" font-weight="900" fill="#be123c">human gate</text>
+        <text x="95" y="57" text-anchor="middle" font-size="12" fill="#be123c">human only</text>
+      </g>
+      <g class="node-btn po-state" data-state="external" transform="translate(260,255)">
+        <rect width="180" height="80" rx="18" fill="#fff7ed" stroke="#f59e0b" stroke-width="3"></rect>
+        <text x="90" y="35" text-anchor="middle" font-weight="900" fill="#92400e">external</text>
+        <text x="90" y="57" text-anchor="middle" font-size="12" fill="#92400e">evidence</text>
+      </g>
+      <g class="node-btn po-state" data-state="escalated" transform="translate(470,255)">
+        <rect width="150" height="80" rx="18" fill="#fef2f2" stroke="#b91c1c" stroke-width="3"></rect>
+        <text x="75" y="35" text-anchor="middle" font-weight="900" fill="#991b1b">escalated</text>
+        <text x="75" y="57" text-anchor="middle" font-size="12" fill="#991b1b">triage</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="panel">
+    <p class="panel-title" id="stateTitle">setup_worktree</p>
+    <p id="stateText">PO creates an isolated git worktree for the item attempt. For this project, that means one row cannot accidentally rewrite unrelated health-data code or docs.</p>
+  </div>
+</section>
+
+<section id="health-architecture">
+  <h2>11. The Health Data Hub architecture to build</h2>
+  <p class="lead">
+    The app is a six-layer local-first system. Click each layer to see what the build team must implement and which slices own it.
+  </p>
+
+  <div class="svg-wrap">
+    <svg id="archSvg" viewBox="0 0 1160 620" role="img" aria-label="Health Data Hub architecture">
+      <defs>
+        <marker id="archArrow" markerWidth="12" markerHeight="12" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#94a3b8"></path>
+        </marker>
+      </defs>
+      <path d="M580 520 V465" stroke="#94a3b8" stroke-width="3" marker-end="url(#archArrow)"></path>
+      <path d="M580 420 V365" stroke="#94a3b8" stroke-width="3" marker-end="url(#archArrow)"></path>
+      <path d="M580 320 V265" stroke="#94a3b8" stroke-width="3" marker-end="url(#archArrow)"></path>
+      <path d="M580 220 V165" stroke="#94a3b8" stroke-width="3" marker-end="url(#archArrow)"></path>
+      <path d="M580 120 V75" stroke="#94a3b8" stroke-width="3" marker-end="url(#archArrow)"></path>
+
+      <g class="node-btn arch-layer" data-arch="ingestion" transform="translate(260,500)">
+        <rect width="640" height="70" rx="20" fill="#ecfeff" stroke="#0ea5e9" stroke-width="3"></rect>
+        <text x="320" y="30" text-anchor="middle" font-weight="900" fill="#0369a1">Ingestion layer</text>
+        <text x="320" y="52" text-anchor="middle" font-size="13" fill="#0369a1">Oura periodic pull / direct OAuth fallback · 8 Sleep optional · mood POST</text>
+      </g>
+      <g class="node-btn arch-layer" data-arch="warehouse" transform="translate(260,400)">
+        <rect width="640" height="70" rx="20" fill="#eff6ff" stroke="#2563eb" stroke-width="3"></rect>
+        <text x="320" y="30" text-anchor="middle" font-weight="900" fill="#1d4ed8">Warehouse layer</text>
+        <text x="320" y="52" text-anchor="middle" font-size="13" fill="#1d4ed8">DuckDB + raw JSON + five core tables + quarantine + permissions</text>
+      </g>
+      <g class="node-btn arch-layer" data-arch="features" transform="translate(260,300)">
+        <rect width="640" height="70" rx="20" fill="#ecfdf5" stroke="#16a34a" stroke-width="3"></rect>
+        <text x="320" y="30" text-anchor="middle" font-weight="900" fill="#047857">Feature layer</text>
+        <text x="320" y="52" text-anchor="middle" font-size="13" fill="#047857">4 v1 features · hrv_z prior-only · sleep source reconciliation</text>
+      </g>
+      <g class="node-btn arch-layer" data-arch="model" transform="translate(260,200)">
+        <rect width="640" height="70" rx="20" fill="#f5f3ff" stroke="#8b5cf6" stroke-width="3"></rect>
+        <text x="320" y="30" text-anchor="middle" font-weight="900" fill="#6d28d9">Model layer</text>
+        <text x="320" y="52" text-anchor="middle" font-size="13" fill="#6d28d9">Ridge · baseline gate · sign stability · retrospective sleep-only CF</text>
+      </g>
+      <g class="node-btn arch-layer" data-arch="api" transform="translate(260,100)">
+        <rect width="640" height="70" rx="20" fill="#fff7ed" stroke="#f59e0b" stroke-width="3"></rect>
+        <text x="320" y="30" text-anchor="middle" font-weight="900" fill="#92400e">API layer</text>
+        <text x="320" y="52" text-anchor="middle" font-size="13" fill="#92400e">FastAPI · POST mood · same-host reads · X-Mood-Token</text>
+      </g>
+      <g class="node-btn arch-layer active" data-arch="ui" transform="translate(260,10)">
+        <rect width="640" height="70" rx="20" fill="#ccfbf1" stroke="#0f766e" stroke-width="3"></rect>
+        <text x="320" y="30" text-anchor="middle" font-weight="900" fill="#115e59">UI layer</text>
+        <text x="320" y="52" text-anchor="middle" font-size="13" fill="#115e59">Streamlit · mood-first flow · model contributor card · raw timeline</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="panel">
+    <p class="panel-title" id="archTitle">UI layer</p>
+    <p id="archText">The UI is Streamlit. It must show a compact mood logger when today’s mood is not logged, hide model output for date D until feeling[D] exists, and use correlation-safe wording everywhere.</p>
+  </div>
+
+  <h3>System data flow</h3>
+  <div class="svg-wrap">
+    <svg viewBox="0 0 1200 320" role="img" aria-label="Health data flow">
+      <defs>
+        <marker id="dataArrow" markerWidth="12" markerHeight="12" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#94a3b8"></path>
+        </marker>
+      </defs>
+      <path d="M170 150 H260" stroke="#94a3b8" stroke-width="3" marker-end="url(#dataArrow)"></path>
+      <path d="M410 150 H500" stroke="#94a3b8" stroke-width="3" marker-end="url(#dataArrow)"></path>
+      <path d="M650 150 H740" stroke="#94a3b8" stroke-width="3" marker-end="url(#dataArrow)"></path>
+      <path d="M890 150 H980" stroke="#94a3b8" stroke-width="3" marker-end="url(#dataArrow)"></path>
+      <g transform="translate(40,105)">
+        <rect width="170" height="90" rx="18" fill="#ecfeff" stroke="#0ea5e9" stroke-width="3"></rect>
+        <text x="85" y="36" text-anchor="middle" font-weight="900" fill="#0369a1">Devices + mood</text>
+        <text x="85" y="60" text-anchor="middle" font-size="12" fill="#0369a1">Oura, 8 Sleep, Shortcut</text>
+      </g>
+      <g transform="translate(260,105)">
+        <rect width="190" height="90" rx="18" fill="#eff6ff" stroke="#2563eb" stroke-width="3"></rect>
+        <text x="95" y="36" text-anchor="middle" font-weight="900" fill="#1d4ed8">Warehouse</text>
+        <text x="95" y="60" text-anchor="middle" font-size="12" fill="#1d4ed8">DuckDB + raw JSON</text>
+      </g>
+      <g transform="translate(500,105)">
+        <rect width="190" height="90" rx="18" fill="#ecfdf5" stroke="#16a34a" stroke-width="3"></rect>
+        <text x="95" y="36" text-anchor="middle" font-weight="900" fill="#047857">Features</text>
+        <text x="95" y="60" text-anchor="middle" font-size="12" fill="#047857">4 locked inputs</text>
+      </g>
+      <g transform="translate(740,105)">
+        <rect width="190" height="90" rx="18" fill="#f5f3ff" stroke="#8b5cf6" stroke-width="3"></rect>
+        <text x="95" y="36" text-anchor="middle" font-weight="900" fill="#6d28d9">Model gate</text>
+        <text x="95" y="60" text-anchor="middle" font-size="12" fill="#6d28d9">baseline + stability</text>
+      </g>
+      <g transform="translate(980,105)">
+        <rect width="180" height="90" rx="18" fill="#ccfbf1" stroke="#0f766e" stroke-width="3"></rect>
+        <text x="90" y="36" text-anchor="middle" font-weight="900" fill="#115e59">UI output</text>
+        <text x="90" y="60" text-anchor="middle" font-size="12" fill="#115e59">retrospective only</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<section id="data-model">
+  <h2>12. Data model and schema gates</h2>
+  <p class="lead">
+    The warehouse schema is a manual gate because a bad schema creates weeks of downstream confusion. The first code slice should make this schema real and tested.
+  </p>
+
+  <div class="grid two">
+    <div class="card">
+      <h3>Core tables</h3>
+      <ul>
+        <li><span class="inline-code">sleep_nights</span> — raw normalized sleep per source and sleep date.</li>
+        <li><span class="inline-code">mood_entries</span> — append-only mood log history.</li>
+        <li><span class="inline-code">mood_current</span> — one primary mood row per date.</li>
+        <li><span class="inline-code">daily_features</span> — derived model-ready features.</li>
+        <li><span class="inline-code">sleep_merge_diagnostics</span> — source reconciliation debugging.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Warehouse slice deliverables</h3>
+      <ul>
+        <li><span class="inline-code">src/db/schema.sql</span></li>
+        <li><span class="inline-code">src/warehouse/warehouse.py</span></li>
+        <li><span class="inline-code">src/warehouse/models.py</span></li>
+        <li><span class="inline-code">scripts/setup_permissions.py</span></li>
+        <li><span class="inline-code">tests/warehouse/test_schema.py</span></li>
+        <li><span class="inline-code">tests/warehouse/test_mood_correction.py</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Schema gate checklist</h3>
+  <ul class="checklist">
+    <li><input type="checkbox"> Tables match the design exactly: no extra v2 feature columns in <span class="inline-code">daily_features</span>.</li>
+    <li><input type="checkbox"> <span class="inline-code">hrv_z</span> is persisted as the model feature; <span class="inline-code">hrv_avg_ms</span> is display metadata.</li>
+    <li><input type="checkbox"> <span class="inline-code">mood_entries</span> and <span class="inline-code">mood_current</span> support corrections without DuckDB partial unique indexes.</li>
+    <li><input type="checkbox"> No sleep forward-fill flag exists. Sleep is source-selected or missing; missing sleep excludes training rows.</li>
+    <li><input type="checkbox"> Invalid ingest payloads go to <span class="inline-code">data/quarantine/</span> with file permissions <span class="inline-code">0600</span>.</li>
+    <li><input type="checkbox"> Raw JSON, secrets, snapshots, quarantine, and warehouse files are gitignored.</li>
+  </ul>
+
+  <h3>What PO should stop for in S01</h3>
+  <div class="callout warn">
+    <strong>Manual gate:</strong> after generating <span class="inline-code">src/db/schema.sql</span> and before building downstream warehouse insert functions, PO should stop for schema signoff. The gate reviewer compares the schema to the design doc and records a decision.
+  </div>
+</section>
+
+<section id="model-gates">
+  <h2>13. Model gates: when the app is allowed to show “insights”</h2>
+  <p class="lead">
+    The design’s statistical discipline is part of the product. The UI must stay quiet until the model earns the right to speak.
+  </p>
+
+  <div class="panel">
+    <label for="nModel"><strong>N_model:</strong> <span id="nModelValue">17</span> model-ready days</label><br>
+    <input id="nModel" type="range" min="0" max="90" value="17" oninput="updateModelGate()">
+    <div class="input-row">
+      <label><input id="rmsePass" type="checkbox" onchange="updateModelGate()"> Ridge RMSE ≤ 0.95 × best baseline</label>
+      <label><input id="dayCountPass" type="checkbox" onchange="updateModelGate()"> Ridge better on ≥65% eval days</label>
+      <label><input id="stableSleep" type="checkbox" onchange="updateModelGate()"> total_sleep_min sign-stable ≥90%</label>
+    </div>
+  </div>
+
+  <div class="grid three">
+    <div class="card">
+      <h3>Training status</h3>
+      <p id="trainStatus">No model fit. Keep collecting mood and sleep data.</p>
+    </div>
+    <div class="card">
+      <h3>Evaluation window</h3>
+      <p id="evalWindow">No UI gate yet.</p>
+    </div>
+    <div class="card">
+      <h3>UI output</h3>
+      <p id="uiOutput">Show collecting state only.</p>
+    </div>
+  </div>
+
+  <h3>Gate logic</h3>
+  <table>
+    <thead><tr><th>N_model range</th><th>What happens</th><th>UI behavior</th></tr></thead>
+    <tbody>
+      <tr><td>&lt; 30</td><td>No model fit.</td><td>“Collecting model-ready days: N/37.”</td></tr>
+      <tr><td>30–36</td><td>Model may train internally but has no evaluable UI gate.</td><td>No contributors, no counterfactuals.</td></tr>
+      <tr><td>37–43</td><td>Use a 7-day walk-forward evaluation window.</td><td>Show output only if baseline gate passes.</td></tr>
+      <tr><td>≥ 44</td><td>Use a 14-day walk-forward evaluation window.</td><td>Show output only if baseline gate and stability gates pass.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout bad">
+    <strong>Trust rule:</strong> a suppressed counterfactual is not a product failure. It is the correct result when data is insufficient, the model fails baseline, or the mutable sleep feature is not stable enough.
+  </div>
+</section>
+
+<section id="tripwires">
+  <h2>14. Tripwires and fallbacks</h2>
+  <p class="lead">
+    Tripwires prevent sunk-cost spirals. The team should apply them by date, not by optimism.
+  </p>
+
+  <div class="controls">
+    <button class="active trip-btn" data-trip="oura">Oura ingestion</button>
+    <button class="trip-btn" data-trip="eight">8 Sleep</button>
+    <button class="trip-btn" data-trip="moodTransport">Mood transport</button>
+    <button class="trip-btn" data-trip="moodCompliance">Mood compliance</button>
+    <button class="trip-btn" data-trip="baseline">Baseline gate</button>
+    <button class="trip-btn" data-trip="eightBreak">8 Sleep breakage</button>
+  </div>
+
+  <div class="panel">
+    <p class="panel-title" id="tripTitle">Oura ingestion tripwire</p>
+    <p id="tripCondition"><strong>Condition:</strong> End of week 1: Open Wearables is not producing usable Oura sleep data in less than one weekend of trying.</p>
+    <p id="tripAction"><strong>Fallback:</strong> Drop Open Wearables for Oura and implement direct Oura OAuth2 with authorization-code and refresh-token flow. Keep periodic pull, not webhooks.</p>
+    <p id="tripKeel"><strong>Keel handling:</strong> Treat the smoke result as external evidence. If the ingestion slice reaches blocked_external, supply the local evidence directory with sanitized logs and proof files.</p>
+  </div>
+
+  <h3>Tripwire table</h3>
+  <table>
+    <thead><tr><th>Tripwire</th><th>Deadline</th><th>Fallback</th><th>Keel artifact</th></tr></thead>
+    <tbody>
+      <tr><td>Oura ingestion</td><td>End week 1</td><td>Direct Oura OAuth2 periodic pull.</td><td><span class="inline-code">docs/evidence/ingestion/oura-smoke.md</span></td></tr>
+      <tr><td>8 Sleep ingestion</td><td>End week 2</td><td>Ship Oura-only v1; reintroduce 8 Sleep later.</td><td><span class="inline-code">docs/briefs/s04-ingestion.approved-brief.md</span></td></tr>
+      <tr><td>Mood transport</td><td>End week 4</td><td>Fallback to mobile-friendly Streamlit mood form.</td><td><span class="inline-code">docs/runbooks/mood-shortcut.md</span></td></tr>
+      <tr><td>Mood compliance</td><td>End week 8</td><td>Stop modeling work; fix logging habit first.</td><td><span class="inline-code">docs/evidence/mood-compliance.md</span></td></tr>
+      <tr><td>Baseline gate</td><td>End week 9</td><td>Collapse UI to collecting state; add context/action logging without harmful sleep restriction.</td><td><span class="inline-code">models/eval.jsonl</span></td></tr>
+      <tr><td>8 Sleep mid-build breakage</td><td>Any week before 9</td><td>Switch to Oura-only same day.</td><td><span class="inline-code">docs/reviews/ingestion-scope-change.md</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="first-two-weeks">
+  <h2>15. First two weeks: exact operating plan</h2>
+  <p class="lead">
+    The first two weeks should prove three things: mood labels are being collected, Keel can run a real slice, and device ingestion risk is known early.
+  </p>
+
+  <div class="timeline" id="weekTimeline">
+    <div class="time-item active" data-week="0">
+      <div class="time-dot">D0</div>
+      <div class="time-card"><strong>Start today</strong><span>Begin Apple Notes mood logging. Install Keel. Promote design into repo.</span></div>
+    </div>
+    <div class="time-item" data-week="1">
+      <div class="time-dot">D1</div>
+      <div class="time-card"><strong>Preflight</strong><span>Run keel-smoke, verify Codex/Claude, create product repo folders, record tool versions.</span></div>
+    </div>
+    <div class="time-item" data-week="2">
+      <div class="time-dot">D2</div>
+      <div class="time-card"><strong>Plan S01</strong><span>Use gstack /autoplan to create the S01 warehouse approved brief.</span></div>
+    </div>
+    <div class="time-item" data-week="3">
+      <div class="time-dot">D3</div>
+      <div class="time-card"><strong>Compile and review S01</strong><span>Compile S01 playbook, run list-items and doctor, human-review every row.</span></div>
+    </div>
+    <div class="time-item" data-week="4">
+      <div class="time-dot">D4</div>
+      <div class="time-card"><strong>Execute S01</strong><span>Run PO under supervision, resolve schema gate, ship warehouse foundation.</span></div>
+    </div>
+    <div class="time-item" data-week="5">
+      <div class="time-dot">W1</div>
+      <div class="time-card"><strong>Oura decision</strong><span>Apply week-1 tripwire: Open Wearables if usable, direct OAuth if not.</span></div>
+    </div>
+    <div class="time-item" data-week="6">
+      <div class="time-dot">W2</div>
+      <div class="time-card"><strong>8 Sleep decision</strong><span>Apply week-2 tripwire: pyEight stable or Oura-only v1.</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <p class="panel-title" id="weekTitle">Start today</p>
+    <p id="weekText">Do not wait for the API to start mood logging. Use the fixed Apple Notes template now: Date, Feeling 1–10 with anchors, Energy optional, Notes optional.</p>
+  </div>
+
+  <div class="callout good">
+    <strong>First-week success is not “model output.”</strong> First-week success is: mood logging started, Keel installed, design promoted, S01 playbook compiled, first PO run completed or failed closed with understandable evidence.
+  </div>
+</section>
+
+<section id="quality">
+  <h2>16. Quality bar and launch-readiness evidence</h2>
+  <p class="lead">
+    The team should decide “done” by evidence, not by agent confidence. Every slice has a completion packet.
+  </p>
+
+  <div class="grid three">
+    <div class="card">
+      <h3>Slice completion packet</h3>
+      <ul>
+        <li>Approved slice brief.</li>
+        <li>Playbook and compiler sidecars.</li>
+        <li>PO run ID and status.</li>
+        <li>Gate signoff if any.</li>
+        <li>Verification command output.</li>
+        <li>Dual-audit summary.</li>
+        <li>Ship branch and PR link.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>v1 minimum viability gates</h3>
+      <ul>
+        <li>Mood compliance ≥80% over trailing 28 days.</li>
+        <li>Data pipeline runs unattended.</li>
+        <li>No unresolved security/privacy issue.</li>
+        <li>At least one of: baseline gate passed or weekly pattern review is useful.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Quality questions</h3>
+      <ul>
+        <li>Did the system surface at least one gated retrospective counterfactual?</li>
+        <li>Did any counterfactual change behavior the following week?</li>
+        <li>Did any insight remain useful when reread seven days later?</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Testing expectations by slice</h3>
+  <table>
+    <thead><tr><th>Slice</th><th>Required tests</th><th>Manual gate</th></tr></thead>
+    <tbody>
+      <tr><td>S01 Warehouse</td><td>schema, insert, mood correction, quarantine, permissions</td><td>Schema signoff</td></tr>
+      <tr><td>S02 Mood API</td><td>token, same-host GET restriction, LAN POST, mood_date rules, rate limit</td><td>Security/privacy signoff</td></tr>
+      <tr><td>S03 Ingestion</td><td>fixture mapping, raw JSON preservation, source fallback</td><td>External device evidence</td></tr>
+      <tr><td>S04 Features</td><td>sleep reconciliation, hrv_z prior-only, zero-MAD fallback</td><td>Feature-contract signoff</td></tr>
+      <tr><td>S05 Model</td><td>baseline gate, bootstrap stability, eval.jsonl schema, no-output gates</td><td>Model-output language signoff</td></tr>
+      <tr><td>S06 Counterfactual</td><td>increase-only, safe floor, plausibility filter, trivial-effect suppression</td><td>Causal-framing signoff</td></tr>
+      <tr><td>S07 UI</td><td>mood-first flow, empty states, stale-source banner, banned-word scan</td><td>UX/nocebo signoff</td></tr>
+      <tr><td>S08 Backups</td><td>checkpoint, encrypted snapshot, restore drill, token restore path</td><td>Restore proof signoff</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="failure-modes">
+  <h2>17. Failure modes and what to do</h2>
+  <p class="lead">
+    Most first-deployment pain should be treated as useful feedback. The team’s job is to tell safe failure from unsafe behavior.
+  </p>
+
+  <div class="grid two">
+    <div class="card">
+      <h3>Safe failures</h3>
+      <ul>
+        <li>Compiler rejects vague rows or broad write roots.</li>
+        <li>PO stops at a manual gate.</li>
+        <li>PO blocks on external evidence.</li>
+        <li>Dual audit finds a real issue.</li>
+        <li>Model gates suppress output.</li>
+        <li>Tripwire forces Oura-only scope.</li>
+      </ul>
+      <p><strong>Response:</strong> inspect evidence, revise the brief/playbook, or apply the fallback.</p>
+    </div>
+    <div class="card">
+      <h3>Unsafe incidents</h3>
+      <ul>
+        <li>An agent calls <span class="inline-code">mark-manual-gate</span>.</li>
+        <li>A gate is recorded without a real human decision.</li>
+        <li>External evidence is fabricated or browsed for by an agent.</li>
+        <li>Raw health data or tokens enter git or logs.</li>
+        <li>A run branch is shipped directly.</li>
+        <li>UI makes causal or medical-sounding claims.</li>
+      </ul>
+      <p><strong>Response:</strong> stop the run, inspect status/doctor/run_state, record incident notes, and restart from a trusted point if needed.</p>
+    </div>
+  </div>
+
+  <h3>Incident protocol</h3>
+  <ol>
+    <li>Stop issuing run/resume commands.</li>
+    <li>Inspect <span class="inline-code">keel-run supervise status</span>, <span class="inline-code">keel-run status</span>, and <span class="inline-code">keel-run doctor</span>.</li>
+    <li>Inspect current <span class="inline-code">manual_gate.json</span>, <span class="inline-code">run_state.json</span>, and audit packet paths.</li>
+    <li>Record whether a real human approved the gate or evidence.</li>
+    <li>If no real human approval occurred, invalidate the run and restart from a clean playbook/run boundary.</li>
+  </ol>
+</section>
+
+<section id="cheatsheet">
+  <h2>18. Command sheet</h2>
+  <p class="lead">
+    This is the copy-ready sequence for the first code slice: S01 warehouse foundation. Adjust slice names for later runs.
+  </p>
+
+  <pre><code># ─────────────────────────────────────────────────────────────
+```
+
+# 0. Install and preflight Keel
+
+# ─────────────────────────────────────────────────────────────
+
+git clone [https://github.com/AysajanE/keel.git](https://github.com/AysajanE/keel.git) ~/keel
+cd ~/keel
+./install.sh
+source ~/keel/keel.env
+keel-smoke
+
+codex --version
+claude --version
+
+# ─────────────────────────────────────────────────────────────
+
+# 1. Product repo and design promotion
+
+# ─────────────────────────────────────────────────────────────
+
+export PRODUCT_REPO="$HOME/health-data-hub"
+git clone [git@github.com](mailto:git@github.com):AysajanE/longevity-analytics.git "$PRODUCT_REPO"
+cd "$PRODUCT_REPO"
+
+mkdir -p docs/gstack docs/briefs docs/playbooks docs/reviews docs/evidence docs/runbooks
+mkdir -p private/evidence data/raw data/secrets data/quarantine data/snapshots
+
+cp ~/.gstack/projects/AysajanE-longevity-analytics/aeziz-local-AysajanE-health-data-hub-design-20260515-114138.md 
+docs/gstack/health-data-hub-office-hours.md
+
+git add docs/gstack/health-data-hub-office-hours.md
+git commit -m "Add approved health data hub design"
+
+# ─────────────────────────────────────────────────────────────
+
+# 2. gstack planning, in Claude Code
+
+# ─────────────────────────────────────────────────────────────
+
+# /autoplan docs/gstack/health-data-hub-office-hours.md
+
+# Ask for the first code slice only:
+
+# S01 warehouse foundation:
+
+# schema, warehouse.py, Pydantic models, quarantine, permissions, tests.
+
+#
+
+# Save outputs:
+
+# docs/gstack/s01-warehouse-autoplan.md
+
+# docs/briefs/s01-warehouse.approved-brief.md
+
+# ─────────────────────────────────────────────────────────────
+
+# 3. Compile S01 into markdown_playbook_v1
+
+# ─────────────────────────────────────────────────────────────
+
+source ~/keel/keel.env
+export PRODUCT_REPO="$HOME/health-data-hub"
+
+keel-compile compile 
+--repo-root "$PRODUCT_REPO" 
+--design "$PRODUCT_REPO/docs/gstack/health-data-hub-office-hours.md" 
+--autoplan "$PRODUCT_REPO/docs/gstack/s01-warehouse-autoplan.md" 
+--approved-brief "$PRODUCT_REPO/docs/briefs/s01-warehouse.approved-brief.md" 
+--out "$PRODUCT_REPO/docs/playbooks/s01-warehouse.playbook.md" 
+--row-author external-json 
+--row-author-command "claude -p" 
+--plan-orchestrator-root "$KEEL_PO_ROOT" 
+--human-approved-by "$USER"
+
+# ─────────────────────────────────────────────────────────────
+
+# 4. Human review before execution
+
+# ─────────────────────────────────────────────────────────────
+
+keel-run list-items --playbook "$PRODUCT_REPO/docs/playbooks/s01-warehouse.playbook.md"
+keel-doctor --playbook "$PRODUCT_REPO/docs/playbooks/s01-warehouse.playbook.md" --format json
+
+# Read every row:
+
+# - concrete action?
+
+# - narrow allowed_write_roots?
+
+# - real required_verification_commands?
+
+# - schema gate present?
+
+# - no v2 scope creep?
+
+# ─────────────────────────────────────────────────────────────
+
+# 5. Execute under supervision
+
+# ─────────────────────────────────────────────────────────────
+
+cd "$PRODUCT_REPO"
+export PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED=1
+
+keel-run supervise run 
+--playbook docs/playbooks/s01-warehouse.playbook.md 
+--next
+
+keel-run supervise status --run-id <RUN_ID> --format json --exit-code
+keel-run status --run-id <RUN_ID> --format json
+keel-run doctor --run-id <RUN_ID> --format json
+
+# ─────────────────────────────────────────────────────────────
+
+# 6. Manual gate, if PO stops for schema signoff
+
+# ─────────────────────────────────────────────────────────────
+
+keel-run mark-manual-gate 
+--run-id <RUN_ID> 
+--item <ITEM_ID> 
+--decision approved 
+--by "$USER" 
+--note "Reviewed S01 schema gate; five tables match the approved design." 
+--evidence-path "$PRODUCT_REPO/docs/reviews/s01-schema-signoff.md" 
+--approval-token-file /secure/local/manual-gate-token.txt
+
+keel-run supervise resume --run-id <RUN_ID>
+
+# ─────────────────────────────────────────────────────────────
+
+# 7. Ship from a ship branch
+
+# ─────────────────────────────────────────────────────────────
+
+cd "$PRODUCT_REPO"
+git fetch origin
+git checkout -b ship/s01-warehouse orchestrator/run/<RUN_ID>
+
+# In Claude Code:
+
+# /review
+
+# /ship
+
+# /land-and-deploy
+
+# /document-release
+
+# /retro
+
+# /learn</code></pre>
+
+```
+</section>
+
+<section id="sources">
+  <h2>19. Source notes</h2>
+  <p class="lead">
+    This playbook is based on the provided Health Data Hub design doc and the public toolchain docs inspected on May 23, 2026. Before running a real project, refresh the toolchain and re-run <span class="inline-code">keel-smoke</span>.
+  </p>
+  <ul class="source-list">
+    <li><a href="https://github.com/AysajanE/keel" target="_blank" rel="noopener" title="Keel repository">[Eziz 2026](https://github.com/AysajanE/keel "Keel repository")</a></li>
+    <li><a href="https://raw.githubusercontent.com/AysajanE/keel/main/README.md" target="_blank" rel="noopener" title="Keel README">[Eziz 2026a](https://raw.githubusercontent.com/AysajanE/keel/main/README.md "Keel README")</a></li>
+    <li><a href="https://raw.githubusercontent.com/AysajanE/keel/main/tools.manifest.yaml" target="_blank" rel="noopener" title="Keel tools manifest">[Eziz 2026b](https://raw.githubusercontent.com/AysajanE/keel/main/tools.manifest.yaml "Keel tools manifest")</a></li>
+    <li><a href="https://raw.githubusercontent.com/AysajanE/keel/main/docs/tools.md" target="_blank" rel="noopener" title="Keel tools">[Eziz 2026c](https://raw.githubusercontent.com/AysajanE/keel/main/docs/tools.md "Keel tools")</a></li>
+    <li><a href="https://raw.githubusercontent.com/AysajanE/keel/main/docs/concepts.md" target="_blank" rel="noopener" title="Keel concepts">[Eziz 2026d](https://raw.githubusercontent.com/AysajanE/keel/main/docs/concepts.md "Keel concepts")</a></li>
+    <li><a href="https://raw.githubusercontent.com/AysajanE/gstack-playbook-compiler/main/README.md" target="_blank" rel="noopener" title="gstack-playbook-compiler README">[Eziz 2026e](https://raw.githubusercontent.com/AysajanE/gstack-playbook-compiler/main/README.md "Compiler README")</a></li>
+    <li><a href="https://raw.githubusercontent.com/AysajanE/plan-orchestrator/main/README.md" target="_blank" rel="noopener" title="plan-orchestrator README">[Eziz 2026f](https://raw.githubusercontent.com/AysajanE/plan-orchestrator/main/README.md "Plan-orchestrator README")</a></li>
+    <li><a href="https://raw.githubusercontent.com/AysajanE/plan-orchestrator/main/docs/playbook-contract.md" target="_blank" rel="noopener" title="PO playbook contract">[Eziz 2026g](https://raw.githubusercontent.com/AysajanE/plan-orchestrator/main/docs/playbook-contract.md "PO playbook contract")</a></li>
+    <li><a href="https://raw.githubusercontent.com/AysajanE/plan-orchestrator/main/docs/operations-book.md" target="_blank" rel="noopener" title="PO operations book">[Eziz 2026h](https://raw.githubusercontent.com/AysajanE/plan-orchestrator/main/docs/operations-book.md "PO operations book")</a></li>
+    <li><a href="https://raw.githubusercontent.com/AysajanE/staged-workflow-runner/main/README.md" target="_blank" rel="noopener" title="SWR README">[Eziz 2026i](https://raw.githubusercontent.com/AysajanE/staged-workflow-runner/main/README.md "SWR README")</a></li>
+    <li><a href="https://github.com/garrytan/gstack" target="_blank" rel="noopener" title="gstack repository">[Tan 2026](https://github.com/garrytan/gstack "gstack repository")</a></li>
+    <li><a href="https://github.com/garrytan/gstack/blob/main/autoplan/SKILL.md" target="_blank" rel="noopener" title="gstack autoplan skill">[Tan 2026a](https://github.com/garrytan/gstack/blob/main/autoplan/SKILL.md "gstack autoplan skill")</a></li>
+  </ul>
+</section>
+```
+
+  </main>
+</div>
+
+<script>
+(function(){
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c]));
+  }
+
+  const loopData = [
+    {
+      title:"0. Choose one bounded slice",
+      text:"Do not ask Keel to build “the Health Data Hub.” Ask it to build one slice: warehouse schema, mood API, feature engineering, model gate, counterfactual generator, Streamlit page, backup/restore, or tests."
+    },
+    {
+      title:"1. gstack planning",
+      text:"Run gstack on the approved design to produce a slice-specific reviewed plan and approved brief. The brief must name files, verification expectations, gates, and non-goals."
+    },
+    {
+      title:"2. Compile or SWR",
+      text:"Use the compiler fast lane for bounded implementation slices. Use SWR for high-stakes slices where security, privacy, model framing, or backup correctness require deeper staged review."
+    },
+    {
+      title:"3. Human-review the playbook",
+      text:"The playbook is the runtime contract. Read every row before execution: action, prerequisites, repo surfaces, deliverable, allowed write roots, verification commands, and gates."
+    },
+    {
+      title:"4. PO run",
+      text:"Plan-orchestrator runs one item at a time in isolated worktrees. It verifies before audit and records run_state as the kernel authority."
+    },
+    {
+      title:"5. Dual audit",
+      text:"Codex and Claude audit the same frozen evidence packet. The builder does not grade its own homework."
+    },
+    {
+      title:"6. Gates",
+      text:"Manual gates and external evidence stops are real stops. Only a human clears a manual gate. External evidence must be local files, not agent-invented claims."
+    },
+    {
+      title:"7. Ship and learn",
+      text:"Create a ship branch from the passed run branch. Use gstack /review, /ship, /land-and-deploy, /document-release, /retro, and /learn to close the loop."
+    }
+  ];
+  document.querySelectorAll("[data-loop]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const idx = Number(el.dataset.loop);
+      document.querySelectorAll("[data-loop]").forEach(n=>n.classList.remove("active"));
+      el.classList.add("active");
+      document.getElementById("loopPanel").innerHTML = '<p class="panel-title">'+loopData[idx].title+'</p><p>'+loopData[idx].text+'</p>';
+    });
+  });
+
+  const artifactData = {
+    design:{
+      title:"Design doc",
+      text:"The /office-hours design exists in ~/.gstack. Promote a copy into the product repo as docs/gstack/health-data-hub-office-hours.md so the team can review, compile, and version the starting point."
+    },
+    brief:{
+      title:"Approved slice brief",
+      text:"Each slice needs its own approved brief under docs/briefs/. The brief is the human-approved scope for one playbook, not the entire 16-week design."
+    },
+    playbook:{
+      title:"Playbook",
+      text:"The compiler or SWR produces markdown_playbook_v1 under docs/playbooks/. This is the only artifact PO consumes. It must pass list-items and doctor before execution."
+    },
+    run:{
+      title:"PO run evidence",
+      text:"Plan-orchestrator writes run state, worktrees, audit packets, and supervision artifacts under local runtime paths. The run branch is internal; use a separate ship branch for release."
+    },
+    external:{
+      title:"External evidence",
+      text:"Device smoke tests, local API proof, and restore evidence should live under private/evidence/ when sensitive. Promote sanitized summaries to docs/evidence/."
+    },
+    ship:{
+      title:"Ship branch",
+      text:"Create ship/<slice> from orchestrator/run/<RUN_ID>, then use gstack for review, PR, merge, release documentation, retro, and learning."
+    },
+    data:{
+      title:"Health data",
+      text:"Raw JSON, DuckDB, secrets, snapshots, quarantine, and tokens stay out of git. Use permissions, encrypted backups, and restore drills as part of the product."
+    }
+  };
+  function setArtifact(key){
+    document.querySelectorAll(".art-btn").forEach(b=>b.classList.toggle("active", b.dataset.art===key));
+    document.querySelectorAll(".artifact-node").forEach(n=>n.classList.toggle("active", n.dataset.artNode===key));
+    document.getElementById("artifactTitle").textContent = artifactData[key].title;
+    document.getElementById("artifactText").textContent = artifactData[key].text;
+  }
+  document.querySelectorAll(".art-btn").forEach(b=>b.addEventListener("click",()=>setArtifact(b.dataset.art)));
+  document.querySelectorAll(".artifact-node").forEach(n=>n.addEventListener("click",()=>setArtifact(n.dataset.artNode)));
+
+  const slices = [
+    {
+      id:"S00",
+      title:"Start data clock + setup shell",
+      lane:"No PO",
+      risk:"Low",
+      week:"Day 0–1",
+      description:"Mood logging starts immediately outside the codebase. In parallel, install Keel/gstack and promote the design into the repo. This is a setup slice, not a PO execution slice.",
+      inputs:"Approved design doc; product repo; Keel install.",
+      outputs:"docs/gstack/health-data-hub-office-hours.md; folder structure; mood Notes template.",
+      gates:"Human confirms mood prompt anchors and repo privacy rules.",
+      why:"N_model depends on real mood labels. The code can wait one day; the data clock should not."
+    },
+    {
+      id:"S01",
+      title:"Warehouse foundation",
+      lane:"Compiler",
+      risk:"Medium",
+      week:"Week 1–3",
+      description:"Build DuckDB schema, Pydantic validation, warehouse insert functions, quarantine behavior, permissions setup, and schema tests.",
+      inputs:"Design doc; S01 approved brief.",
+      outputs:"src/db/schema.sql; src/warehouse/*; scripts/setup_permissions.py; tests/warehouse/*.",
+      gates:"Manual schema signoff before downstream code depends on the tables.",
+      why:"Best first Keel run: no external API, concrete files, clear verification, real manual gate."
+    },
+    {
+      id:"S02",
+      title:"Mood API loop",
+      lane:"SWR preferred",
+      risk:"High",
+      week:"Week 3–4",
+      description:"Build FastAPI POST /api/mood, GET /api/health, token checks, same-host read middleware, mood_date logic, corrections, rate limit, Shortcut runbook.",
+      inputs:"Warehouse layer; mood prompt spec; local network policy.",
+      outputs:"src/api/*; tests/test_api_security.py; tests/test_mood_date.py; docs/runbooks/mood-shortcut.md.",
+      gates:"Security/privacy signoff because this touches health labels and a LAN endpoint.",
+      why:"This is small but sensitive. SWR is justified if the team wants stronger planning review."
+    },
+    {
+      id:"S03",
+      title:"Ingestion smoke + provider decision",
+      lane:"Compiler + external evidence",
+      risk:"High",
+      week:"Week 1–2 evidence, code later",
+      description:"Smoke-test Open Wearables Oura periodic pull and pyEight. Apply tripwires. Implement the chosen ingestion path only after evidence exists.",
+      inputs:"Device credentials; smoke-test scripts; private evidence directory.",
+      outputs:"docs/evidence/ingestion/* summaries; src/ingestion/* once path is chosen.",
+      gates:"blocked_external likely: human supplies proof that Oura/8 Sleep path works or tripwire fallback was chosen.",
+      why:"Do not let provider uncertainty contaminate the clean first code run."
+    },
+    {
+      id:"S04",
+      title:"Feature engineering",
+      lane:"Compiler",
+      risk:"Medium",
+      week:"Week 5",
+      description:"Compute exactly four locked v1 features, sleep source reconciliation, prior-only hrv_z, zero-MAD fallback, and daily_features rows.",
+      inputs:"Warehouse layer; raw sleep/mood fixtures.",
+      outputs:"src/features/features.py; tests/test_features.py; fixture data.",
+      gates:"Feature-contract signoff: no v2 feature creep, no future-data leakage.",
+      why:"Model correctness starts here. A wrong feature pipeline makes later insights meaningless."
+    },
+    {
+      id:"S05",
+      title:"Model lifecycle + baseline gates",
+      lane:"SWR preferred",
+      risk:"High",
+      week:"Week 6",
+      description:"Ridge model, StandardScaler, bootstrap sign stability, baseline gate, eval.jsonl, provenance, no-op retrain below N.",
+      inputs:"daily_features fixtures; model gate spec.",
+      outputs:"src/model/*; models/eval.jsonl writer; tests/model/*.",
+      gates:"Model-output gate: no contributors or CFs until baseline and stability gates pass.",
+      why:"Statistical output can mislead the user. Treat this as high-stakes."
+    },
+    {
+      id:"S06",
+      title:"Counterfactual generator",
+      lane:"SWR preferred",
+      risk:"High",
+      week:"Week 7",
+      description:"Single-feature retrospective CF for total_sleep_min only, increase-only, safe floor, plausibility filter, bootstrap delta CI, trivial-effect suppression.",
+      inputs:"Model layer; feature metadata; synthetic data tests.",
+      outputs:"src/model/counterfactual.py; tests/test_counterfactual.py.",
+      gates:"Causal-framing signoff: never recommend HRV/deep sleep, never imply causation.",
+      why:"This is the headline UX and the easiest place to overclaim."
+    },
+    {
+      id:"S07",
+      title:"Read API + Streamlit UI",
+      lane:"Compiler",
+      risk:"Medium",
+      week:"Week 8–9",
+      description:"GET insight endpoints, counterfactual endpoints, Streamlit mood-first page, stale-source banner, raw timeline, empty states.",
+      inputs:"API, model, CF, UI language checklist.",
+      outputs:"src/api/insights.py; app/streamlit_app.py; tests/ui or smoke fixtures.",
+      gates:"Nocebo/UI language signoff and banned-word scan.",
+      why:"The UI must make safe output obvious and empty states respectable."
+    },
+    {
+      id:"S08",
+      title:"launchd + backups + restore",
+      lane:"SWR preferred",
+      risk:"High",
+      week:"Week 10–14",
+      description:"Morning sync plist, evening retrain plist, flock/file lock, CHECKPOINT snapshot, age encryption, iCloud backup, restore drill.",
+      inputs:"Working warehouse/API/model; secrets policy.",
+      outputs:"launchd plists; scripts/backup.py; docs/runbooks/restore.md; restore proof.",
+      gates:"Restore proof signoff and secrets/logging review.",
+      why:"Local-first health data is only credible if backup and restore are real."
+    },
+    {
+      id:"S09",
+      title:"Testing + v1 evaluation",
+      lane:"Compiler + gstack retro",
+      risk:"Medium",
+      week:"Week 12–16",
+      description:"Pytest suite, weekly smoke fixture, restore verification, compliance evidence, v1 success scoring, retro and learn.",
+      inputs:"All previous slices; design success criteria.",
+      outputs:"tests/*; docs/evidence/week16-evaluation.md; release docs; retro.",
+      gates:"Minimum viability gates and quality questions.",
+      why:"This decides whether v1 operationally succeeded before Autopilot/Coach scope is considered."
+    }
+  ];
+
+  const grid = document.getElementById("sliceGrid");
+  slices.forEach((s, idx)=>{
+    const div = document.createElement("div");
+    div.className = "slice-card" + (idx===0 ? " active" : "");
+    div.dataset.slice = s.id;
+    div.innerHTML = '<span class="tag info">'+s.id+'</span><span class="tag '+(s.risk==="High"?"risk":s.risk==="Medium"?"info":"safe")+'">'+s.risk+'</span><h4>'+escapeHtml(s.title)+'</h4><p class="mini">'+escapeHtml(s.week)+' · '+escapeHtml(s.lane)+'</p>';
+    div.addEventListener("click",()=>setSlice(s.id));
+    grid.appendChild(div);
+  });
+
+  function setSlice(id){
+    const s = slices.find(x=>x.id===id) || slices[0];
+    document.querySelectorAll(".slice-card").forEach(c=>c.classList.toggle("active", c.dataset.slice===id));
+    document.getElementById("sliceTitle").textContent = s.id+" — "+s.title;
+    document.getElementById("sliceDescription").textContent = s.description;
+    document.getElementById("sliceDetails").innerHTML =
+      '<div class="grid two">'+
+      '<div><p><strong>Lane:</strong> '+escapeHtml(s.lane)+'</p><p><strong>Risk:</strong> '+escapeHtml(s.risk)+'</p><p><strong>Timing:</strong> '+escapeHtml(s.week)+'</p></div>'+
+      '<div><p><strong>Why now:</strong> '+escapeHtml(s.why)+'</p></div>'+
+      '</div>'+
+      '<table><thead><tr><th>Inputs</th><th>Outputs</th><th>Gates</th></tr></thead><tbody><tr><td>'+escapeHtml(s.inputs)+'</td><td>'+escapeHtml(s.outputs)+'</td><td>'+escapeHtml(s.gates)+'</td></tr></tbody></table>';
+  }
+  setSlice("S00");
+
+  const runbooks = {
+    compiler:{
+      title:"Fast compiler lane",
+      text:"Use this for bounded slices with concrete files and clear tests: warehouse, feature engineering, straightforward API read endpoints, tests, and UI components.",
+      cmd:`# 1. Produce a slice-specific approved brief with gstack.
+/autoplan docs/gstack/health-data-hub-office-hours.md
+# Save the slice outputs:
+#   docs/gstack/s01-warehouse-autoplan.md
+#   docs/briefs/s01-warehouse.approved-brief.md
+
+# 2. Compile the approved brief into markdown_playbook_v1.
+source ~/keel/keel.env
+export PRODUCT_REPO="$HOME/health-data-hub"
+
+keel-compile compile \\
+  --repo-root "$PRODUCT_REPO" \\
+  --design "$PRODUCT_REPO/docs/gstack/health-data-hub-office-hours.md" \\
+  --autoplan "$PRODUCT_REPO/docs/gstack/s01-warehouse-autoplan.md" \\
+  --approved-brief "$PRODUCT_REPO/docs/briefs/s01-warehouse.approved-brief.md" \\
+  --out "$PRODUCT_REPO/docs/playbooks/s01-warehouse.playbook.md" \\
+  --row-author external-json \\
+  --row-author-command "claude -p" \\
+  --plan-orchestrator-root "$KEEL_PO_ROOT" \\
+  --human-approved-by "$USER"`
+    },
+    swr:{
+      title:"High-stakes SWR lane",
+      text:"Use SWR when planning risk is high: security/privacy, secrets, backup/restore, model/counterfactual framing, or broad ambiguous scope. SWR still ends by producing markdown_playbook_v1, which PO then validates and executes.",
+      cmd:`# 1. Human-approved slice brief exists.
+#   docs/briefs/s02-mood-api.approved-brief.md
+
+# 2. Initialize a supervised SWR planning session.
+# Exact task-pack paths can vary; verify with: keel-swr --help
+keel-swr supervisor init-session \\
+  --root "$PRODUCT_REPO" \\
+  --clarified-task-brief "$PRODUCT_REPO/docs/briefs/s02-mood-api.approved-brief.md" \\
+  --summary "Build the token-gated home-Wi-Fi mood API safely."
+
+# 3. Run the reviewed workflow/task pack that emits markdown_playbook_v1.
+# Terminal artifact must be:
+#   docs/playbooks/s02-mood-api.playbook.md
+
+# 4. Then validate with PO exactly like compiler output.
+keel-run list-items --playbook "$PRODUCT_REPO/docs/playbooks/s02-mood-api.playbook.md"
+keel-doctor --playbook "$PRODUCT_REPO/docs/playbooks/s02-mood-api.playbook.md" --format json`
+    },
+    external:{
+      title:"External evidence lane",
+      text:"Use this when PO cannot verify something inside the repo: Oura smoke, 8 Sleep authentication, iOS Shortcut local-network behavior, backup restore, or encrypted snapshot proof.",
+      cmd:`# 1. Create local evidence directory.
+mkdir -p "$PRODUCT_REPO/private/evidence/oura-smoke-2026-05-xx"
+
+# 2. Put sensitive proof there:
+# - sanitized logs
+# - screenshots with tokens removed
+# - raw command transcripts with secrets redacted
+# - README.md explaining the result
+
+# 3. Promote a sanitized summary to docs/evidence if safe.
+mkdir -p "$PRODUCT_REPO/docs/evidence/ingestion"
+$EDITOR "$PRODUCT_REPO/docs/evidence/ingestion/oura-smoke-2026-05-xx.md"
+
+# 4. Resume blocked PO item with local evidence.
+keel-run supervise resume \\
+  --run-id <RUN_ID> \\
+  --external-evidence-dir "$PRODUCT_REPO/private/evidence/oura-smoke-2026-05-xx"`
+    }
+  };
+  document.querySelectorAll(".runbook-btn").forEach(b=>{
+    b.addEventListener("click",()=>{
+      const r = runbooks[b.dataset.runbook];
+      document.querySelectorAll(".runbook-btn").forEach(x=>x.classList.toggle("active", x===b));
+      document.getElementById("runbookTitle").textContent = r.title;
+      document.getElementById("runbookText").textContent = r.text;
+      document.getElementById("runbookCmd").textContent = r.cmd;
+    });
+  });
+
+  const rowExamples = {
+    good:{
+      title:"Good row: warehouse schema",
+      html:`<table class="small-table">
+        <thead><tr><th>Column</th><th>Example</th><th>Why it is good</th></tr></thead>
+        <tbody>
+          <tr><td>action</td><td>Create DuckDB v1 schema file</td><td>Concrete, not “build warehouse.”</td></tr>
+          <tr><td>repo_surfaces</td><td>docs/gstack/health-data-hub-office-hours.md</td><td>Uses the approved design as input.</td></tr>
+          <tr><td>deliverable</td><td>src/db/schema.sql; tests/warehouse/test_schema.py</td><td>Specific output files.</td></tr>
+          <tr><td>allowed_write_roots</td><td>src/db; tests/warehouse</td><td>Narrow write scope.</td></tr>
+          <tr><td>requires_red_green</td><td>true</td><td>Schema behavior must be tested.</td></tr>
+        </tbody>
+      </table>`
+    },
+    bad:{
+      title:"Bad row: vague app build",
+      html:`<table class="small-table">
+        <thead><tr><th>Column</th><th>Bad example</th><th>Problem</th></tr></thead>
+        <tbody>
+          <tr><td>action</td><td>Implement Health Data Hub</td><td>Too broad for one item.</td></tr>
+          <tr><td>repo_surfaces</td><td>docs/</td><td>Not a concrete input.</td></tr>
+          <tr><td>deliverable</td><td>src/</td><td>Not a deliverable path.</td></tr>
+          <tr><td>allowed_write_roots</td><td>.</td><td>Allows whole-repo mutation.</td></tr>
+          <tr><td>requires_red_green</td><td>false</td><td>Behavioral work needs verification.</td></tr>
+        </tbody>
+      </table>`
+    },
+    gate:{
+      title:"Gate row: schema signoff",
+      html:`<table class="small-table">
+        <thead><tr><th>Column</th><th>Example</th><th>Why it matters</th></tr></thead>
+        <tbody>
+          <tr><td>manual_gate</td><td>signoff</td><td>PO must stop for human review.</td></tr>
+          <tr><td>manual_gate_reason</td><td>Schema is foundation for all downstream data/model code.</td><td>Explains why the gate exists.</td></tr>
+          <tr><td>manual_gate_evidence</td><td>docs/reviews/s01-schema-signoff.md</td><td>Evidence path is explicit.</td></tr>
+          <tr><td>external_check</td><td>none</td><td>Schema does not need device API evidence.</td></tr>
+          <tr><td>required_verification_commands</td><td>python -m pytest tests/warehouse -q</td><td>Human signoff does not replace tests.</td></tr>
+        </tbody>
+      </table>`
+    }
+  };
+  document.querySelectorAll(".row-btn").forEach(b=>{
+    b.addEventListener("click",()=>{
+      document.querySelectorAll(".row-btn").forEach(x=>x.classList.toggle("active", x===b));
+      const row = rowExamples[b.dataset.row];
+      document.getElementById("rowPanel").innerHTML = '<p class="panel-title">'+row.title+'</p>'+row.html;
+    });
+  });
+
+  window.updateRootSafety = function(){
+    const type = document.getElementById("rootType").value;
+    const roots = document.getElementById("rootsInput").value.split(",").map(x=>x.trim()).filter(Boolean);
+    const badRoots = roots.filter(r => r === "." || r === "/" || r === "src" || r === "tests" || r === "test" || r.startsWith(".git") || r.startsWith(".local") || r.startsWith(".env") || r.includes("secrets") || r === "data" || r.startsWith("data/secrets"));
+    const broad = roots.filter(r => ["docs","src/","tests/"].includes(r));
+    let title, text, cls;
+    if(!roots.length){
+      title = "Missing roots";
+      text = "Every playbook row needs explicit allowed_write_roots.";
+      cls = "row-bad";
+    } else if(badRoots.length){
+      title = "Unsafe roots";
+      text = "Problem roots: "+badRoots.join(", ")+". Use narrow repo-relative roots and never give a row data/secrets, .git, .local, or the whole repo.";
+      cls = "row-bad";
+    } else if(broad.length || roots.length > 4){
+      title = "Risky: narrower roots recommended";
+      text = "The roots may be acceptable for a hand-reviewed playbook, but model-authored compiler rows should use narrow roots derived from deliverables.";
+      cls = "row-warn";
+    } else if(type === "api" && !roots.some(r=>/api|security|tests/i.test(r))){
+      title = "Risky: API slice lacks API/security/test roots";
+      text = "A mood API slice should name API code roots and security tests explicitly.";
+      cls = "row-warn";
+    } else if(type === "backup" && !roots.some(r=>/scripts|runbooks|tests/i.test(r))){
+      title = "Risky: backup slice lacks scripts/runbooks/tests roots";
+      text = "Backup/restore work should name scripts, runbooks, and tests. It should not write raw data or secrets.";
+      cls = "row-warn";
+    } else {
+      title = "Safe enough: narrow slice roots";
+      text = "These roots are specific and repo-relative. They let the item do its job without giving it the whole repository.";
+      cls = "row-ok";
+    }
+    const panel = document.getElementById("rootSafetyPanel");
+    panel.classList.remove("row-ok","row-warn","row-bad");
+    panel.classList.add(cls);
+    document.getElementById("rootSafetyTitle").textContent = title;
+    document.getElementById("rootSafetyText").textContent = text;
+  };
+
+  const stateData = {
+    setup:{title:"setup_worktree",text:"PO creates an isolated git worktree for the item attempt. For this project, that means one row cannot accidentally rewrite unrelated health-data code or docs."},
+    execute:{title:"execute",text:"The mutation lane applies the item change inside allowed_write_roots. A warehouse item should stay inside roots such as src/db, src/warehouse, and tests/warehouse."},
+    verify:{title:"verify",text:"Required verification commands run before audit. For behavioral health-data code, tests should prove the logic, not just file existence."},
+    packet:{title:"audit_packet_ready",text:"PO freezes the patch, verification output, playbook snapshot, and item context. Both auditors see the same packet."},
+    audit:{title:"dual audit",text:"Codex and Claude audit independently. They should catch unsafe scope, missing tests, privacy leaks, or weak implementation evidence."},
+    triage:{title:"triage",text:"Findings are merged by rule. The next state is one of: passed, bounded fix loop, manual gate, blocked external, or escalated."},
+    fix:{title:"bounded fix loop",text:"PO may attempt bounded remediation for findings. It should not spiral indefinitely or widen the slice."},
+    passed:{title:"passed",text:"The item passed verification and audit. PO can advance the run branch to include it."},
+    human:{title:"awaiting_human_gate",text:"Machine stops. The human reviewer reads the gate packet and records the decision from a human-held terminal."},
+    external:{title:"blocked_external",text:"The item needs proof outside the repo: device API smoke result, iOS Shortcut proof, or restore proof. Supply local evidence files and resume."},
+    escalated:{title:"escalated",text:"A failure or unresolved issue requires human triage. Do not ask an agent to “just finish it.”"}
+  };
+  document.querySelectorAll(".po-state").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const key = el.dataset.state;
+      document.querySelectorAll(".po-state").forEach(n=>n.classList.remove("active"));
+      el.classList.add("active");
+      document.getElementById("stateTitle").textContent = stateData[key].title;
+      document.getElementById("stateText").textContent = stateData[key].text;
+    });
+  });
+
+  const archData = {
+    ui:{title:"UI layer",text:"The UI is Streamlit. It must show a compact mood logger when today’s mood is not logged, hide model output for date D until feeling[D] exists, and use correlation-safe wording everywhere."},
+    api:{title:"API layer",text:"FastAPI exposes POST /api/mood and same-host token-gated read endpoints. CORS stays disabled in v1 because Streamlit calls FastAPI from server-side Python."},
+    model:{title:"Model layer",text:"Ridge(alpha=1.0), StandardScaler, baseline gate, bootstrap sign stability, prediction intervals, and one retrospective counterfactual that only varies total_sleep_min."},
+    features:{title:"Feature layer",text:"Compute exactly four v1 model features. hrv_z must be prior-only and persisted. Sleep source reconciliation must match the design’s Oura/8 Sleep policy."},
+    warehouse:{title:"Warehouse layer",text:"DuckDB plus raw JSON. Core tables: sleep_nights, mood_entries, mood_current, daily_features, sleep_merge_diagnostics. Invalid payloads go to quarantine, not general logs."},
+    ingestion:{title:"Ingestion layer",text:"Oura is required via Open Wearables if the week-1 smoke passes, otherwise direct OAuth2 periodic pull. 8 Sleep is optional under the week-2 tripwire. Mood POST uses home Wi-Fi."}
+  };
+  function setArch(key){
+    document.querySelectorAll(".arch-layer").forEach(n=>n.classList.toggle("active", n.dataset.arch===key));
+    document.getElementById("archTitle").textContent = archData[key].title;
+    document.getElementById("archText").textContent = archData[key].text;
+  }
+  document.querySelectorAll(".arch-layer").forEach(n=>n.addEventListener("click",()=>setArch(n.dataset.arch)));
+
+  window.updateModelGate = function(){
+    const n = Number(document.getElementById("nModel").value);
+    const rmse = document.getElementById("rmsePass").checked;
+    const day = document.getElementById("dayCountPass").checked;
+    const stable = document.getElementById("stableSleep").checked;
+    document.getElementById("nModelValue").textContent = n;
+    let train, evalw, ui;
+    if(n < 30){
+      train = "No model fit. Keep collecting mood and sleep data.";
+      evalw = "No UI gate yet.";
+      ui = "Show collecting state only: N/37.";
+    } else if(n < 37){
+      train = "Model can train internally and log no-op/eval metadata.";
+      evalw = "No meaningful UI gate yet; not enough eval days.";
+      ui = "No contributors and no counterfactuals.";
+    } else if(n < 44){
+      train = "Model can train.";
+      evalw = "Use last 7 days walk-forward evaluation.";
+      ui = (rmse && day) ? (stable ? "Can show contributors and sleep CF if other gates pass." : "Can show stable contributors if any, but sleep CF suppressed until mutable feature is ≥90% stable.") : "Gate failed: show baseline/collecting state.";
+    } else {
+      train = "Model can train.";
+      evalw = "Use last 14 days walk-forward evaluation.";
+      ui = (rmse && day) ? (stable ? "Can show contributors and sleep CF if date-specific data is ready." : "Counterfactual suppressed; mutable feature not stable enough.") : "Gate failed: no model output.";
+    }
+    document.getElementById("trainStatus").textContent = train;
+    document.getElementById("evalWindow").textContent = evalw;
+    document.getElementById("uiOutput").textContent = ui;
+  };
+  updateModelGate();
+
+  const tripData = {
+    oura:{
+      title:"Oura ingestion tripwire",
+      condition:"Condition: End of week 1: Open Wearables is not producing usable Oura sleep data in less than one weekend of trying.",
+      action:"Fallback: Drop Open Wearables for Oura and implement direct Oura OAuth2 with authorization-code and refresh-token flow. Keep periodic pull, not webhooks.",
+      keel:"Keel handling: Treat the smoke result as external evidence. If the ingestion slice reaches blocked_external, supply the local evidence directory with sanitized logs and proof files."
+    },
+    eight:{
+      title:"8 Sleep ingestion tripwire",
+      condition:"Condition: End of week 2: pyEight is not authenticated and returning last night’s data reliably.",
+      action:"Fallback: Ship v1 as Oura-only. Reintroduce 8 Sleep after stability proof.",
+      keel:"Keel handling: Update the ingestion slice brief and record a scope-change review. Do not let PO spend more attempts chasing a broken provider path."
+    },
+    moodTransport:{
+      title:"Mood transport tripwire",
+      condition:"Condition: End of week 4: at least 6 of the last 7 evening logs did not successfully POST by 11:59pm local.",
+      action:"Fallback: Use a tiny mobile-friendly Streamlit mood form on home Wi-Fi. Defer the iOS Shortcut to v1.1.",
+      keel:"Keel handling: Treat this as a product-scope decision, not a bug fix loop. Update docs/runbooks/mood-logging.md."
+    },
+    moodCompliance:{
+      title:"Mood compliance tripwire",
+      condition:"Condition: End of week 8: trailing 28-day mood compliance is below 80%.",
+      action:"Fallback: Stop all modeling work. Fix logging habit before adding model code.",
+      keel:"Keel handling: Do not compile model slices until the product owner records the compliance decision."
+    },
+    baseline:{
+      title:"Baseline gate tripwire",
+      condition:"Condition: End of week 9: ridge does not beat rolling-mean and prior-day baselines under the gate rules.",
+      action:"Fallback: Collapse UI to collecting state. Add context/action-feature logging early, but do not deliberately short-sleep.",
+      keel:"Keel handling: This is not a failed PO run. It is an expected model gate outcome. Record in eval evidence and product retro."
+    },
+    eightBreak:{
+      title:"8 Sleep mid-build breakage",
+      condition:"Condition: Any week before 9: pyEight breaks after firmware/API changes.",
+      action:"Fallback: Switch to Oura-only the same day.",
+      keel:"Keel handling: Record a scope change. Avoid a broad emergency playbook that rewrites downstream assumptions."
+    }
+  };
+  document.querySelectorAll(".trip-btn").forEach(b=>{
+    b.addEventListener("click",()=>{
+      document.querySelectorAll(".trip-btn").forEach(x=>x.classList.toggle("active", x===b));
+      const t = tripData[b.dataset.trip];
+      document.getElementById("tripTitle").textContent = t.title;
+      document.getElementById("tripCondition").innerHTML = "<strong>"+t.condition.split(":")[0]+":</strong>"+escapeHtml(t.condition.substring(t.condition.indexOf(":")+1));
+      document.getElementById("tripAction").innerHTML = "<strong>"+t.action.split(":")[0]+":</strong>"+escapeHtml(t.action.substring(t.action.indexOf(":")+1));
+      document.getElementById("tripKeel").innerHTML = "<strong>"+t.keel.split(":")[0]+":</strong>"+escapeHtml(t.keel.substring(t.keel.indexOf(":")+1));
+    });
+  });
+
+  const weekData = [
+    {title:"Start today",text:"Do not wait for the API to start mood logging. Use the fixed Apple Notes template now: Date, Feeling 1–10 with anchors, Energy optional, Notes optional."},
+    {title:"Preflight",text:"Run keel-smoke, verify Codex and Claude, create product repo folders, and record tool versions in docs/evidence/toolchain-preflight.md."},
+    {title:"Plan S01",text:"Run gstack /autoplan for the first code slice only: warehouse foundation. Save the autoplan and approved brief under docs/gstack and docs/briefs."},
+    {title:"Compile and review S01",text:"Compile with external-json row author and claude -p. Run list-items and doctor. Human-review every playbook row before PO execution."},
+    {title:"Execute S01",text:"Run PO under supervision, resolve schema manual gate, and ship the warehouse foundation from a ship branch."},
+    {title:"Oura decision",text:"By end of week 1, decide Open Wearables periodic pull versus direct Oura OAuth2. Record evidence and fallback decision."},
+    {title:"8 Sleep decision",text:"By end of week 2, decide whether pyEight is stable enough. If not, formally record Oura-only v1 and move on."}
+  ];
+  document.querySelectorAll("#weekTimeline .time-item").forEach(item=>{
+    item.addEventListener("click",()=>{
+      const i = Number(item.dataset.week);
+      document.querySelectorAll("#weekTimeline .time-item").forEach(x=>x.classList.remove("active"));
+      item.classList.add("active");
+      document.getElementById("weekTitle").textContent = weekData[i].title;
+      document.getElementById("weekText").textContent = weekData[i].text;
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1026 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Building the Health Data Hub with Keel — a step-by-step walkthrough</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #FAF7F0;
+    --panel: #FFFFFF;
+    --ink: #1A1A2E;
+    --muted: #6B6B7B;
+    --rule: #E5E0D5;
+    --code-bg: #2B2D3E;
+    --code-ink: #F4F1E8;
+    --plan: #E89B3C;      /* gstack — plan + ship */
+    --compile: #2A9D8F;   /* compiler */
+    --review: #C44536;    /* human review / gates */
+    --execute: #3D5A80;   /* plan-orchestrator */
+    --done: #8A8A99;      /* already finished */
+    --contract: #B97824;
+    --shadow: rgba(26, 26, 46, 0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; line-height: 1.62; }
+  body { max-width: 1080px; margin: 0 auto; padding: 48px 24px 110px; }
+  h1 { font-size: 40px; line-height: 1.12; margin: 0 0 10px; letter-spacing: -0.02em; }
+  h2 { font-size: 26px; line-height: 1.2; margin: 60px 0 14px; letter-spacing: -0.01em; border-bottom: 1px solid var(--rule); padding-bottom: 9px; }
+  h3 { font-size: 19px; margin: 26px 0 8px; }
+  h4 { font-size: 13px; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 700; }
+  p { margin: 8px 0 12px; }
+  .subtitle { font-style: italic; color: var(--muted); font-size: 14px; margin: -2px 0 20px; }
+  .lead { font-size: 18px; color: #2E2E40; margin: 0 0 28px; max-width: 820px; line-height: 1.55; }
+  code { background: rgba(45,47,62,0.08); padding: 1px 5px; border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; }
+  pre { background: var(--code-bg); color: var(--code-ink); padding: 15px 17px; border-radius: 8px;
+    overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5;
+    box-shadow: 0 2px 10px var(--shadow); }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  pre .c { color: #7FB5AB; }
+  a { color: var(--execute); text-decoration: none; border-bottom: 1px solid currentColor; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 36px 0; }
+
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.05em; text-transform: uppercase; }
+  .pill-plan { background: rgba(232,155,60,0.16); color: #B97824; }
+  .pill-compile { background: rgba(42,157,143,0.16); color: #1F7468; }
+  .pill-review { background: rgba(196,69,54,0.15); color: #9B3328; }
+  .pill-execute { background: rgba(61,90,128,0.15); color: #2C4767; }
+  .pill-done { background: rgba(138,138,153,0.18); color: #55555f; }
+
+  .lead-note { background: linear-gradient(0deg, rgba(232,155,60,0.07), rgba(232,155,60,0.07));
+    border-left: 3px solid var(--plan); padding: 14px 16px; border-radius: 6px; margin: 18px 0; font-size: 14.5px; }
+  .lead-note strong { color: #B97824; }
+  .insight { background: rgba(61,90,128,0.06); border-left: 3px solid var(--execute);
+    padding: 13px 16px; border-radius: 6px; margin: 16px 0; font-size: 14.5px; }
+  .insight strong { color: #2C4767; }
+  .warn { background: rgba(196,69,54,0.07); border-left: 3px solid var(--review);
+    padding: 13px 16px; border-radius: 6px; margin: 16px 0; font-size: 14.5px; }
+  .warn strong { color: #9B3328; }
+
+  /* Status panel */
+  .status { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin: 18px 0; }
+  @media (max-width: 720px) { .status { grid-template-columns: 1fr; } }
+  .status .cell { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 15px 16px; box-shadow: 0 1px 8px var(--shadow); }
+  .status .cell .mark { font-size: 20px; font-weight: 700; }
+  .status .cell h4 { margin: 4px 0 4px; color: var(--ink); text-transform: none; letter-spacing: 0; font-size: 14.5px; }
+  .status .cell p { margin: 0; font-size: 12.5px; color: var(--muted); }
+  .status .cell.ok { border-left: 4px solid var(--compile); }
+  .status .cell.no { border-left: 4px solid var(--review); }
+  .status .cell.now { border-left: 4px solid var(--execute); }
+
+  /* Interactive figures */
+  .figure { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px;
+    padding: 22px; box-shadow: 0 2px 14px var(--shadow); margin: 16px 0 22px; }
+  .figure svg { width: 100%; height: auto; display: block; }
+  .figure .caption { font-size: 13px; color: var(--muted); margin-top: 12px; text-align: center; font-style: italic; }
+  .box { cursor: pointer; transition: transform 130ms ease, filter 130ms ease; }
+  .box:hover { transform: translateY(-2px); filter: brightness(1.04); }
+  .box.dim { opacity: 0.25; }
+  .box.active { filter: drop-shadow(0 4px 10px rgba(26,26,46,0.22)); }
+  .inspector { background: rgba(26,26,46,0.04); border-radius: 8px; padding: 13px 16px; margin-top: 14px;
+    font-size: 14px; min-height: 58px; border: 1px dashed var(--rule); }
+  .inspector.empty { color: var(--muted); font-style: italic; text-align: center; }
+  .inspector h5 { margin: 0 0 5px; font-size: 14px; color: var(--ink); }
+  .inspector p { margin: 4px 0; color: var(--ink); }
+  .inspector .meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .inspector code { font-size: 12.5px; }
+
+  /* Preflight checklist */
+  .check { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 14px 18px; margin: 10px 0; box-shadow: 0 1px 6px var(--shadow); }
+  .check .top { display: flex; align-items: baseline; gap: 9px; }
+  .check .n { width: 22px; height: 22px; border-radius: 50%; background: var(--execute); color: #fff;
+    font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .check h3 { margin: 0; font-size: 16px; }
+  .check p { margin: 7px 0 7px 31px; font-size: 13.5px; color: var(--muted); }
+  .check pre { margin: 6px 0 4px 31px; font-size: 12.5px; }
+  .check .expect { margin-left: 31px; font-size: 12.5px; color: #1F7468; }
+  .check .expect b { color: #1F7468; }
+
+  /* Move blocks */
+  .move { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px;
+    box-shadow: 0 2px 12px var(--shadow); margin: 20px 0; overflow: hidden; }
+  .move-head { display: flex; align-items: center; gap: 14px; padding: 16px 20px; border-bottom: 1px solid var(--rule); }
+  .move-num { width: 44px; height: 44px; border-radius: 12px; color: #fff; font-size: 20px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .move-head h3 { margin: 0; font-size: 21px; }
+  .move-head .who { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .move-body { padding: 6px 20px 20px; }
+  .move-body h4 { color: var(--ink); }
+  .move.plan .move-num { background: var(--plan); }
+  .move.compile .move-num { background: var(--compile); }
+  .move.review .move-num { background: var(--review); }
+  .move.execute .move-num { background: var(--execute); }
+  .move.ship .move-num { background: var(--plan); }
+  .move.plan { border-top: 4px solid var(--plan); }
+  .move.compile { border-top: 4px solid var(--compile); }
+  .move.review { border-top: 4px solid var(--review); }
+  .move.execute { border-top: 4px solid var(--execute); }
+  .move.ship { border-top: 4px solid var(--plan); }
+  .gate { background: rgba(196,69,54,0.07); border: 1px solid rgba(196,69,54,0.25); border-radius: 8px;
+    padding: 12px 15px; margin: 14px 0; font-size: 14px; }
+  .gate strong { color: #9B3328; }
+  .produces { background: rgba(42,157,143,0.07); border: 1px solid rgba(42,157,143,0.25); border-radius: 8px;
+    padding: 12px 15px; margin: 14px 0; font-size: 14px; }
+  .produces strong { color: #1F7468; }
+
+  /* Slice stack */
+  .slices { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
+  .slice { display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--rule);
+    border-radius: 8px; padding: 10px 14px; font-size: 13.5px; box-shadow: 0 1px 5px var(--shadow); }
+  .slice .tag { font-size: 11px; font-weight: 700; color: var(--muted); width: 56px; flex-shrink: 0; }
+  .slice.pick { border: 2px solid var(--compile); background: rgba(42,157,143,0.06); }
+  .slice.pick .tag { color: #1F7468; }
+
+  .cheat { background: var(--code-bg); color: var(--code-ink); padding: 20px 22px; border-radius: 12px;
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; line-height: 1.7;
+    box-shadow: 0 2px 14px var(--shadow); white-space: pre; overflow-x: auto; }
+
+  ul.tight { margin: 6px 0; padding-left: 22px; }
+  ul.tight li { margin: 3px 0; }
+  .toc { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 22px; margin: 22px 0 30px; }
+  .toc h4 { margin: 0 0 6px; }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { padding: 2px 0; }
+  .toc a { border-bottom: 0; color: var(--ink); }
+  .toc a:hover { border-bottom: 1px solid currentColor; }
+  .footnote { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>Building the Health Data Hub with Keel</h1>
+<p class="subtitle">A step-by-step walkthrough — from your approved design to shipped code, end to end. This is Keel's first beta test.</p>
+
+<p class="lead">
+You finished the hard part already: the Health Data Hub design is written and approved.
+But there is <strong>no code yet</strong>. This walkthrough is the exact path from "approved design" to
+"shipped code" using Keel — and it is deliberately simple. There are only <strong>five moves</strong>,
+and they repeat. Read this once, all the way through, before you run a single command.
+</p>
+
+<div class="lead-note">
+  <strong>What this is — and is not.</strong> This is a <em>runbook</em> for one product: the Health Data Hub.
+  It tells you what to type and what to expect. It is not a Keel reference manual — for the deep mechanics of
+  any tool, the companion <code>keel-explained.html</code> covers that. Here, the goal is simply: understand
+  the whole loop before you start.
+</div>
+
+<div class="toc">
+  <h4>The walkthrough</h4>
+  <ol>
+    <li><a href="#where">Where you are right now</a></li>
+    <li><a href="#loop">The whole journey: one loop, five moves</a></li>
+    <li><a href="#preflight">Before you start: the preflight check</a></li>
+    <li><a href="#slice">Pick the first slice — don't build all 16 weeks at once</a></li>
+    <li><a href="#trail">What you'll create: the artifact trail</a></li>
+    <li><a href="#moves">The five moves, in order</a></li>
+    <li><a href="#after">After the loop: repeat, and what a good beta test looks like</a></li>
+    <li><a href="#cheatsheet">The whole command sequence</a></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="where">1. Where you are right now</h2>
+
+<p>Three facts set the stage. Keel is how you get from the second to the third — one slice at a time.</p>
+
+<div class="status">
+  <div class="cell ok">
+    <div class="mark" style="color:var(--compile)">✓</div>
+    <h4>The design is done</h4>
+    <p>Approved after 6 revisions + 3 expert reviews. It lives at
+    <code>~/.gstack/projects/AysajanE-longevity-analytics/…-health-data-hub-design-…md</code>.</p>
+  </div>
+  <div class="cell no">
+    <div class="mark" style="color:var(--review)">✗</div>
+    <h4>No code exists</h4>
+    <p>The product repo <code>~/health-data-hub</code> (GitHub <code>AysajanE/longevity-analytics</code>)
+    holds only the design doc. Zero source files.</p>
+  </div>
+  <div class="cell now">
+    <div class="mark" style="color:var(--execute)">→</div>
+    <h4>Now: run the loop</h4>
+    <p>Keel turns the design into code <em>one slice at a time</em>. Each slice is five moves.
+    This walkthrough follows one slice all the way.</p>
+  </div>
+</div>
+
+<div class="insight">
+  <strong>The one idea to hold onto:</strong> Keel does not build the whole product in a single run.
+  You pick a small slice of the design, run five moves on it, ship it, then pick the next slice.
+  The walkthrough below follows the first slice — the data warehouse layer — from start to finish.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="loop">2. The whole journey: one loop, five moves</h2>
+
+<p>Here is the entire workflow. Move 0 (the design) is already done — that's why it is greyed out.
+Click any move to see exactly what it means for the Health Data Hub.</p>
+
+<div class="figure" id="fig-loop">
+  <svg viewBox="0 0 1040 250" xmlns="http://www.w3.org/2000/svg" aria-label="The Keel loop">
+    <defs>
+      <marker id="la" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0 0L10 5L0 10z" fill="#6B6B7B"/>
+      </marker>
+    </defs>
+
+    <!-- return arc: ship -> plan -->
+    <path d="M 905 96 C 905 30, 250 30, 188 96" fill="none" stroke="#8A8A99" stroke-width="1.6"
+      stroke-dasharray="6,4" marker-end="url(#la)"/>
+    <text x="540" y="34" text-anchor="middle" font-size="12" fill="#6B6B7B" font-style="italic">
+      repeat for the next slice</text>
+
+    <!-- nodes -->
+    <g class="box" data-move="design">
+      <rect x="14" y="104" width="150" height="86" rx="12" fill="#F1F0EC" stroke="#8A8A99" stroke-width="2"/>
+      <text x="89" y="130" text-anchor="middle" font-size="11" font-weight="700" fill="#8A8A99" letter-spacing="1">MOVE 0 · DONE</text>
+      <text x="89" y="152" text-anchor="middle" font-size="15" font-weight="700" fill="#55555f">Design</text>
+      <text x="89" y="171" text-anchor="middle" font-size="10.5" fill="#8A8A99">/office-hours</text>
+    </g>
+    <line x1="164" y1="147" x2="186" y2="147" stroke="#6B6B7B" stroke-width="2" marker-end="url(#la)"/>
+
+    <g class="box" data-move="plan">
+      <rect x="188" y="104" width="150" height="86" rx="12" fill="#FFF" stroke="#E89B3C" stroke-width="2.5"/>
+      <text x="263" y="130" text-anchor="middle" font-size="11" font-weight="700" fill="#E89B3C" letter-spacing="1">MOVE 1</text>
+      <text x="263" y="152" text-anchor="middle" font-size="16" font-weight="700" fill="#1A1A2E">Plan</text>
+      <text x="263" y="171" text-anchor="middle" font-size="10.5" fill="#6B6B7B">gstack /autoplan</text>
+    </g>
+    <line x1="338" y1="147" x2="360" y2="147" stroke="#6B6B7B" stroke-width="2" marker-end="url(#la)"/>
+
+    <g class="box" data-move="compile">
+      <rect x="362" y="104" width="150" height="86" rx="12" fill="#FFF" stroke="#2A9D8F" stroke-width="2.5"/>
+      <text x="437" y="130" text-anchor="middle" font-size="11" font-weight="700" fill="#2A9D8F" letter-spacing="1">MOVE 2</text>
+      <text x="437" y="152" text-anchor="middle" font-size="16" font-weight="700" fill="#1A1A2E">Compile</text>
+      <text x="437" y="171" text-anchor="middle" font-size="10.5" fill="#6B6B7B">keel-compile</text>
+    </g>
+    <line x1="512" y1="147" x2="534" y2="147" stroke="#6B6B7B" stroke-width="2" marker-end="url(#la)"/>
+
+    <g class="box" data-move="review">
+      <rect x="536" y="104" width="150" height="86" rx="12" fill="#FFF" stroke="#C44536" stroke-width="2.5"/>
+      <text x="611" y="130" text-anchor="middle" font-size="11" font-weight="700" fill="#C44536" letter-spacing="1">MOVE 3</text>
+      <text x="611" y="152" text-anchor="middle" font-size="16" font-weight="700" fill="#1A1A2E">Review</text>
+      <text x="611" y="171" text-anchor="middle" font-size="10.5" fill="#6B6B7B">you — the gate</text>
+    </g>
+    <line x1="686" y1="147" x2="708" y2="147" stroke="#6B6B7B" stroke-width="2" marker-end="url(#la)"/>
+
+    <g class="box" data-move="execute">
+      <rect x="710" y="104" width="150" height="86" rx="12" fill="#FFF" stroke="#3D5A80" stroke-width="2.5"/>
+      <text x="785" y="130" text-anchor="middle" font-size="11" font-weight="700" fill="#3D5A80" letter-spacing="1">MOVE 4</text>
+      <text x="785" y="152" text-anchor="middle" font-size="16" font-weight="700" fill="#1A1A2E">Execute</text>
+      <text x="785" y="171" text-anchor="middle" font-size="10.5" fill="#6B6B7B">keel-run</text>
+    </g>
+    <line x1="860" y1="147" x2="882" y2="147" stroke="#6B6B7B" stroke-width="2" marker-end="url(#la)"/>
+
+    <g class="box" data-move="ship">
+      <rect x="884" y="104" width="142" height="86" rx="12" fill="#FFF" stroke="#E89B3C" stroke-width="2.5"/>
+      <text x="955" y="130" text-anchor="middle" font-size="11" font-weight="700" fill="#E89B3C" letter-spacing="1">MOVE 5</text>
+      <text x="955" y="152" text-anchor="middle" font-size="16" font-weight="700" fill="#1A1A2E">Ship</text>
+      <text x="955" y="171" text-anchor="middle" font-size="10.5" fill="#6B6B7B">gstack /ship</text>
+    </g>
+
+    <text x="520" y="226" text-anchor="middle" font-size="12" fill="#6B6B7B" font-style="italic">
+      Five moves. The first is gstack, the last is gstack — the same cockpit opens and closes each slice.</text>
+  </svg>
+  <div id="loop-inspector" class="inspector empty" data-default="Click a move above to see what it means for the Health Data Hub.">Click a move above to see what it means for the Health Data Hub.</div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="preflight">3. Before you start: the preflight check</h2>
+
+<p>Six things must be true before Move 1. Run each command; each takes seconds. If one fails, fix it
+before going further — a missing tool surfaces as a confusing error three moves later.</p>
+
+<div class="check">
+  <div class="top"><span class="n">1</span><h3>Keel is installed and healthy</h3></div>
+  <p>Keel's wrappers (<code>keel-compile</code>, <code>keel-run</code>, …) must be on your PATH and the toolchain installed.</p>
+  <pre><code>source ~/keel/keel.env
+keel-smoke</code></pre>
+  <p class="expect"><b>Expect:</b> a run that ends without errors — manifest, wrappers, tool checkouts, and a no-key hello-world compile all pass.</p>
+</div>
+
+<div class="check">
+  <div class="top"><span class="n">2</span><h3>The compiler is v0.2.0 (the real Step 2)</h3></div>
+  <p>v0.1.0 was scaffold-only. You need v0.2.0 — the version with the model-backed row author that produces a real playbook.</p>
+  <pre><code>git -C ~/keel/tools/compiler describe --tags</code></pre>
+  <p class="expect"><b>Expect:</b> <code>v0.2.0</code>. If you see <code>v0.1.0</code>, run <code>./install.sh --update-tools</code> from <code>~/keel</code>.</p>
+</div>
+
+<div class="check">
+  <div class="top"><span class="n">3</span><h3>Codex CLI is installed and authenticated</h3></div>
+  <p>plan-orchestrator uses Codex to apply each code change. Without it, Move 4 cannot run.</p>
+  <pre><code>codex --version</code></pre>
+  <p class="expect"><b>Expect:</b> a version string. If missing, install and sign in to the Codex CLI first.</p>
+</div>
+
+<div class="check">
+  <div class="top"><span class="n">4</span><h3>Claude Code is installed and authenticated</h3></div>
+  <p>gstack skills (<code>/autoplan</code>, <code>/ship</code>) run inside Claude Code, and the compiler's default row author is <code>claude -p</code>.</p>
+  <pre><code>claude --version</code></pre>
+  <p class="expect"><b>Expect:</b> a version string, signed in.</p>
+</div>
+
+<div class="check">
+  <div class="top"><span class="n">5</span><h3>The product repo exists</h3></div>
+  <p>The Health Data Hub repo is where every artifact lands.</p>
+  <pre><code>git -C ~/health-data-hub remote -v</code></pre>
+  <p class="expect"><b>Expect:</b> <code>origin … AysajanE/longevity-analytics</code>.</p>
+</div>
+
+<div class="check">
+  <div class="top"><span class="n">6</span><h3>The approved design doc is in hand</h3></div>
+  <p>This is the input to Move 1. It already exists from your <code>/office-hours</code> session.</p>
+  <pre><code>ls ~/.gstack/projects/AysajanE-longevity-analytics/</code></pre>
+  <p class="expect"><b>Expect:</b> the file <code>aeziz-local-AysajanE-health-data-hub-design-20260515-114138.md</code>.</p>
+</div>
+
+<div class="insight">
+  <strong>One optional item.</strong> An <code>OPENAI_API_KEY</code> is only needed if you choose the
+  high-stakes SWR lane (<code>keel-swr</code>) instead of the compiler. For this first slice you will use
+  the compiler, so you can skip it.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="slice">4. Pick the first slice — don't build all 16 weeks at once</h2>
+
+<p>The Health Data Hub design is a 16-week, 13-step plan. Keel executes <strong>one playbook at a time</strong>,
+and a playbook should be a bounded chunk of work. So the first thing to decide is: which slice goes first?</p>
+
+<p>For a first beta test, the warehouse layer is the right slice. It is pure code, deterministic, touches a
+narrow part of the repo, has a clear "done", and has a natural human gate (a database schema). It does not
+need any external service, so the loop runs cleanly start to finish.</p>
+
+<div class="slices">
+  <div class="slice"><span class="tag">step 1</span><span>Mood-log capture (Apple Notes template — not code)</span></div>
+  <div class="slice"><span class="tag">step 2</span><span>Ingestion smoke test — Oura + 8 Sleep <em>(needs external services)</em></span></div>
+  <div class="slice pick"><span class="tag">step 3 ◀</span><span><strong>Warehouse layer</strong> — DuckDB + 5 tables + <code>warehouse.py</code> + Pydantic validation. <strong>Your first slice.</strong></span></div>
+  <div class="slice"><span class="tag">step 4</span><span>Mood-log API loop — FastAPI</span></div>
+  <div class="slice"><span class="tag">step 5</span><span>Feature engineering — Polars, source reconciliation</span></div>
+  <div class="slice"><span class="tag">6–13</span><span>Model, counterfactuals, UI, launchd, tests, restore, evaluate</span></div>
+</div>
+
+<div class="insight">
+  <strong>Why the warehouse layer first:</strong> it exercises the <em>entire</em> Keel loop — including a real
+  human gate (the database schema) — without any external dependency. Slice 2, the Oura ingestion, is where
+  you will later meet the <code>blocked_external</code> gate (it needs proof that a real device API works).
+  Save that for run two; learn the loop on the clean slice first.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="trail">5. What you'll create: the artifact trail</h2>
+
+<p>Each move produces one artifact, and the next move consumes it. Nothing is hidden — every step leaves a
+file in the repo you can open and read. Click any artifact to see what it is and where it lands.</p>
+
+<div class="figure" id="fig-trail">
+  <svg viewBox="0 0 1040 320" xmlns="http://www.w3.org/2000/svg" aria-label="Artifact trail">
+    <defs>
+      <marker id="ta" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0 0L10 5L0 10z" fill="#6B6B7B"/>
+      </marker>
+    </defs>
+
+    <g class="box" data-art="design">
+      <rect x="30" y="20" width="360" height="46" rx="9" fill="#F1F0EC" stroke="#8A8A99" stroke-width="2"/>
+      <text x="48" y="40" font-size="11" font-weight="700" fill="#8A8A99">MOVE 0 — APPROVED DESIGN</text>
+      <text x="48" y="57" font-size="11.5" fill="#1A1A2E" font-family="SF Mono, Menlo, monospace">~/.gstack/projects/.../…-design-….md</text>
+    </g>
+    <line x1="210" y1="66" x2="210" y2="84" stroke="#6B6B7B" stroke-width="2" marker-end="url(#ta)"/>
+
+    <g class="box" data-art="brief">
+      <rect x="30" y="86" width="360" height="62" rx="9" fill="#FFF" stroke="#E89B3C" stroke-width="2"/>
+      <text x="48" y="106" font-size="11" font-weight="700" fill="#E89B3C">MOVE 1 — REVIEWED PLAN + BRIEF</text>
+      <text x="48" y="123" font-size="11" fill="#1A1A2E" font-family="SF Mono, Menlo, monospace">docs/gstack/health-data-hub-autoplan.md</text>
+      <text x="48" y="139" font-size="11" fill="#1A1A2E" font-family="SF Mono, Menlo, monospace">docs/briefs/health-data-hub.approved-brief.md</text>
+    </g>
+    <line x1="210" y1="148" x2="210" y2="166" stroke="#6B6B7B" stroke-width="2" marker-end="url(#ta)"/>
+
+    <g class="box" data-art="playbook">
+      <rect x="30" y="168" width="360" height="46" rx="9" fill="#FFFCF3" stroke="#B97824" stroke-width="2.5"/>
+      <text x="48" y="188" font-size="11" font-weight="700" fill="#B97824">MOVE 2 — THE PLAYBOOK (the contract)</text>
+      <text x="48" y="205" font-size="11" fill="#1A1A2E" font-family="SF Mono, Menlo, monospace">docs/playbooks/health-data-hub-warehouse.playbook.md</text>
+    </g>
+    <line x1="210" y1="214" x2="210" y2="232" stroke="#6B6B7B" stroke-width="2" marker-end="url(#ta)"/>
+
+    <g class="box" data-art="review">
+      <rect x="30" y="234" width="360" height="44" rx="9" fill="#FFF5F2" stroke="#C44536" stroke-width="2"/>
+      <text x="48" y="253" font-size="11" font-weight="700" fill="#9B3328">MOVE 3 — YOUR APPROVAL</text>
+      <text x="48" y="270" font-size="11" fill="#6B6B7B">no new file — you read the playbook and say "go"</text>
+    </g>
+
+    <!-- right column -->
+    <line x1="390" y1="256" x2="470" y2="256" stroke="#6B6B7B" stroke-width="2" marker-end="url(#ta)"/>
+    <g class="box" data-art="run">
+      <rect x="472" y="150" width="540" height="62" rx="9" fill="#FFF" stroke="#3D5A80" stroke-width="2.5"/>
+      <text x="492" y="170" font-size="11" font-weight="700" fill="#3D5A80">MOVE 4 — EXECUTED CODE (run branch)</text>
+      <text x="492" y="187" font-size="11" fill="#1A1A2E" font-family="SF Mono, Menlo, monospace">branch orchestrator/run/&lt;RUN_ID&gt;  +  src/, tests/</text>
+      <text x="492" y="203" font-size="11" fill="#6B6B7B">audit packets, traces, run state — all on disk under .local/</text>
+    </g>
+    <path d="M 472 256 C 440 256, 540 256, 540 218" fill="none" stroke="#6B6B7B" stroke-width="2" marker-end="url(#ta)"/>
+    <line x1="742" y1="150" x2="742" y2="120" stroke="#6B6B7B" stroke-width="2" marker-end="url(#ta)"/>
+
+    <g class="box" data-art="ship">
+      <rect x="472" y="74" width="540" height="46" rx="9" fill="#FFF" stroke="#E89B3C" stroke-width="2.5"/>
+      <text x="492" y="94" font-size="11" font-weight="700" fill="#E89B3C">MOVE 5 — SHIPPED</text>
+      <text x="492" y="111" font-size="11" fill="#1A1A2E" font-family="SF Mono, Menlo, monospace">branch ship/health-data-hub-warehouse → PR → merged to main</text>
+    </g>
+
+    <text x="742" y="250" text-anchor="middle" font-size="12" fill="#6B6B7B" font-style="italic">
+      Every artifact is a plain file you can open. Nothing about the build is hidden.</text>
+  </svg>
+  <div id="trail-inspector" class="inspector empty" data-default="Click an artifact to see what it is and where it lives.">Click an artifact to see what it is and where it lives.</div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="moves">6. The five moves, in order</h2>
+
+<p>This is the walkthrough proper. Do them in sequence. Each move shows what it does, exactly what you run,
+what you get, and where a human (you) has to decide.</p>
+
+<!-- MOVE 1 -->
+<div class="move plan">
+  <div class="move-head">
+    <div class="move-num">1</div>
+    <div><h3>Plan</h3><div class="who">gstack · inside Claude Code</div></div>
+  </div>
+  <div class="move-body">
+    <p>Turn the approved design into a <em>reviewed plan</em> with concrete implementation tasks, and bring it
+    into the product repo. gstack's <code>/autoplan</code> runs a CEO / design / engineering / DX review pass
+    over the design and writes out the plan and an approved build brief.</p>
+
+    <h4>What you run</h4>
+<pre><code><span class="c"># Bring the design doc into the repo and make the standard folders</span>
+cd ~/health-data-hub
+mkdir -p docs/gstack docs/briefs docs/playbooks
+cp aeziz-local-AysajanE-health-data-hub-design-20260515-114138.md \
+   docs/gstack/health-data-hub-office-hours.md
+
+<span class="c"># In Claude Code, run the review + planning gauntlet</span>
+/autoplan docs/gstack/health-data-hub-office-hours.md</code></pre>
+
+    <div class="produces"><strong>What you get:</strong>
+      <code>docs/gstack/health-data-hub-autoplan.md</code> (the reviewed plan, with implementation tasks) and
+      <code>docs/briefs/health-data-hub.approved-brief.md</code> (the approved build brief).</div>
+
+    <div class="gate"><strong>Human gate:</strong> at the end of <code>/autoplan</code> you confirm the brief
+      is what you actually want built. For the beta test, keep the focus on the <strong>warehouse layer</strong>
+      — the schema and <code>warehouse.py</code>.</div>
+
+    <div class="warn"><strong>Beta-test watch-point.</strong> The compiler in Move 2 can only author rows for
+      files the plan actually names. Make sure the warehouse tasks list concrete paths — e.g.
+      <code>src/db/schema.sql</code>, <code>src/warehouse/warehouse.py</code>, <code>tests/warehouse/…</code>.
+      The design doc already specifies these; just make sure they survive into the autoplan output. A vague
+      plan produces a thin or failed compile — which is Keel telling you to sharpen the plan, not a bug.</div>
+  </div>
+</div>
+
+<!-- MOVE 2 -->
+<div class="move compile">
+  <div class="move-head">
+    <div class="move-num">2</div>
+    <div><h3>Compile</h3><div class="who">keel-compile · the fast lane</div></div>
+  </div>
+  <div class="move-body">
+    <p>Turn the reviewed plan into a <code>markdown_playbook_v1</code> — the precise, machine-checkable recipe
+    that plan-orchestrator will execute. The compiler parses your gstack docs, asks a model to author the
+    execution rows, validates everything in deterministic Python, and emits the playbook.</p>
+
+    <h4>What you run</h4>
+<pre><code>source ~/keel/keel.env
+export PRODUCT_REPO="$HOME/health-data-hub"
+
+keel-compile compile \
+  --repo-root "$PRODUCT_REPO" \
+  --design   "$PRODUCT_REPO/docs/gstack/health-data-hub-office-hours.md" \
+  --autoplan "$PRODUCT_REPO/docs/gstack/health-data-hub-autoplan.md" \
+  --approved-brief "$PRODUCT_REPO/docs/briefs/health-data-hub.approved-brief.md" \
+  --out      "$PRODUCT_REPO/docs/playbooks/health-data-hub-warehouse.playbook.md" \
+  --row-author claude \
+  --plan-orchestrator-root "$KEEL_PO_ROOT" \
+  --human-approved-by "$USER"</code></pre>
+
+    <h4>What happens inside</h4>
+    <p>parse the docs → a model authors candidate rows as JSON → Python validates them (paths, write-roots,
+    verification commands, no fabricated files) → Python emits the Markdown → plan-orchestrator confirms the
+    playbook is contract-valid. The model never decides anything about safety; Python re-judges every row.</p>
+
+    <div class="produces"><strong>What you get:</strong> the playbook at
+      <code>docs/playbooks/health-data-hub-warehouse.playbook.md</code>, plus sidecars
+      (<code>.meta.json</code>, <code>.validation.json</code>, <code>.rows.json</code>,
+      <code>.author_trace.json</code>) that record exactly how it was produced.</div>
+
+    <div class="warn"><strong>If the compile fails — that is normal, not a beta-test failure.</strong>
+      The compiler fails closed and writes <code>.compile-failed.*</code> diagnostic files. Open the
+      <code>.compile-failed.validation.json</code>, read why, sharpen the plan (Move 1), and recompile.
+      A failed compile means Keel caught a problem <em>before</em> any code was written — that is the tool
+      working.</div>
+  </div>
+</div>
+
+<!-- MOVE 3 -->
+<div class="move review">
+  <div class="move-head">
+    <div class="move-num">3</div>
+    <div><h3>Review</h3><div class="who">you — the gate before any code runs</div></div>
+  </div>
+  <div class="move-body">
+    <p>This is the most important move, and it is entirely human. The playbook is a <em>contract</em>:
+    plan-orchestrator will do exactly what it says, no more and no less. Before anything executes, you read
+    it and decide it is right.</p>
+
+    <h4>What you run</h4>
+<pre><code><span class="c"># Confirm the playbook is contract-valid, and list its steps</span>
+keel-doctor  --playbook docs/playbooks/health-data-hub-warehouse.playbook.md --format json
+keel-run     list-items --playbook docs/playbooks/health-data-hub-warehouse.playbook.md</code></pre>
+
+    <h4>What to check, row by row</h4>
+    <ul class="tight">
+      <li>Is each <code>action</code> a real, concrete step — not "implement the warehouse"?</li>
+      <li>Are the files right? Does the DuckDB schema row point at the schema file you expect?</li>
+      <li>Are the <code>allowed_write_roots</code> narrow — <code>src/db</code>, <code>src/warehouse</code>,
+        not <code>.</code> or <code>src</code>?</li>
+      <li>Do behavioral rows carry a real verification command (a <code>pytest</code> that proves the change)?</li>
+      <li>Is the order sane — schema before the code that uses it?</li>
+    </ul>
+
+    <div class="gate"><strong>The gate:</strong> nothing runs until you are satisfied. If a row is wrong,
+      go back to Move 1 or Move 2 and fix the plan — never hand-edit the playbook into something the compiler
+      would not have produced.</div>
+  </div>
+</div>
+
+<!-- MOVE 4 -->
+<div class="move execute">
+  <div class="move-head">
+    <div class="move-num">4</div>
+    <div><h3>Execute</h3><div class="who">keel-run · plan-orchestrator</div></div>
+  </div>
+  <div class="move-body">
+    <p>Now the code gets written. plan-orchestrator runs the playbook <strong>one item at a time</strong>.
+    Each item runs in its own throwaway git worktree — a sealed copy — so a bad step can never reach your
+    real branch. After each item is built and its tests pass, two independent reviewers (Codex and Claude)
+    audit the exact same evidence.</p>
+
+    <h4>What you run</h4>
+<pre><code>cd "$PRODUCT_REPO"
+
+keel-run supervise run \
+  --playbook docs/playbooks/health-data-hub-warehouse.playbook.md \
+  --next
+
+<span class="c"># watch it, any time, from another terminal</span>
+keel-run supervise status --run-id &lt;RUN_ID&gt; --format json</code></pre>
+
+    <div class="warn"><strong>Your first run will likely stop on a clean-environment check.</strong>
+      Before executing anything, plan-orchestrator scans for ambient agent config — chiefly
+      <code>~/.codex/config.toml</code> and <code>~/.claude/settings.json</code> — and refuses to run if it
+      finds them, so a worker agent can never inherit your personal credentials, MCP servers, or settings.
+      Because you use Codex and Claude, that detection is expected. Read the message it prints, then re-run
+      with the acknowledgment in front of the command:
+      <code>PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED=1 keel-run supervise run …</code>. Setting that variable
+      is you saying "I reviewed this and accept it on my own machine" — so actually read it first.</div>
+
+    <h4>What each item walks through</h4>
+    <p>Click any state to see what it means for the warehouse slice.</p>
+
+    <div class="figure" id="fig-run">
+      <svg viewBox="0 0 1040 270" xmlns="http://www.w3.org/2000/svg" aria-label="Per-item flow">
+        <defs>
+          <marker id="ra" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0L10 5L0 10z" fill="#3D5A80"/>
+          </marker>
+        </defs>
+        <!-- working row -->
+        <g class="box" data-state="setup">
+          <rect x="20" y="40" width="150" height="52" rx="9" fill="#FFF" stroke="#3D5A80" stroke-width="2"/>
+          <text x="95" y="63" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1A1A2E">setup</text>
+          <text x="95" y="80" text-anchor="middle" font-size="10" fill="#6B6B7B">isolated worktree</text>
+        </g>
+        <line x1="170" y1="66" x2="192" y2="66" stroke="#3D5A80" stroke-width="2" marker-end="url(#ra)"/>
+        <g class="box" data-state="execute">
+          <rect x="194" y="40" width="150" height="52" rx="9" fill="#FFF" stroke="#3D5A80" stroke-width="2"/>
+          <text x="269" y="63" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1A1A2E">execute</text>
+          <text x="269" y="80" text-anchor="middle" font-size="10" fill="#6B6B7B">Codex writes code</text>
+        </g>
+        <line x1="344" y1="66" x2="366" y2="66" stroke="#3D5A80" stroke-width="2" marker-end="url(#ra)"/>
+        <g class="box" data-state="verify">
+          <rect x="368" y="40" width="150" height="52" rx="9" fill="#FFF" stroke="#3D5A80" stroke-width="2"/>
+          <text x="443" y="63" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1A1A2E">verify</text>
+          <text x="443" y="80" text-anchor="middle" font-size="10" fill="#6B6B7B">tests red → green</text>
+        </g>
+        <line x1="518" y1="66" x2="540" y2="66" stroke="#3D5A80" stroke-width="2" marker-end="url(#ra)"/>
+        <g class="box" data-state="audit">
+          <rect x="542" y="40" width="150" height="52" rx="9" fill="#FFF" stroke="#2A9D8F" stroke-width="2"/>
+          <text x="617" y="63" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1A1A2E">audit ×2</text>
+          <text x="617" y="80" text-anchor="middle" font-size="10" fill="#6B6B7B">Codex + Claude</text>
+        </g>
+        <line x1="692" y1="66" x2="714" y2="66" stroke="#3D5A80" stroke-width="2" marker-end="url(#ra)"/>
+        <g class="box" data-state="triage">
+          <rect x="716" y="40" width="160" height="52" rx="9" fill="#EAF0F5" stroke="#3D5A80" stroke-width="2.6"/>
+          <text x="796" y="63" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1A1A2E">triage</text>
+          <text x="796" y="80" text-anchor="middle" font-size="10" fill="#6B6B7B">decide the outcome</text>
+        </g>
+
+        <!-- four outcomes -->
+        <g class="box" data-state="passed">
+          <rect x="40" y="170" width="200" height="58" rx="9" fill="#F0F8F5" stroke="#2A9D8F" stroke-width="2.5"/>
+          <text x="140" y="194" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1F7468">passed</text>
+          <text x="140" y="212" text-anchor="middle" font-size="10" fill="#6B6B7B">on to the next item</text>
+        </g>
+        <g class="box" data-state="gate">
+          <rect x="266" y="170" width="220" height="58" rx="9" fill="#FFF5F2" stroke="#C44536" stroke-width="2.5"/>
+          <text x="376" y="194" text-anchor="middle" font-size="12.5" font-weight="700" fill="#9B3328">awaiting_human_gate</text>
+          <text x="376" y="212" text-anchor="middle" font-size="10" fill="#6B6B7B">you sign off</text>
+        </g>
+        <g class="box" data-state="blocked">
+          <rect x="512" y="170" width="220" height="58" rx="9" fill="#FFF5F2" stroke="#C44536" stroke-width="2.5"/>
+          <text x="622" y="194" text-anchor="middle" font-size="12.5" font-weight="700" fill="#9B3328">blocked_external</text>
+          <text x="622" y="212" text-anchor="middle" font-size="10" fill="#6B6B7B">you supply evidence</text>
+        </g>
+        <g class="box" data-state="escalated">
+          <rect x="758" y="170" width="200" height="58" rx="9" fill="#FFF8E8" stroke="#B97824" stroke-width="2.5"/>
+          <text x="858" y="194" text-anchor="middle" font-size="12.5" font-weight="700" fill="#8C5A14">escalated</text>
+          <text x="858" y="212" text-anchor="middle" font-size="10" fill="#6B6B7B">you decide next step</text>
+        </g>
+
+        <line x1="770" y1="92" x2="180" y2="168" stroke="#2A9D8F" stroke-width="2" marker-end="url(#ra)"/>
+        <line x1="792" y1="92" x2="376" y2="168" stroke="#C44536" stroke-width="1.8" marker-end="url(#ra)"/>
+        <line x1="812" y1="92" x2="622" y2="168" stroke="#C44536" stroke-width="1.8" marker-end="url(#ra)"/>
+        <line x1="836" y1="92" x2="858" y2="168" stroke="#B97824" stroke-width="1.8" marker-end="url(#ra)"/>
+
+        <text x="190" y="123" text-anchor="middle" font-size="11" font-weight="700" fill="#3D5A80" letter-spacing="1">AUTOMATIC — THE KERNEL RUNS THESE</text>
+        <text x="500" y="252" text-anchor="middle" font-size="11" font-weight="700" fill="#9B3328" letter-spacing="1">TERMINAL — IT STOPS, AND YOU ACT</text>
+      </svg>
+      <div id="run-inspector" class="inspector empty" data-default="Click a state to see what it means for the warehouse slice.">Click a state to see what it means for the warehouse slice.</div>
+    </div>
+
+    <h4>The in-flight gates — when plan-orchestrator stops and waits for you</h4>
+    <p><strong>awaiting_human_gate.</strong> An item asks for your signoff. For the warehouse slice this is
+    likely the DuckDB schema item — a database deliverable. Read the gate packet, then, from your own terminal:</p>
+<pre><code>keel-run mark-manual-gate \
+  --run-id &lt;RUN_ID&gt; --item &lt;ITEM_ID&gt; \
+  --decision approved --by "$USER" \
+  --note "Reviewed the schema; the five tables match the design." \
+  --evidence-path docs/reviews/warehouse-schema-signoff.md
+
+keel-run supervise resume --run-id &lt;RUN_ID&gt;</code></pre>
+    <p><strong>blocked_external.</strong> An item needs proof from outside the repo. You will <em>not</em> hit
+    this on the warehouse slice — it has no external services. You will meet it on slice 2 (Oura ingestion),
+    where you supply evidence with <code>supervise resume --external-evidence-dir &lt;dir&gt;</code>.</p>
+    <p><strong>escalated.</strong> Something is genuinely wrong (an unfixable finding, repeated failure).
+    plan-orchestrator stops cleanly with a full audit trail. Read the audit reports and decide: revise the
+    playbook, fix by hand, or abandon the run.</p>
+
+    <div class="produces"><strong>What you get:</strong> the warehouse layer — schema, <code>warehouse.py</code>,
+      Pydantic models, tests — committed on the branch <code>orchestrator/run/&lt;RUN_ID&gt;</code>, with an
+      audit trail for every item.</div>
+
+    <div class="warn"><strong>The unbreakable rule.</strong> Only you, from a terminal no agent controls, can
+      clear a gate with <code>mark-manual-gate</code>. No script, wrapper, or model ever does. This is the
+      line that makes the whole loop safe to run.</div>
+  </div>
+</div>
+
+<!-- MOVE 5 -->
+<div class="move ship">
+  <div class="move-head">
+    <div class="move-num">5</div>
+    <div><h3>Ship</h3><div class="who">gstack · inside Claude Code</div></div>
+  </div>
+  <div class="move-body">
+    <p>The run branch holds finished, audited code. Hand it to gstack to open a pull request and land it.
+    Never ship straight from the orchestrator's run branch — make a normal ship branch first.</p>
+
+    <h4>What you run</h4>
+<pre><code><span class="c"># Make a normal ship branch from the orchestrator run branch</span>
+cd ~/health-data-hub
+git fetch origin
+git checkout -b ship/health-data-hub-warehouse orchestrator/run/&lt;RUN_ID&gt;
+
+<span class="c"># In Claude Code</span>
+/review            <span class="c"># a last code review of the diff</span>
+/ship              <span class="c"># version, CHANGELOG, opens the PR</span>
+/land-and-deploy   <span class="c"># merges the PR</span></code></pre>
+
+    <div class="produces"><strong>What you get:</strong> the warehouse layer merged into <code>main</code> of
+      <code>AysajanE/longevity-analytics</code>. The first slice is real.</div>
+
+    <div class="insight"><strong>One note for this product.</strong> The Health Data Hub is local-first —
+      there is no server. "Deploy" here means it runs on your Mac (via launchd, in a later slice). So Move 5
+      is really review → PR → merge. <code>/canary</code> and remote-deploy steps do not apply yet.</div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="after">7. After the loop: repeat, and what a good beta test looks like</h2>
+
+<p>You just ran all five moves on one slice. That is the whole method. The next slice — the mood-log API,
+then feature engineering, then the model — is the <em>same five moves again</em>. Plan, compile, review,
+execute, ship. The loop never changes; only the slice does.</p>
+
+<h3>What success means for this beta test</h3>
+<p>This first run is a test of <strong>Keel</strong>, not of the Health Data Hub. Judge it on whether the
+machine behaved — not on whether the warehouse code is perfect.</p>
+
+<ul class="tight">
+  <li><strong>The loop completed</strong> — you went from approved design to merged code through all five moves.</li>
+  <li><strong>You saw the audit run</strong> — Codex and Claude reviewed each item, and you read their findings.</li>
+  <li><strong>The gates stopped and waited</strong> — plan-orchestrator paused at the schema item and did not
+    proceed until you signed off.</li>
+  <li><strong>Every artifact was legible</strong> — you could open the plan, the playbook, the audit packets,
+    and understand them.</li>
+  <li><strong>Failures failed closed</strong> — if a compile or an item failed, Keel stopped and told you why,
+    in a file, instead of guessing.</li>
+</ul>
+
+<div class="insight">
+  <strong>A failed compile or an escalated item is not a failed beta test.</strong> That is Keel doing its job
+  — catching a problem and refusing to paper over it. The beta test only fails if Keel does something
+  <em>silently</em> or <em>unsafely</em>: ships an unreviewed change, skips a gate, fabricates evidence, or
+  fails without saying why. Watch for those. Everything else is the tool working as designed.
+</div>
+
+<p>Keep notes as you go — what was confusing, what was slow, where a message could be clearer. That feedback
+is the real output of a first beta test.</p>
+
+<!-- ============================================================ -->
+<h2 id="cheatsheet">8. The whole command sequence</h2>
+
+<p>The entire walkthrough, in order, ready to copy. Replace <code>&lt;RUN_ID&gt;</code> and
+<code>&lt;ITEM_ID&gt;</code> with the values Keel prints.</p>
+
+<div class="cheat"># ───────── Preflight ─────────
+source ~/keel/keel.env
+keel-smoke
+git -C ~/keel/tools/compiler describe --tags      # expect v0.2.0
+codex --version
+claude --version
+
+# ───────── Move 1 · Plan (gstack, in Claude Code) ─────────
+cd ~/health-data-hub
+mkdir -p docs/gstack docs/briefs docs/playbooks docs/reviews
+cp aeziz-local-AysajanE-health-data-hub-design-20260515-114138.md \
+   docs/gstack/health-data-hub-office-hours.md
+#   then, in Claude Code:
+#   /autoplan docs/gstack/health-data-hub-office-hours.md
+#   → docs/gstack/health-data-hub-autoplan.md
+#   → docs/briefs/health-data-hub.approved-brief.md
+
+# ───────── Move 2 · Compile ─────────
+export PRODUCT_REPO="$HOME/health-data-hub"
+keel-compile compile \
+  --repo-root "$PRODUCT_REPO" \
+  --design   "$PRODUCT_REPO/docs/gstack/health-data-hub-office-hours.md" \
+  --autoplan "$PRODUCT_REPO/docs/gstack/health-data-hub-autoplan.md" \
+  --approved-brief "$PRODUCT_REPO/docs/briefs/health-data-hub.approved-brief.md" \
+  --out      "$PRODUCT_REPO/docs/playbooks/health-data-hub-warehouse.playbook.md" \
+  --row-author claude \
+  --plan-orchestrator-root "$KEEL_PO_ROOT" \
+  --human-approved-by "$USER"
+
+# ───────── Move 3 · Review (you) ─────────
+keel-doctor --playbook docs/playbooks/health-data-hub-warehouse.playbook.md --format json
+keel-run    list-items --playbook docs/playbooks/health-data-hub-warehouse.playbook.md
+#   read every row. only continue when you are satisfied.
+
+# ───────── Move 4 · Execute ─────────
+cd "$PRODUCT_REPO"
+keel-run supervise run --playbook docs/playbooks/health-data-hub-warehouse.playbook.md --next
+#   if it stops on the clean-env check (it scans for ~/.codex + ~/.claude config),
+#   read the message, then re-run with the acknowledgment in front:
+#   PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED=1 keel-run supervise run --playbook ... --next
+keel-run supervise status --run-id &lt;RUN_ID&gt; --format json
+
+#   when it stops at a manual gate:
+keel-run mark-manual-gate --run-id &lt;RUN_ID&gt; --item &lt;ITEM_ID&gt; \
+  --decision approved --by "$USER" \
+  --note "Reviewed the gate packet; approved." \
+  --evidence-path docs/reviews/warehouse-schema-signoff.md
+keel-run supervise resume --run-id &lt;RUN_ID&gt;
+
+# ───────── Move 5 · Ship (gstack, in Claude Code) ─────────
+git fetch origin
+git checkout -b ship/health-data-hub-warehouse orchestrator/run/&lt;RUN_ID&gt;
+#   then, in Claude Code:  /review  →  /ship  →  /land-and-deploy
+
+# ───────── Then: repeat moves 1–5 for the next slice ─────────
+</div>
+
+<hr>
+<p class="footnote">
+  This walkthrough covers one slice — the warehouse layer — as the Health Data Hub's first Keel beta test.
+  For the deep mechanics of any tool (the compiler stages, the dual-audit packet, the full state machine),
+  see the companion <code>keel-explained.html</code>. The design source is the approved office-hours doc at
+  <code>~/.gstack/projects/AysajanE-longevity-analytics/</code>.
+</p>
+
+<script>
+  // Build inspector content as DOM nodes (no innerHTML on dynamic content).
+  function renderInspector(target, entry) {
+    while (target.firstChild) target.removeChild(target.firstChild);
+    if (!entry) {
+      target.classList.add('empty');
+      target.appendChild(document.createTextNode(target.dataset.default || ''));
+      return;
+    }
+    target.classList.remove('empty');
+    if (entry.title) {
+      const h = document.createElement('h5');
+      h.textContent = entry.title;
+      target.appendChild(h);
+    }
+    if (entry.meta) {
+      const m = document.createElement('div');
+      m.className = 'meta';
+      m.textContent = entry.meta;
+      target.appendChild(m);
+    }
+    (entry.paras || []).forEach(function (p) {
+      const para = document.createElement('p');
+      if (typeof p === 'string') {
+        para.textContent = p;
+      } else if (p && p.parts) {
+        p.parts.forEach(function (part) {
+          if (typeof part === 'string') {
+            para.appendChild(document.createTextNode(part));
+          } else if (part.type === 'strong') {
+            const s = document.createElement('strong');
+            s.textContent = part.text;
+            para.appendChild(s);
+          } else if (part.type === 'code') {
+            const c = document.createElement('code');
+            c.textContent = part.text;
+            para.appendChild(c);
+          }
+        });
+      }
+      target.appendChild(para);
+    });
+  }
+
+  function makeInteractive(figureId, inspectorId, attr, content) {
+    const fig = document.getElementById(figureId);
+    const insp = document.getElementById(inspectorId);
+    if (!fig || !insp) return;
+    let active = null;
+    const items = fig.querySelectorAll('[' + attr + ']');
+    items.forEach(function (item) {
+      item.addEventListener('click', function () {
+        const key = item.getAttribute(attr);
+        if (active === key) {
+          active = null;
+          items.forEach(function (x) { x.classList.remove('dim'); x.classList.remove('active'); });
+          renderInspector(insp, null);
+        } else {
+          active = key;
+          items.forEach(function (x) {
+            const same = x.getAttribute(attr) === key;
+            x.classList.toggle('dim', !same);
+            x.classList.toggle('active', same);
+          });
+          renderInspector(insp, content[key]);
+        }
+      });
+    });
+  }
+
+  makeInteractive('fig-loop', 'loop-inspector', 'data-move', {
+    design: {
+      title: 'Move 0 — Design (already done)',
+      meta: 'gstack /office-hours · complete',
+      paras: ['Six rounds of forcing questions produced the Health Data Hub design doc, approved after six revisions and three expert reviews. This is the input to the whole loop — you do not repeat it.']
+    },
+    plan: {
+      title: 'Move 1 — Plan',
+      meta: 'gstack /autoplan · inside Claude Code',
+      paras: ['Promote the design doc into the repo, then run /autoplan. It reviews the design (CEO, design, engineering, DX) and writes a reviewed plan plus an approved build brief — the implementation tasks the compiler will turn into rows.']
+    },
+    compile: {
+      title: 'Move 2 — Compile',
+      meta: 'keel-compile · the fast lane',
+      paras: ['The compiler turns the reviewed plan into a markdown_playbook_v1: a model authors the execution rows as JSON, and deterministic Python validates and emits them. The output is the precise recipe plan-orchestrator will run.']
+    },
+    review: {
+      title: 'Move 3 — Review',
+      meta: 'you — the gate before any code runs',
+      paras: ['You read the playbook end to end. plan-orchestrator will do exactly what it says, so this human check is the moment to catch a wrong file, a broad write-root, or a missing test — before a single line is written.']
+    },
+    execute: {
+      title: 'Move 4 — Execute',
+      meta: 'keel-run · plan-orchestrator',
+      paras: ['plan-orchestrator runs the playbook one item at a time, each in an isolated worktree, each double-audited by Codex and Claude. It stops at every gate that needs you — and for the warehouse slice, the database schema is one.']
+    },
+    ship: {
+      title: 'Move 5 — Ship',
+      meta: 'gstack /ship · inside Claude Code',
+      paras: ['Make a ship branch from the finished run branch, then let gstack open the PR and land it. For this local-first product, "ship" means review, PR, and merge — there is no server to deploy to yet.']
+    }
+  });
+
+  makeInteractive('fig-trail', 'trail-inspector', 'data-art', {
+    design: {
+      title: 'The approved design doc',
+      meta: 'input · already exists',
+      paras: [
+        { parts: ['Lives at ', { type: 'code', text: '~/.gstack/projects/AysajanE-longevity-analytics/' }, ' — gstack’s working memory.'] },
+        'Move 1 copies it into the repo as docs/gstack/health-data-hub-office-hours.md so it is tracked and the compiler can read it.'
+      ]
+    },
+    brief: {
+      title: 'Reviewed plan + approved brief',
+      meta: 'produced by Move 1 (gstack /autoplan)',
+      paras: [
+        { parts: ['The autoplan output carries the implementation tasks; the approved brief is the human-confirmed build scope. Both land under ', { type: 'code', text: 'docs/' }, ' in the repo.'] },
+        'These are the compiler’s inputs in Move 2.'
+      ]
+    },
+    playbook: {
+      title: 'The playbook — markdown_playbook_v1',
+      meta: 'produced by Move 2 (keel-compile)',
+      paras: [
+        { parts: ['A table of execution rows at ', { type: 'code', text: 'docs/playbooks/health-data-hub-warehouse.playbook.md' }, '. This is the contract: plan-orchestrator executes it exactly.'] },
+        'Sidecar files (.meta.json, .validation.json, .rows.json, .author_trace.json) record how it was produced.'
+      ]
+    },
+    review: {
+      title: 'Your approval',
+      meta: 'Move 3 — no new file',
+      paras: ['Move 3 produces no artifact — it is the human gate. You read the playbook and decide it is correct. Nothing executes until you do.']
+    },
+    run: {
+      title: 'Executed code on the run branch',
+      meta: 'produced by Move 4 (keel-run)',
+      paras: [
+        { parts: ['plan-orchestrator builds the slice on branch ', { type: 'code', text: 'orchestrator/run/<RUN_ID>' }, ' — the warehouse schema, warehouse.py, tests.'] },
+        { parts: ['Audit packets, traces, and run state are written under ', { type: 'code', text: '.local/' }, ' (gitignored) so the whole run is inspectable.'] }
+      ]
+    },
+    ship: {
+      title: 'Shipped — merged to main',
+      meta: 'produced by Move 5 (gstack /ship)',
+      paras: [
+        { parts: ['You branch ', { type: 'code', text: 'ship/health-data-hub-warehouse' }, ' from the run branch; gstack opens a PR and merges it into ', { type: 'code', text: 'main' }, '.'] },
+        'The first slice of the Health Data Hub now exists.'
+      ]
+    }
+  });
+
+  makeInteractive('fig-run', 'run-inspector', 'data-state', {
+    setup: {
+      title: 'setup — isolated worktree',
+      meta: 'automatic · kernel-owned',
+      paras: ['plan-orchestrator creates a fresh, throwaway git worktree for this one item. A mistake here is sealed off; it can never reach your real branch.']
+    },
+    execute: {
+      title: 'execute — Codex writes the code',
+      meta: 'automatic · kernel-owned',
+      paras: ['Codex applies the change inside the worktree, scoped to the row’s allowed_write_roots — for the warehouse slice, something narrow like src/db or src/warehouse.']
+    },
+    verify: {
+      title: 'verify — tests red → green',
+      meta: 'automatic · kernel-owned',
+      paras: ['The row’s verification command runs. For a behavioral item the test must fail before the change and pass after — proof the code actually does something, not just that it exists.']
+    },
+    audit: {
+      title: 'audit ×2 — Codex + Claude',
+      meta: 'automatic · kernel-owned',
+      paras: ['The evidence is frozen into one packet and handed to two independent reviewers. They review separately; the agent that wrote the code does not get to be its only judge.']
+    },
+    triage: {
+      title: 'triage — decide the outcome',
+      meta: 'automatic · the one decision point',
+      paras: ['plan-orchestrator merges the audit findings by rule and picks exactly one outcome: passed, a human gate, blocked on external evidence, or escalated.']
+    },
+    passed: {
+      title: 'passed — on to the next item',
+      meta: 'terminal · the happy path',
+      paras: ['Tests passed and neither reviewer raised a blocking issue. The item’s code is fast-forwarded onto the run branch and plan-orchestrator moves to the next row.']
+    },
+    gate: {
+      title: 'awaiting_human_gate — you sign off',
+      meta: 'terminal · you act',
+      paras: [
+        'The item needs your explicit approval. On the warehouse slice this is the DuckDB schema — a database deliverable.',
+        { parts: ['You read the gate packet and run ', { type: 'code', text: 'keel-run mark-manual-gate' }, ' from your own terminal, then ', { type: 'code', text: 'supervise resume' }, '. No agent can clear this for you.'] }
+      ]
+    },
+    blocked: {
+      title: 'blocked_external — you supply evidence',
+      meta: 'terminal · you act',
+      paras: ['The item needs proof from outside the repo. The warehouse slice will not hit this — it has no external services. You will meet it on slice 2 (Oura ingestion), and resume with --external-evidence-dir.']
+    },
+    escalated: {
+      title: 'escalated — you decide the next step',
+      meta: 'terminal · you act',
+      paras: ['A finding could not be resolved, or an item failed repeatedly. plan-orchestrator stops cleanly with a full audit trail. You read the reports and choose: revise the playbook, fix by hand, or abandon the run.']
+    }
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,188 @@
+[
+  {
+    "id": "S01",
+    "slug": "s01-warehouse",
+    "name": "Warehouse foundation",
+    "status": "pending",
+    "required": true,
+    "lane": "compiler",
+    "risk": "medium",
+    "playbook": "docs/playbooks/s01-warehouse.playbook.md",
+    "brief": "docs/briefs/s01-warehouse.autonomous-brief.md",
+    "review_artifacts": [
+      "docs/reviews/s01-autonomous-schema-review.md"
+    ],
+    "deliverables": [
+      "src/db/schema.sql",
+      "src/warehouse/warehouse.py",
+      "src/warehouse/models.py",
+      "scripts/setup_permissions.py",
+      "tests/warehouse/test_schema.py",
+      "tests/warehouse/test_mood_correction.py",
+      "tests/warehouse/test_quarantine.py",
+      "docs/reviews/s01-autonomous-schema-review.md"
+    ],
+    "acceptance": [
+      "python -m pytest tests/warehouse -q",
+      "python scripts/check_schema_contract.py",
+      "python scripts/check_no_tracked_data.py",
+      "python scripts/check_autonomous_review_exists.py S01"
+    ],
+    "hard_constraints": [
+      "exactly five core tables",
+      "no v2 feature columns in daily_features",
+      "hrv_z persisted",
+      "hrv_avg_ms display-only",
+      "mood_entries plus mood_current correction flow",
+      "no sleep forward fill",
+      "quarantine payloads chmod 0600",
+      "data secrets quarantine snapshots gitignored",
+      "no manual_gate rows"
+    ]
+  },
+  {
+    "id": "S02",
+    "slug": "s02-mood-api",
+    "name": "Mood API loop",
+    "status": "pending",
+    "required": true,
+    "lane": "swr_preferred",
+    "risk": "high",
+    "playbook": "docs/playbooks/s02-mood-api.playbook.md",
+    "brief": "docs/briefs/s02-mood-api.autonomous-brief.md",
+    "review_artifacts": [
+      "docs/reviews/s02-autonomous-security-review.md",
+      "docs/reviews/s02-autonomous-privacy-review.md"
+    ],
+    "acceptance": [
+      "python -m pytest tests/test_api_security.py tests/test_mood_date.py tests/test_mood_correction.py -q",
+      "python scripts/check_no_tracked_data.py",
+      "python scripts/check_autonomous_review_exists.py S02"
+    ]
+  },
+  {
+    "id": "S03",
+    "slug": "s03-ingestion-provider",
+    "name": "Ingestion provider decision",
+    "status": "pending",
+    "required": true,
+    "lane": "compiler_external_evidence",
+    "risk": "high",
+    "playbook": "docs/playbooks/s03-ingestion-provider.playbook.md",
+    "brief": "docs/briefs/s03-ingestion-provider.autonomous-brief.md",
+    "evidence_dirs": [
+      "private/evidence/S03",
+      "docs/evidence/ingestion"
+    ],
+    "acceptance": [
+      "python scripts/check_no_tracked_data.py"
+    ]
+  },
+  {
+    "id": "S04",
+    "slug": "s04-feature-engineering",
+    "name": "Feature engineering",
+    "status": "pending",
+    "required": true,
+    "lane": "compiler",
+    "risk": "medium",
+    "playbook": "docs/playbooks/s04-feature-engineering.playbook.md",
+    "brief": "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+    "acceptance": [
+      "python -m pytest tests/test_features.py -q",
+      "python scripts/check_no_tracked_data.py"
+    ]
+  },
+  {
+    "id": "S05",
+    "slug": "s05-model-lifecycle",
+    "name": "Model lifecycle and gates",
+    "status": "pending",
+    "required": true,
+    "lane": "swr_preferred",
+    "risk": "high",
+    "playbook": "docs/playbooks/s05-model-lifecycle.playbook.md",
+    "brief": "docs/briefs/s05-model-lifecycle.autonomous-brief.md",
+    "review_artifacts": [
+      "docs/reviews/s05-autonomous-model-gate-review.md"
+    ],
+    "acceptance": [
+      "python -m pytest tests/model -q",
+      "python scripts/check_autonomous_review_exists.py S05",
+      "python scripts/check_no_tracked_data.py"
+    ]
+  },
+  {
+    "id": "S06",
+    "slug": "s06-counterfactual-generator",
+    "name": "Counterfactual generator",
+    "status": "pending",
+    "required": true,
+    "lane": "swr_preferred",
+    "risk": "high",
+    "playbook": "docs/playbooks/s06-counterfactual-generator.playbook.md",
+    "brief": "docs/briefs/s06-counterfactual-generator.autonomous-brief.md",
+    "review_artifacts": [
+      "docs/reviews/s06-autonomous-causal-framing-review.md"
+    ],
+    "acceptance": [
+      "python -m pytest tests/test_counterfactual.py -q",
+      "python scripts/check_autonomous_review_exists.py S06",
+      "python scripts/check_no_tracked_data.py"
+    ]
+  },
+  {
+    "id": "S07",
+    "slug": "s07-read-api-streamlit-ui",
+    "name": "Read API and Streamlit UI",
+    "status": "pending",
+    "required": true,
+    "lane": "compiler",
+    "risk": "medium",
+    "playbook": "docs/playbooks/s07-read-api-streamlit-ui.playbook.md",
+    "brief": "docs/briefs/s07-read-api-streamlit-ui.autonomous-brief.md",
+    "review_artifacts": [
+      "docs/reviews/s07-autonomous-ui-language-review.md"
+    ],
+    "acceptance": [
+      "python -m pytest tests/ui -q",
+      "python scripts/check_autonomous_review_exists.py S07",
+      "python scripts/check_no_tracked_data.py"
+    ]
+  },
+  {
+    "id": "S08",
+    "slug": "s08-launchd-backups-restore",
+    "name": "launchd backups restore",
+    "status": "pending",
+    "required": true,
+    "lane": "swr_preferred",
+    "risk": "high",
+    "playbook": "docs/playbooks/s08-launchd-backups-restore.playbook.md",
+    "brief": "docs/briefs/s08-launchd-backups-restore.autonomous-brief.md",
+    "review_artifacts": [
+      "docs/reviews/s08-autonomous-restore-review.md",
+      "docs/reviews/s08-autonomous-secrets-logging-review.md"
+    ],
+    "acceptance": [
+      "python -m pytest tests/backup -q",
+      "python scripts/check_autonomous_review_exists.py S08",
+      "python scripts/check_no_tracked_data.py"
+    ]
+  },
+  {
+    "id": "S09",
+    "slug": "s09-testing-v1-evaluation",
+    "name": "Testing and v1 evaluation",
+    "status": "pending",
+    "required": true,
+    "lane": "compiler",
+    "risk": "medium",
+    "playbook": "docs/playbooks/s09-testing-v1-evaluation.playbook.md",
+    "brief": "docs/briefs/s09-testing-v1-evaluation.autonomous-brief.md",
+    "acceptance": [
+      "python -m pytest -q",
+      "python scripts/check_no_tracked_data.py"
+    ]
+  }
+]
