@@ -8,6 +8,7 @@
     ],
     "autoplan": "docs/gstack/s01-warehouse-autoplan.md",
     "brief": "docs/briefs/s01-warehouse.autonomous-brief.md",
+    "completed_at": "2026-05-24T17:10:28-04:00",
     "deliverables": [
       "src/db/schema.sql",
       "src/warehouse/warehouse.py",
@@ -40,9 +41,12 @@
       "docs/reviews/s01-autonomous-schema-review.md"
     ],
     "risk": "medium",
+    "run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
+    "ship_branch": "ship/s01",
+    "ship_commit": "48a9319acea51bf210b669d8dde65d4b80ad6ac9",
     "slug": "s01-warehouse",
-    "status": "replan_required",
-    "updated_at": "2026-05-24T15:28:57-04:00"
+    "status": "complete",
+    "updated_at": "2026-05-24T17:10:28-04:00"
   },
   {
     "acceptance": [

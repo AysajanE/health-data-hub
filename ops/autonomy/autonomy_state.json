@@ -1,8 +1,10 @@
 {
   "active_run": null,
-  "completed_slices": [],
-  "current_slice": "S01",
-  "last_event_id": 117,
+  "completed_slices": [
+    "S01"
+  ],
+  "current_slice": null,
+  "last_event_id": 121,
   "last_heartbeat_at": "2026-05-24T15:31:53-04:00",
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
