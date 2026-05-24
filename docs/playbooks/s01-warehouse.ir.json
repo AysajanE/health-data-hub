@@ -20,7 +20,7 @@
     "scripts/check_no_tracked_data.py",
     "scripts/check_autonomous_review_exists.py"
   ],
-  "compiled_at": "2026-05-24T18:26:53+00:00",
+  "compiled_at": "2026-05-24T19:28:40+00:00",
   "constraints": [
     "**Personal use first.** No multi-tenant infra, no compliance gates, no scale concerns.",
     "**Local-first / user-owned data.** No cloud lock-in, no third-party data brokers. DuckDB on the user's Mac. Backups to iCloud Drive (encrypted with `age`, or via Advanced Data Protection).",
@@ -54,7 +54,7 @@
         "src/db/schema.sql",
         "tests/warehouse/test_schema.py"
       ],
-      "notes": "",
+      "notes": "Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist.",
       "phase": "Warehouse schema",
       "task": "Author the canonical DuckDB schema with exactly five core tables and the locked v1 `daily_features` feature set.",
       "verify": [
@@ -146,16 +146,16 @@
   "schema_version": "gstack_plan_ir_v1",
   "source_artifacts": [
     {
-      "byte_size": 97734,
+      "byte_size": 97733,
       "kind": "office_hours",
       "path": "docs/gstack/health-data-hub-office-hours.md",
-      "sha256": "31abacb70ba2dab90cf8938e98803448462423fbb5da081f45d74617bf4ff3c7"
+      "sha256": "548af49f81b7063427df5bd1758ac6c0d5a38d985d04ca5a3c23120eb605229e"
     },
     {
-      "byte_size": 3770,
+      "byte_size": 3910,
       "kind": "autoplan",
       "path": "docs/gstack/s01-warehouse-autoplan.md",
-      "sha256": "341f12f7b15ff21a1e4727b3aaec3db3652b2bdc91b19b5d54ac291f87d4ee98"
+      "sha256": "4527ccece946ef98c6c07cf9e62cb61dd9c10602a06ab347b06a338c15985fd5"
     },
     {
       "byte_size": 1213,

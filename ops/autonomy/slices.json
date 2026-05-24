@@ -34,16 +34,15 @@
     "lane": "compiler",
     "name": "Warehouse foundation",
     "playbook": "docs/playbooks/s01-warehouse.playbook.md",
-    "reason": "retry cap exceeded",
     "required": true,
-    "retry_count": 5,
+    "retry_count": 0,
     "review_artifacts": [
       "docs/reviews/s01-autonomous-schema-review.md"
     ],
     "risk": "medium",
     "slug": "s01-warehouse",
-    "status": "blocked",
-    "updated_at": "2026-05-24T14:23:30-04:00"
+    "status": "replan_required",
+    "updated_at": "2026-05-24T15:28:57-04:00"
   },
   {
     "acceptance": [

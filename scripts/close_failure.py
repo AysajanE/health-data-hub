@@ -53,6 +53,47 @@ def next_event_id(root: Path) -> int:
     return event_id
 
 
+def requeue_closed_blocked_slice(root: Path, slice_id: str, rows: list[dict[str, Any]]) -> bool:
+    if any(row.get("slice") == slice_id and row.get("open", True) for row in rows):
+        return False
+
+    slices_path = root / "ops" / "autonomy" / "slices.json"
+    if not slices_path.exists():
+        return False
+
+    slices = json.loads(slices_path.read_text(encoding="utf-8") or "[]")
+    changed = False
+    for item in slices:
+        if item.get("id") != slice_id:
+            continue
+        if item.get("status") not in {"blocked", "blocked_compile_inputs"}:
+            return False
+        item["status"] = "replan_required"
+        item["retry_count"] = 0
+        item.pop("reason", None)
+        item["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        changed = True
+        break
+    if not changed:
+        return False
+
+    tmp = slices_path.with_suffix(slices_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(slices, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, slices_path)
+
+    state_path = root / "ops" / "autonomy" / "autonomy_state.json"
+    if state_path.exists():
+        state = json.loads(state_path.read_text(encoding="utf-8") or "{}")
+        state["current_slice"] = slice_id
+        if not isinstance(state.get("active_run"), dict):
+            state["active_run"] = None
+        tmp_state = state_path.with_suffix(state_path.suffix + ".tmp")
+        tmp_state.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp_state, state_path)
+
+    return True
+
+
 def close_failure(
     root: Path,
     slice_id: str,
@@ -89,6 +130,7 @@ def close_failure(
 
     if closed:
         write_jsonl_atomic(ledger, rows)
+        requeued = requeue_closed_blocked_slice(root, slice_id, rows)
         event_path = root / "ops" / "autonomy" / "events.jsonl"
         event = {
             "event_id": next_event_id(root),
@@ -99,6 +141,7 @@ def close_failure(
                 "failure_class": failure_class,
                 "closed": closed,
                 "closure_evidence": str(evidence_path.relative_to(root)),
+                "slice_requeued": requeued,
             },
         }
         with event_path.open("a", encoding="utf-8") as handle:

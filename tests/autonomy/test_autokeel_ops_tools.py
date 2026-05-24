@@ -57,6 +57,34 @@ class AutoKeelOpsToolTests(unittest.TestCase):
             self.assertFalse(rows[0]["open"])
             self.assertEqual(rows[0]["closure_evidence"], "docs/reviews/closure.md")
 
+    def test_close_failure_requeues_blocked_slice_when_failures_are_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence = root / "docs/reviews/closure.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Verdict: pass\n", encoding="utf-8")
+            slices_path = root / "ops/autonomy/slices.json"
+            slices = json.loads(slices_path.read_text(encoding="utf-8"))
+            slices[0]["status"] = "blocked"
+            slices[0]["retry_count"] = 5
+            slices[0]["reason"] = "retry cap exceeded"
+            write_json_atomic(slices_path, slices)
+            ledger = root / "ops/autonomy/failure_ledger.jsonl"
+            ledger.write_text(
+                json.dumps({"slice": "S01", "failure_class": "test_failure", "severity": "medium", "open": True}) + "\n",
+                encoding="utf-8",
+            )
+
+            report = close_failure(root, "S01", "test_failure", "docs/reviews/closure.md", "closed in test")
+
+            self.assertEqual(report["status"], "ok")
+            updated = json.loads(slices_path.read_text(encoding="utf-8"))
+            self.assertEqual(updated[0]["status"], "replan_required")
+            self.assertEqual(updated[0]["retry_count"], 0)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["current_slice"], "S01")
+
     def test_close_failure_redacts_secret_notes(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -345,7 +345,7 @@
       ],
       "missing_declared_files": false,
       "missing_paths_behavioral": false,
-      "notes": "",
+      "notes": "Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist.",
       "phase": "Warehouse schema",
       "risk_flags": [
         "manual_gate_hints_present",

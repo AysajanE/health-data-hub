@@ -195,6 +195,8 @@ Manual gates are forbidden.
             argv = seen["argv"]
             self.assertEqual(Path(argv[1]).resolve(), (root / "automation" / "run_plan_orchestrator.py").resolve())
             self.assertNotIn("keel-run", " ".join(argv))
+            self.assertIn("--max-wait-seconds", argv)
+            self.assertEqual(argv[argv.index("--max-wait-seconds") + 1], "5")
             self.assertEqual(Path(seen["cwd"]).resolve(), root.resolve())
             self.assertEqual(seen["env"], {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"})
             self.assertEqual(seen["timeout"], 7200)
@@ -260,6 +262,44 @@ Manual gates are forbidden.
         self.assertTrue(row["requires_red_green"])
         self.assertEqual(row["required_verification_commands"], ["python scripts/check_autonomous_review_exists.py S01"])
         self.assertEqual(row["required_verification_artifacts"], [])
+
+    def test_row_author_preserves_task_notes_in_exit_criteria(self) -> None:
+        row = row_for_card(
+            {
+                "task_id": "task_001",
+                "phase": "Warehouse schema",
+                "task": "Author the canonical DuckDB schema.",
+                "declared_deliverables": ["src/db/schema.sql", "tests/warehouse/test_schema.py"],
+                "clamped_allowed_write_roots": ["src/db", "tests/warehouse"],
+                "verification_candidates": ["python -m pytest tests/warehouse/test_schema.py -q"],
+                "notes": [
+                    "Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist."
+                ],
+                "behavioral": True,
+            },
+            1,
+        )
+
+        self.assertIn("in-memory DuckDB", row["exit_criteria"])
+        self.assertTrue(any("in-memory DuckDB" in note for note in row["notes"]))
+
+    def test_row_author_preserves_string_task_note(self) -> None:
+        row = row_for_card(
+            {
+                "task_id": "task_001",
+                "phase": "Warehouse schema",
+                "task": "Author the canonical DuckDB schema.",
+                "declared_deliverables": ["src/db/schema.sql"],
+                "clamped_allowed_write_roots": ["src/db"],
+                "verification_candidates": ["python scripts/check_schema_contract.py"],
+                "notes": "Include a bounded test that opens an in-memory DuckDB database.",
+                "behavioral": True,
+            },
+            1,
+        )
+
+        self.assertIn("in-memory DuckDB", row["exit_criteria"])
+        self.assertNotIn("I; n; c; l; u; d; e", row["exit_criteria"])
 
     def test_extract_run_id_ignores_run_state_path(self) -> None:
         text = "missing runs/RUN_20260524T182654Z_599d47fbb3784447bbb2386ea88ad935/run_state.json"

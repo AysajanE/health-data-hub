@@ -30,7 +30,7 @@
         "src/db/schema.sql",
         "tests/warehouse/test_schema.py"
       ],
-      "exit_criteria": "src/db/schema.sql, tests/warehouse/test_schema.py exist with the required S01 behavior; python scripts/check_schema_contract.py, python -m pytest tests/warehouse/test_schema.py -q passes",
+      "exit_criteria": "src/db/schema.sql, tests/warehouse/test_schema.py exist with the required S01 behavior; Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist.; python scripts/check_schema_contract.py, python -m pytest tests/warehouse/test_schema.py -q passes",
       "external_check": "none",
       "external_dependencies": [],
       "manual_gate": "none",
@@ -38,6 +38,7 @@
       "manual_gate_reason": "",
       "notes": [
         "source_task: task_001",
+        "Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist.",
         "autokeel deterministic row author"
       ],
       "owner_type": "operator",

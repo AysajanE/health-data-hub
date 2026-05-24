@@ -88,6 +88,10 @@ def row_for_card(card: dict[str, Any], index: int) -> dict[str, Any]:
     surfaces = [str(path) for path in card.get("existing_repo_surfaces", []) if str(path)]
     roots = [str(path) for path in card.get("clamped_allowed_write_roots", []) if str(path)]
     verification = [str(cmd) for cmd in card.get("verification_candidates", []) if str(cmd)]
+    raw_notes = card.get("notes", [])
+    if isinstance(raw_notes, str):
+        raw_notes = [raw_notes]
+    task_notes = [" ".join(str(note).split()) for note in raw_notes if str(note).strip()]
     behavioral = bool(card.get("behavioral"))
     verification_gated = behavioral or bool(verification)
 
@@ -101,6 +105,8 @@ def row_for_card(card: dict[str, Any], index: int) -> dict[str, Any]:
     exit_bits = []
     if files:
         exit_bits.append(f"{', '.join(files)} exist with the required S01 behavior")
+    if task_notes:
+        exit_bits.extend(task_notes)
     if verification:
         exit_bits.append(f"{', '.join(verification)} passes")
     exit_criteria = "; ".join(exit_bits) or "Declared artifact exists and is referenced by verification evidence"
@@ -125,7 +131,7 @@ def row_for_card(card: dict[str, Any], index: int) -> dict[str, Any]:
         "consult_paths": surfaces[:3],
         "required_verification_commands": verification,
         "required_verification_artifacts": [] if verification_gated else files,
-        "notes": [f"source_task: {task_id}", "autokeel deterministic row author"],
+        "notes": [f"source_task: {task_id}", *task_notes, "autokeel deterministic row author"],
     }
 
 

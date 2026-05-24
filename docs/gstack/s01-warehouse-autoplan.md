@@ -33,6 +33,7 @@ Build the Health Data Hub v1 warehouse foundation only. The slice deliverables a
 ### Warehouse schema
 
 - [ ] Author the canonical DuckDB schema with exactly five core tables and the locked v1 `daily_features` feature set.
+  Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist.
   Files: `src/db/schema.sql`; `tests/warehouse/test_schema.py`
   Verify: `python scripts/check_schema_contract.py`; `python -m pytest tests/warehouse/test_schema.py -q`
 
