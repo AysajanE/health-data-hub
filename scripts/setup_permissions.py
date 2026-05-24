@@ -105,6 +105,15 @@ def _secure_tree(
         errors.append(f"expected directory but found file: {_relative_to_root(root, tree_root)}")
         return
 
+    _apply_mode(
+        root=root,
+        path=tree_root,
+        desired_mode=DIRECTORY_MODE,
+        changed_paths=changed_paths,
+        errors=errors,
+        warnings=warnings,
+    )
+
     for path in sorted(tree_root.rglob("*"), key=lambda item: item.as_posix()):
         desired_mode = DIRECTORY_MODE if path.is_dir() else FILE_MODE
         _apply_mode(

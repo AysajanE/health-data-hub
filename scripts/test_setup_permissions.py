@@ -25,10 +25,11 @@ class SetupPermissionsTests(unittest.TestCase):
             warehouse_path = root / "data" / "warehouse.duckdb"
             secret_path = root / "data" / "secrets" / "oura_tokens.json"
             quarantine_path = root / "data" / "quarantine" / "2026-05-24-failure.json"
+            raw_path = root / "data" / "raw" / "oura" / "2026-05-24.json"
             snapshot_path = root / "data" / "snapshots" / "warehouse-2026-05-24.duckdb"
             lock_path = root / "data" / ".healthhub.lock"
 
-            for path in (warehouse_path, secret_path, quarantine_path, snapshot_path, lock_path):
+            for path in (warehouse_path, secret_path, quarantine_path, raw_path, snapshot_path, lock_path):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("private", encoding="utf-8")
                 path.chmod(0o644)
@@ -39,10 +40,12 @@ class SetupPermissionsTests(unittest.TestCase):
             self.assertEqual(S_IMODE((root / "data").stat().st_mode), 0o700)
             self.assertEqual(S_IMODE((root / "data" / "secrets").stat().st_mode), 0o700)
             self.assertEqual(S_IMODE((root / "data" / "quarantine").stat().st_mode), 0o700)
+            self.assertEqual(S_IMODE((root / "data" / "raw").stat().st_mode), 0o700)
             self.assertEqual(S_IMODE((root / "data" / "snapshots").stat().st_mode), 0o700)
             self.assertEqual(S_IMODE(warehouse_path.stat().st_mode), 0o600)
             self.assertEqual(S_IMODE(secret_path.stat().st_mode), 0o600)
             self.assertEqual(S_IMODE(quarantine_path.stat().st_mode), 0o600)
+            self.assertEqual(S_IMODE(raw_path.stat().st_mode), 0o600)
             self.assertEqual(S_IMODE(snapshot_path.stat().st_mode), 0o600)
             self.assertEqual(S_IMODE(lock_path.stat().st_mode), 0o600)
 
