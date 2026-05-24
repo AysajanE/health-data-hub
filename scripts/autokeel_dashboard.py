@@ -44,6 +44,13 @@ def render(root: Path) -> str:
         f"<li>{html.escape(str(item.get('event_id', '')))} {html.escape(item.get('ts', ''))} {html.escape(item.get('event', ''))}</li>"
         for item in events
     )
+    tripwire_decisions = state.get("tripwire_decisions", {})
+    tripwire_rows = "\n".join(
+        f"<li>{html.escape(str(name))}: {html.escape(str(decision.get('status', '')))} / {html.escape(str(decision.get('action', '')))}"
+        f" <code>{html.escape(str(decision.get('decision', '')))}</code></li>"
+        for name, decision in sorted(tripwire_decisions.items())
+        if isinstance(decision, dict)
+    )
     return f"""<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -63,6 +70,8 @@ code, pre {{ background: #f6f8fa; padding: 2px 4px; }}
 <table><tr><th>ID</th><th>Name</th><th>Status</th></tr>{rows}</table>
 <h2>Open Failures</h2>
 <ul>{open_failures or '<li>none</li>'}</ul>
+<h2>Tripwire Decisions</h2>
+<ul>{tripwire_rows or '<li>none</li>'}</ul>
 <h2>Recent Events</h2>
 <ul>{event_rows or '<li>none</li>'}</ul>
 </html>

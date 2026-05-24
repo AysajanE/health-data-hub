@@ -136,7 +136,13 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
     profile = load_validation_policy(path, policy_path)
     forbidden_commands = tuple(dict.fromkeys([*FORBIDDEN_COMMAND_PATTERNS, *profile.get("forbidden_commands", [])]))
     broad_roots = set(BROAD_ROOTS) | set(profile.get("forbidden_roots", []))
-    banned_language = [str(term).lower() for term in profile.get("banned_language", [])]
+    # Do not treat playbook contract column names as globally banned language.
+    # Active manual gates are checked row-by-row below.
+    banned_language = [
+        str(term).lower()
+        for term in profile.get("banned_language", [])
+        if str(term).lower() not in {"manual_gate", "manual gate"}
+    ]
     ui_banned_patterns = tuple(UI_BANNED_PATTERNS)
     required_gate_terms = [str(term).lower() for term in profile.get("required_gate_terms", [])]
     required_by_risk = profile.get("required_gate_terms_by_risk", {})
@@ -150,7 +156,19 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
         if pattern in lowered:
             errors.append(f"forbidden command in playbook: {pattern}")
     for term in banned_language:
-        if term and term in lowered and f"not {term}" not in lowered:
+        if not term:
+            continue
+        # Allow explicit negation phrases used to explain policy, but do not
+        # allow positive approval language.
+        allowed_negations = {
+            f"not {term}",
+            f"no {term}",
+            f"never {term}",
+            f"without {term}",
+            f"forbidden: {term}",
+            f"{term} is forbidden",
+        }
+        if term in lowered and not any(phrase in lowered for phrase in allowed_negations):
             errors.append(f"forbidden autonomous playbook language: {term}")
     for term in required_gate_terms:
         if term and term not in lowered:

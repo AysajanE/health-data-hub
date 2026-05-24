@@ -19,8 +19,10 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.acceptance_policy import command_allowed
 from scripts.check_autonomous_review_exists import check_review
 from scripts.check_no_tracked_data import check_no_tracked_data
+from scripts.swr_lane_policy import validate_swr_lane_requirements
 from scripts.validate_playbook_autonomous import validate_playbook
 
 
@@ -38,17 +40,6 @@ def load_slices(root: Path) -> list[dict[str, Any]]:
     return json.loads((root / "ops" / "autonomy" / "slices.json").read_text(encoding="utf-8"))
 
 
-def command_allowed(command: str) -> bool:
-    argv = shlex.split(command)
-    if len(argv) >= 4 and argv[:3] == ["python", "-m", "pytest"]:
-        return True
-    if len(argv) >= 2 and argv[0] == "python" and argv[1].startswith("scripts/"):
-        return True
-    if len(argv) >= 3 and argv[:2] == ["python", "-m"] and argv[2].startswith("scripts"):
-        return True
-    return False
-
-
 def run_command(root: Path, command: str, timeout: int) -> dict[str, Any]:
     if "mark-manual-gate" in command:
         return {
@@ -57,7 +48,7 @@ def run_command(root: Path, command: str, timeout: int) -> dict[str, Any]:
             "stdout_tail": "",
             "stderr_tail": "forbidden manual-gate command",
         }
-    if not command_allowed(command):
+    if not command_allowed(command, root):
         return {
             "command": command,
             "exit_code": 98,
@@ -108,6 +99,8 @@ def verify_slice(
     if require_complete and target.get("status") != "complete":
         errors.append(f"slice {slice_id} is not marked complete")
 
+    errors.extend(validate_swr_lane_requirements(root, target))
+
     playbook_rel = target.get("playbook")
     if playbook_rel:
         playbook = root / playbook_rel
@@ -130,7 +123,7 @@ def verify_slice(
     errors.extend(review["errors"])
 
     for command in target.get("acceptance", []):
-        if not command_allowed(command):
+        if not command_allowed(command, root):
             errors.append(f"acceptance command is not allowlisted: {command}")
             command_results.append({"command": command, "exit_code": 98, "stderr_tail": "acceptance command is not allowlisted"})
             continue

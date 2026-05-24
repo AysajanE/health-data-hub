@@ -97,7 +97,6 @@ playbook_validation:
   banned_language:
     - manual approval
     - human approval
-    - manual_gate
   forbidden_roots:
     - .
     - src

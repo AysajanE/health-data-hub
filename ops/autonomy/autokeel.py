@@ -477,6 +477,22 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             return fallback
         raise AutoKeelError(f"missing design doc: {design}")
 
+    def validate_autoplan_text(self, slice_: dict[str, Any], text: str) -> list[str]:
+        lowered = text.lower()
+        errors: list[str] = []
+        slice_id = str(slice_.get("id", "")).lower()
+        if slice_id and slice_id not in lowered:
+            errors.append(f"autoplan missing slice id {slice_.get('id')}")
+        if "deliverable" not in lowered:
+            errors.append("autoplan missing deliverables section or term")
+        if "verification" not in lowered:
+            errors.append("autoplan missing verification expectations")
+        if "manual gate" not in lowered and "manual_gate" not in lowered:
+            errors.append("autoplan missing explicit no manual gate policy")
+        if slice_.get("risk") == "high" and "autonomous_gate_review" not in lowered:
+            errors.append("high-risk autoplan missing autonomous_gate_review requirement")
+        return errors
+
     def ensure_autoplan(self, slice_: dict[str, Any]) -> CommandResult:
         autoplan_rel = slice_.get("autoplan")
         if not autoplan_rel:
@@ -485,6 +501,19 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
 
         autoplan = self.root / autoplan_rel
         if autoplan.exists():
+            errors = self.validate_autoplan_text(slice_, autoplan.read_text(encoding="utf-8"))
+            if errors:
+                failure = self.record_failure(
+                    slice_["id"],
+                    "autoplan_invalid",
+                    "high",
+                    "Existing autoplan does not contain the required autonomous compiler facts.",
+                    "Blocked compilation until the autoplan is repaired.",
+                    autoplan,
+                )
+                self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="autoplan invalid")
+                self.log_event("autoplan_invalid", {"path": str(autoplan.relative_to(self.root)), "errors": errors}, slice_id=slice_["id"])
+                return CommandResult(["test", "-f", str(autoplan)], 24, "", "; ".join(errors))
             return CommandResult(["test", "-f", str(autoplan)], 0, "autoplan exists", "")
 
         autoplan_policy = self.policy.get("autoplan", {})
@@ -545,6 +574,24 @@ Return only a Markdown autoplan suitable to save at:
                 slice_id=slice_["id"],
             )
             return CommandResult(argv, 23, result.stdout, "autoplan output too short")
+
+        errors = self.validate_autoplan_text(slice_, result.stdout)
+        if errors:
+            self.log_event(
+                "autoplan_invalid",
+                {"errors": errors, "stdout": result.stdout[-1000:]},
+                slice_id=slice_["id"],
+            )
+            failure = self.record_failure(
+                slice_["id"],
+                "autoplan_invalid",
+                "high",
+                "Generated autoplan does not contain the required autonomous compiler facts.",
+                "Rejected generated autoplan and blocked compilation until a valid autoplan exists.",
+                None,
+            )
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="autoplan invalid")
+            return CommandResult(argv, 24, result.stdout, "; ".join(errors))
 
         autoplan.write_text(result.stdout, encoding="utf-8")
         self.log_event("autoplan_created", {"path": str(autoplan.relative_to(self.root))}, slice_id=slice_["id"])
@@ -668,47 +715,80 @@ Return only a Markdown autoplan suitable to save at:
         decisions = state.setdefault("tripwire_decisions", {})
         changed = False
 
+        # Only these actions are safe to auto-accept because they reduce scope
+        # without bypassing required v1 functionality.
+        auto_accept_actions = {"oura_only_v1"}
+
         for item in fired:
             if not isinstance(item, dict):
                 continue
+
             name = str(item.get("name") or "tripwire")
             action = str(item.get("action") or "fallback_required")
+
             if decisions.get(name):
                 continue
 
-            decision_path = self.write_decision(
-                name,
-                {
-                    "status": "fallback_accepted",
-                    "tripwire": name,
-                    "action": action,
-                    "source": "autokeel_tripwire",
-                    "evidence_status": item.get("evidence_status"),
-                },
-            )
-            evidence_rel = item.get("evidence")
-            if evidence_rel:
-                evidence_path = self.root / str(evidence_rel)
-                report_dir = evidence_path.parent if evidence_path.suffix else evidence_path
-                report_dir.mkdir(parents=True, exist_ok=True)
-                fallback_report = report_dir / f"{name}-fallback-{slug_ts()}-{uuid.uuid4().hex[:8]}.json"
-                write_json_atomic(
-                    fallback_report,
-                    {
-                        "status": "fallback_accepted",
-                        "tripwire": name,
-                        "action": action,
-                        "decision": str(decision_path.relative_to(self.root)),
-                        "created_at": now_iso(),
-                    },
-                )
-                os.chmod(fallback_report, 0o600)
-            decisions[name] = {"action": action, "decision": str(decision_path.relative_to(self.root))}
+            safe_to_auto_accept = action in auto_accept_actions
+
+            decision_payload = {
+                "status": "fallback_accepted" if safe_to_auto_accept else "fallback_required",
+                "tripwire": name,
+                "action": action,
+                "source": "autokeel_tripwire",
+                "evidence_status": item.get("evidence_status"),
+                "reason": (
+                    "Auto-accepted because this fallback reduces optional scope."
+                    if safe_to_auto_accept
+                    else "Not auto-accepted because this fallback requires implementation or hard-stop behavior."
+                ),
+            }
+            decision_path = self.write_decision(name, decision_payload)
+
+            if safe_to_auto_accept:
+                evidence_rel = item.get("evidence")
+                if evidence_rel:
+                    evidence_path = self.root / str(evidence_rel)
+                    report_dir = evidence_path.parent if evidence_path.suffix else evidence_path
+                    report_dir.mkdir(parents=True, exist_ok=True)
+                    fallback_report = report_dir / f"{name}-fallback-{slug_ts()}-{uuid.uuid4().hex[:8]}.json"
+                    write_json_atomic(
+                        fallback_report,
+                        {
+                            "status": "fallback_accepted",
+                            "tripwire": name,
+                            "action": action,
+                            "decision": str(decision_path.relative_to(self.root)),
+                            "created_at": now_iso(),
+                        },
+                    )
+                    os.chmod(fallback_report, 0o600)
+
+            decisions[name] = {
+                "action": action,
+                "decision": str(decision_path.relative_to(self.root)),
+                "status": decision_payload["status"],
+            }
             changed = True
+
+            if not safe_to_auto_accept:
+                self.record_failure(
+                    "GLOBAL",
+                    "tripwire_triggered",
+                    "high",
+                    f"Tripwire {name} fired and requires non-automatic fallback action: {action}.",
+                    f"Recorded decision artifact {decision_path.relative_to(self.root)}; did not fabricate success evidence.",
+                    decision_path,
+                )
 
         if changed:
             self.save_state(state)
-        return changed
+
+        # Return True only if every fired tripwire was safely auto-accepted.
+        return bool(fired) and all(
+            isinstance(item, dict) and str(item.get("action") or "") in auto_accept_actions
+            for item in fired
+        )
 
     def verify_slice_acceptance(self, slice_id: str) -> CommandResult:
         result = self.runner.run(
@@ -854,17 +934,39 @@ Return only a Markdown autoplan suitable to save at:
         )
         self.mark_slice_status(slice_["id"], slice_.get("status", "pending"), lane_decision=str(decision.relative_to(self.root)))
 
+    def optional_evidence_fallback(self, slice_: dict[str, Any], command: str) -> str | None:
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            return None
+        stems = [Path(part).stem for part in argv if part.startswith("scripts/evidence/")]
+        fallbacks = slice_.get("fallbacks", {})
+        if not isinstance(fallbacks, dict):
+            return None
+        for stem in stems:
+            for key in (f"{stem}_failure", stem):
+                action = fallbacks.get(key)
+                if action:
+                    return str(action)
+        return None
+
     def run_optional_evidence(self, slice_: dict[str, Any]) -> None:
         for command in slice_.get("optional_evidence", []):
             result = self.runner.run(shlex.split(command), cwd=self.root)
+            details = {
+                "command": command,
+                "exit_code": result.exit_code,
+                "stdout": result.stdout[-2000:],
+                "stderr": result.stderr[-2000:],
+            }
+            if not result.ok:
+                fallback = self.optional_evidence_fallback(slice_, command)
+                if fallback:
+                    details["fallback_action"] = fallback
+                    details["decision_hint"] = "optional evidence failure must be paired with a decision or tripwire fallback before completion"
             self.log_event(
                 "optional_evidence_collected" if result.ok else "optional_evidence_failed",
-                {
-                    "command": command,
-                    "exit_code": result.exit_code,
-                    "stdout": result.stdout[-2000:],
-                    "stderr": result.stderr[-2000:],
-                },
+                details,
                 slice_id=slice_["id"],
             )
 
@@ -1087,7 +1189,7 @@ Return only a Markdown autoplan suitable to save at:
                 {"exit_code": compiled.exit_code, "stderr": compiled.stderr[-2000:]},
                 slice_id=slice_["id"],
             )
-            if compiled.exit_code not in {20, 21, 22}:
+            if compiled.exit_code not in {20, 21, 22, 24}:
                 failure = self.record_failure(
                     slice_["id"],
                     "compile_failure",

@@ -89,14 +89,19 @@ DAILY_FORBIDDEN = {
 }
 
 SLEEP_FORBIDDEN = {"is_imputed"}
+CREATE_TABLE_RE = r"create\s+table\s+(?:if\s+not\s+exists\s+)?"
 
 
 def normalize_sql(sql: str) -> str:
     return re.sub(r"\s+", " ", sql).strip()
 
 
+def table_names(sql: str) -> set[str]:
+    return set(re.findall(CREATE_TABLE_RE + r"([A-Za-z_][A-Za-z0-9_]*)", sql, re.I))
+
+
 def table_columns(sql: str, table: str) -> set[str]:
-    pattern = re.compile(rf"create\s+table\s+{re.escape(table)}\s*\((.*?)\);", re.I | re.S)
+    pattern = re.compile(rf"{CREATE_TABLE_RE}{re.escape(table)}\s*\((.*?)\);", re.I | re.S)
     match = pattern.search(sql)
     if not match:
         return set()
@@ -114,7 +119,7 @@ def table_columns(sql: str, table: str) -> set[str]:
 
 
 def has_primary_key(sql: str, table: str, expected_fragment: str) -> bool:
-    pattern = re.compile(rf"create\s+table\s+{re.escape(table)}\s*\((.*?)\);", re.I | re.S)
+    pattern = re.compile(rf"{CREATE_TABLE_RE}{re.escape(table)}\s*\((.*?)\);", re.I | re.S)
     match = pattern.search(sql)
     if not match:
         return False
@@ -130,7 +135,7 @@ def check_schema(path: Path) -> dict:
         return {"status": "error", "errors": [f"schema missing: {path}"], "warnings": []}
 
     sql = path.read_text(encoding="utf-8")
-    tables = set(re.findall(r"create\s+table\s+([A-Za-z_][A-Za-z0-9_]*)", sql, re.I))
+    tables = table_names(sql)
 
     missing = REQUIRED_TABLES - tables
     extra = tables - REQUIRED_TABLES

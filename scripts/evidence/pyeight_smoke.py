@@ -18,7 +18,14 @@ from scripts.evidence._collector_common import write_report
 
 def fallback_decision_exists(root: Path) -> Path | None:
     decisions = sorted((root / "ops/autonomy/decisions").glob("*pyeight*json"))
-    return decisions[-1] if decisions else None
+    for decision in reversed(decisions):
+        try:
+            payload = json.loads(decision.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if payload.get("status") == "fallback_accepted" and payload.get("action") == "oura_only_v1":
+            return decision
+    return None
 
 
 def collect(root: Path) -> dict[str, object]:

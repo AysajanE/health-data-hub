@@ -92,6 +92,29 @@ def validate_schema_files(root: Path) -> list[str]:
                 jsonschema.validate(instance=instance, schema=schema)
             except jsonschema.ValidationError as exc:
                 errors.append(f"{label} schema validation failed: {exc.message}")
+    decision_schema_path = schema_dir / "decision.schema.json"
+    decisions_dir = root / "ops" / "autonomy" / "decisions"
+    if decisions_dir.exists():
+        if not decision_schema_path.exists():
+            errors.append(f"missing schema file: {decision_schema_path.relative_to(root)}")
+        else:
+            decision_schema = json.loads(decision_schema_path.read_text(encoding="utf-8"))
+            for decision in decisions_dir.glob("*.json"):
+                try:
+                    payload = json.loads(decision.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    errors.append(f"{decision.relative_to(root)} does not parse as JSON: {exc}")
+                    continue
+                label = str(decision.relative_to(root))
+                try:
+                    import jsonschema  # type: ignore
+                except ImportError:
+                    errors.extend(validate_schema_minimal(payload, decision_schema, label))
+                else:
+                    try:
+                        jsonschema.validate(instance=payload, schema=decision_schema)
+                    except jsonschema.ValidationError as exc:
+                        errors.append(f"{label} schema validation failed: {exc.message}")
     return errors
 
 

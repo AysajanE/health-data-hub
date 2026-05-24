@@ -22,6 +22,8 @@ if __package__ in {None, ""}:
 
 from scripts.check_autonomous_review_exists import check_review
 from scripts.check_no_tracked_data import check_no_tracked_data
+from scripts.acceptance_policy import command_allowed
+from scripts.swr_lane_policy import validate_swr_lane_requirements
 from scripts.validate_playbook_autonomous import validate_playbook
 
 
@@ -32,6 +34,10 @@ CRITICAL_FAILURES = {
     "forbidden_ui_language",
     "state_divergence",
     "ship_failure",
+    "tripwire_triggered",
+    "compile_failure",
+    "provider_auth_failure",
+    "autoplan_invalid",
 }
 
 UI_BANNED_RE = re.compile(
@@ -84,17 +90,6 @@ def scan_ui_language(root: Path) -> list[str]:
     return errors
 
 
-def command_allowed(command: str) -> bool:
-    argv = shlex.split(command)
-    if len(argv) >= 4 and argv[:3] == ["python", "-m", "pytest"]:
-        return True
-    if len(argv) >= 2 and argv[0] == "python" and argv[1].startswith("scripts/"):
-        return True
-    if len(argv) >= 3 and argv[:2] == ["python", "-m"] and argv[2].startswith("scripts"):
-        return True
-    return False
-
-
 def git_verify(root: Path, *argv: str) -> bool:
     proc = subprocess.run(["git", *argv], cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     return proc.returncode == 0
@@ -108,7 +103,7 @@ def run_acceptance(root: Path, command: str, timeout: int) -> dict[str, Any]:
             "stdout_tail": "",
             "stderr_tail": "forbidden manual-gate command",
         }
-    if not command_allowed(command):
+    if not command_allowed(command, root):
         return {
             "command": command,
             "exit_code": 98,
@@ -159,8 +154,10 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
     for item in required:
         slice_id = item.get("id", "<unknown>")
 
+        errors.extend(validate_swr_lane_requirements(root, item))
+
         if item.get("status") == "complete" and not item.get("run_id"):
-            warnings.append(f"completed slice has no run_id recorded: {slice_id}")
+            errors.append(f"completed slice has no run_id recorded: {slice_id}")
 
         if item.get("status") == "complete":
             ship_branch = item.get("ship_branch")
@@ -194,7 +191,7 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
                 if "verify_v1" in command:
                     warnings.append(f"{slice_id}: skipped recursive verify_v1 command: {command}")
                     continue
-                if not command_allowed(command):
+                if not command_allowed(command, root):
                     errors.append(f"{slice_id}: acceptance command is not allowlisted: {command}")
                     command_results.append({"slice": slice_id, "command": command, "exit_code": 98, "stderr_tail": "acceptance command is not allowlisted"})
                     continue

@@ -40,7 +40,7 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             playbook.write_text("old playbook", encoding="utf-8")
             autoplan = root / "docs/gstack/s01-warehouse-autoplan.md"
             autoplan.parent.mkdir(parents=True)
-            autoplan.write_text("autoplan", encoding="utf-8")
+            autoplan.write_text("S01 autoplan\n\nDeliverables: schema.\n\nVerification: tests.\n\nManual gates are forbidden.\n", encoding="utf-8")
             (root / "docs/gstack/health-data-hub-office-hours.md").write_text("design", encoding="utf-8")
             state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
             state["active_run"] = {"slice": "S01", "run_id": "run_old", "started_at": "2026-05-23T00:00:00-04:00"}
@@ -97,7 +97,7 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             root = Path(temp)
             copy_fixture(root)
             decision = root / "ops/autonomy/decisions/pyeight_smoke_failure-test.json"
-            decision.write_text(json.dumps({"status": "fallback_accepted"}), encoding="utf-8")
+            decision.write_text(json.dumps({"status": "fallback_accepted", "action": "oura_only_v1"}), encoding="utf-8")
             report = collect_pyeight(root)
             self.assertEqual(report["status"], "fallback_accepted")
 

@@ -21,7 +21,12 @@ def collect(root: Path) -> dict[str, object]:
     url = os.environ.get("MOOD_SHORTCUT_TEST_URL")
     token = os.environ.get("MOOD_SHORTCUT_TOKEN")
     if url and token:
-        payload = json.dumps({"feeling": 3, "energy": 3, "notes": "autokeel smoke", "context_chips": ["autokeel"]}).encode("utf-8")
+        payload = json.dumps({
+            "feeling": 3,
+            "energy": 3,
+            "notes": "autokeel smoke",
+            "context_chips": []
+        }).encode("utf-8")
         request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "X-Mood-Token": token}, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
@@ -41,7 +46,7 @@ def collect(root: Path) -> dict[str, object]:
                 with sqlite3.connect(db_path) as connection:
                     count = connection.execute("select count(*) from mood_entries").fetchone()[0]
                 db_checked = count > 0
-        path = write_report(root, "mood_shortcut_smoke", {"status": "ok", "http_status": status_code, "response_chars": len(body), "db_checked": db_checked})
+        path = write_report(root, "mood_shortcut_smoke", {"status": "ok", "http_status": status_code, "response_chars": len(body), "sqlite_db_checked": db_checked, "db_check_note": "SQLite check is optional smoke metadata only; Health Data Hub canonical warehouse is DuckDB."})
         return {"status": "ok", "evidence": str(path.relative_to(root)), "errors": []}
 
     rel = os.environ.get("MOOD_SHORTCUT_EVIDENCE_FILE")

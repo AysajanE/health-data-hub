@@ -28,6 +28,20 @@ def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
     os.replace(tmp, path)
 
 
+def next_event_id(root: Path) -> int:
+    state_path = root / "ops" / "autonomy" / "autonomy_state.json"
+    if state_path.exists():
+        state = json.loads(state_path.read_text(encoding="utf-8") or "{}")
+    else:
+        state = {}
+    event_id = int(state.get("last_event_id") or 0) + 1
+    state["last_event_id"] = event_id
+    tmp = state_path.with_suffix(state_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, state_path)
+    return event_id
+
+
 def close_failure(
     root: Path,
     slice_id: str,
@@ -65,6 +79,7 @@ def close_failure(
         write_jsonl_atomic(ledger, rows)
         event_path = root / "ops" / "autonomy" / "events.jsonl"
         event = {
+            "event_id": next_event_id(root),
             "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
             "event": "failure_closed",
             "slice": slice_id,
