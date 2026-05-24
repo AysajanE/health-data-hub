@@ -46,7 +46,23 @@ def collect(root: Path) -> dict[str, object]:
                 with sqlite3.connect(db_path) as connection:
                     count = connection.execute("select count(*) from mood_entries").fetchone()[0]
                 db_checked = count > 0
-        path = write_report(root, "mood_shortcut_smoke", {"status": "ok", "http_status": status_code, "response_chars": len(body), "sqlite_db_checked": db_checked, "db_check_note": "SQLite check is optional smoke metadata only; Health Data Hub canonical warehouse is DuckDB."})
+        duckdb_rel = os.environ.get("MOOD_SHORTCUT_VERIFY_DUCKDB")
+        duckdb_checked = False
+        duckdb_check_error = ""
+        if duckdb_rel:
+            duckdb_path = Path(duckdb_rel)
+            if not duckdb_path.is_absolute():
+                duckdb_path = root / duckdb_path
+            if duckdb_path.exists():
+                try:
+                    import duckdb  # type: ignore
+
+                    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+                        count = connection.execute("select count(*) from mood_entries").fetchone()[0]
+                    duckdb_checked = count > 0
+                except Exception as exc:
+                    duckdb_check_error = f"{type(exc).__name__}: {exc}"
+        path = write_report(root, "mood_shortcut_smoke", {"status": "ok", "http_status": status_code, "response_chars": len(body), "sqlite_db_checked": db_checked, "duckdb_db_checked": duckdb_checked, "duckdb_check_error": duckdb_check_error, "db_check_note": "SQLite check is optional smoke metadata only; Health Data Hub canonical warehouse is DuckDB."})
         return {"status": "ok", "evidence": str(path.relative_to(root)), "errors": []}
 
     rel = os.environ.get("MOOD_SHORTCUT_EVIDENCE_FILE")

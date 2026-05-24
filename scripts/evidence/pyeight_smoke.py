@@ -29,12 +29,21 @@ def fallback_decision_exists(root: Path) -> Path | None:
 
 
 def collect(root: Path) -> dict[str, object]:
+    decision = fallback_decision_exists(root)
+    if decision:
+        path = write_report(
+            root,
+            "pyeight_smoke",
+            {
+                "status": "fallback_accepted",
+                "decision": str(decision.relative_to(root)),
+                "fallback": "oura_only_v1",
+            },
+        )
+        return {"status": "fallback_accepted", "evidence": str(path.relative_to(root)), "errors": []}
+
     spec = importlib.util.find_spec("pyeight")
     if spec is None:
-        decision = fallback_decision_exists(root)
-        if decision:
-            path = write_report(root, "pyeight_smoke", {"status": "fallback_accepted", "decision": str(decision.relative_to(root)), "fallback": "oura_only_v1"})
-            return {"status": "fallback_accepted", "evidence": str(path.relative_to(root)), "errors": []}
         path = write_report(root, "pyeight_smoke", {"status": "blocked_external", "missing_python_module": "pyeight"})
         return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": ["missing pyeight python module"]}
 
@@ -43,8 +52,20 @@ def collect(root: Path) -> dict[str, object]:
         path = write_report(root, "pyeight_smoke", {"status": "blocked_external", "module_origin": spec.origin, "missing_env": missing_env})
         return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": [f"missing {', '.join(missing_env)}"]}
 
-    path = write_report(root, "pyeight_smoke", {"status": "blocked_external", "module_origin": spec.origin, "reason": "module and credentials present; authenticated last-night fetch is not implemented in this local collector"})
-    return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": ["authenticated pyEight last-night fetch not implemented"]}
+    path = write_report(
+        root,
+        "pyeight_smoke",
+        {
+            "status": "blocked_external",
+            "module_origin": spec.origin,
+            "reason": "module and credentials present; authenticated last-night fetch is not implemented in this local collector",
+        },
+    )
+    return {
+        "status": "blocked_external",
+        "evidence": str(path.relative_to(root)),
+        "errors": ["authenticated pyEight last-night fetch not implemented"],
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

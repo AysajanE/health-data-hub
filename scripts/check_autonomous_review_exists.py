@@ -23,6 +23,7 @@ EVIDENCE_RE = re.compile(r"(?i)evidence files? checked|evidence checked|files ch
 COMMANDS_RE = re.compile(r"(?i)exact commands run|commands run|verification commands")
 BLOCKING_RE = re.compile(r"(?i)blocking findings|blocking issues|blockers")
 BLOCKING_NONE_RE = re.compile(r"(?im)^\s*(blocking findings|blocking issues|blockers)\s*:\s*(none|no blocking findings|no blockers)\s*$")
+PROVENANCE_RE = re.compile(r"(?i)autonomous slice review|independent reviewer|autonomous review")
 
 
 def load_slices(root: Path) -> list[dict[str, Any]]:
@@ -41,6 +42,8 @@ def validate_review_file(root: Path, rel_path: str) -> list[str]:
     text = path.read_text(encoding="utf-8", errors="replace").strip()
     if len(text) < 120:
         errors.append(f"review artifact too short to be meaningful: {rel_path}")
+    if not PROVENANCE_RE.search(text):
+        errors.append(f"review artifact must state autonomous reviewer provenance: {rel_path}")
     if FAIL_RE.search(text):
         errors.append(f"review artifact contains failing verdict: {rel_path}")
     if not PASS_RE.search(text):

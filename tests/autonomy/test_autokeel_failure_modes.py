@@ -32,6 +32,15 @@ class AutoKeelFailureModeTests(unittest.TestCase):
             op = AutoKeel(root=root, dry_run=True)
             self.assertEqual(op.choose_next_slice()["id"], "S02")
 
+    def test_requested_slice_requires_dependencies_unless_forced(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            with self.assertRaisesRegex(Exception, "incomplete dependencies"):
+                op.choose_next_slice("S04")
+            self.assertEqual(op.choose_next_slice("S04", force=True)["id"], "S04")
+
     def test_verify_v1_fails_when_completed_slice_has_missing_deliverables(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

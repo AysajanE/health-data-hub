@@ -41,6 +41,31 @@ class AutoKeelOpsToolTests(unittest.TestCase):
             self.assertFalse(rows[0]["open"])
             self.assertEqual(rows[0]["closure_evidence"], "docs/reviews/closure.md")
 
+    def test_close_failure_redacts_secret_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence = root / "docs/reviews/closure.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Verdict: pass\n", encoding="utf-8")
+            ledger = root / "ops/autonomy/failure_ledger.jsonl"
+            ledger.write_text(
+                json.dumps({"slice": "S01", "failure_class": "provider_auth_failure", "severity": "high", "open": True}) + "\n",
+                encoding="utf-8",
+            )
+
+            report = close_failure(
+                root,
+                "S01",
+                "provider_auth_failure",
+                "docs/reviews/closure.md",
+                "access_" + "token=" + "super" + "secret" + "value",
+            )
+
+            self.assertEqual(report["status"], "ok")
+            rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(rows[0]["closure_note"], "access_token=[REDACTED]")
+
     def test_tripwires_future_deadlines_do_not_fire(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

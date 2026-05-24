@@ -6,10 +6,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+SECRET_RE = re.compile(
+    r"(?i)(access_token|refresh_token|mood_token|x-mood-token|client_secret|password|authorization|api[_-]?key)"
+    r"([\"']?\s*[:=]\s*[\"']?)([^\"'\s,}]{8,})"
+)
+
+
+def redact_text(text: str) -> str:
+    return SECRET_RE.sub(r"\1\2[REDACTED]", text)
 
 
 def iter_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -59,6 +70,7 @@ def close_failure(
     if errors:
         return {"status": "error", "errors": errors, "closed": 0}
 
+    safe_note = redact_text(note)
     ledger = root / "ops" / "autonomy" / "failure_ledger.jsonl"
     rows = iter_jsonl(ledger)
     closed = 0
@@ -72,7 +84,7 @@ def close_failure(
         row["open"] = False
         row["closed_at"] = __import__("datetime").datetime.now().astimezone().isoformat(timespec="seconds")
         row["closure_evidence"] = str(evidence_path.relative_to(root))
-        row["closure_note"] = note
+        row["closure_note"] = safe_note
         closed += 1
 
     if closed:

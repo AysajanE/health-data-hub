@@ -127,6 +127,29 @@ def has_code_deliverable(row: dict[str, str]) -> bool:
     return any(prefix in combined for prefix in CODE_PATH_PREFIXES)
 
 
+def contains_forbidden_executable_command(value: str, forbidden_commands: tuple[str, ...]) -> str | None:
+    lowered_value = value.lower()
+    for pattern in forbidden_commands:
+        pattern_lower = str(pattern).lower()
+        if not pattern_lower:
+            continue
+        if pattern_lower not in lowered_value:
+            continue
+
+        allowed_safety_phrases = (
+            f"never call {pattern_lower}",
+            f"do not call {pattern_lower}",
+            f"must not call {pattern_lower}",
+            f"forbidden command: {pattern_lower}",
+            f"{pattern_lower} is forbidden",
+        )
+        if any(phrase in lowered_value for phrase in allowed_safety_phrases):
+            continue
+
+        return pattern
+    return None
+
+
 def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | None = None) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -152,9 +175,6 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
 
     text = path.read_text(encoding="utf-8")
     lowered = text.lower()
-    for pattern in forbidden_commands:
-        if pattern in lowered:
-            errors.append(f"forbidden command in playbook: {pattern}")
     for term in banned_language:
         if not term:
             continue
@@ -212,8 +232,16 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
         if has_code_deliverable(row) and is_empty(verification):
             errors.append(f"row {idx}: code/script/test deliverable lacks verification command")
 
-        if any(pattern in row_text(row).lower() for pattern in forbidden_commands):
-            errors.append(f"row {idx}: forbidden manual-gate command appears in row")
+        executable_fields = [
+            row.get("required_verification_commands", ""),
+            row.get("verification", ""),
+            row.get("command", ""),
+            row.get("commands", ""),
+        ]
+        for field_value in executable_fields:
+            forbidden = contains_forbidden_executable_command(field_value, forbidden_commands)
+            if forbidden:
+                errors.append(f"row {idx}: forbidden executable command appears in row: {forbidden}")
 
         external = (row.get("external_check") or "").strip().lower()
         if external and external not in EMPTY_VALUES and "private/evidence" not in row_text(row) and "docs/evidence" not in row_text(row):

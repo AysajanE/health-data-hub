@@ -348,18 +348,22 @@ class AutoKeel:
         self.save_state(state)
         self.log_event("heartbeat", heartbeat)
 
-    def choose_next_slice(self, requested: str | None = None) -> dict[str, Any] | None:
+    def choose_next_slice(self, requested: str | None = None, force: bool = False) -> dict[str, Any] | None:
         slices = self.load_slices()
+        completed = {item.get("id") for item in slices if item.get("status") == "complete"}
 
         if requested:
             for slice_ in slices:
                 if slice_.get("id") == requested or slice_.get("slug") == requested:
                     if slice_.get("status") == "complete":
                         return None
+                    if not force:
+                        deps = set(slice_.get("depends_on", []))
+                        missing = sorted(deps - completed)
+                        if missing:
+                            raise AutoKeelError(f"Requested slice {requested} has incomplete dependencies: {', '.join(missing)}")
                     return slice_
             raise AutoKeelError(f"Unknown slice: {requested}")
-
-        completed = {item.get("id") for item in slices if item.get("status") == "complete"}
 
         for slice_ in slices:
             if not slice_.get("required"):
@@ -493,39 +497,21 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             errors.append("high-risk autoplan missing autonomous_gate_review requirement")
         return errors
 
-    def ensure_autoplan(self, slice_: dict[str, Any]) -> CommandResult:
-        autoplan_rel = slice_.get("autoplan")
-        if not autoplan_rel:
-            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason="missing autoplan path")
-            return CommandResult([], 20, "", "missing autoplan path in slices.json")
-
-        autoplan = self.root / autoplan_rel
-        if autoplan.exists():
-            errors = self.validate_autoplan_text(slice_, autoplan.read_text(encoding="utf-8"))
-            if errors:
-                failure = self.record_failure(
-                    slice_["id"],
-                    "autoplan_invalid",
-                    "high",
-                    "Existing autoplan does not contain the required autonomous compiler facts.",
-                    "Blocked compilation until the autoplan is repaired.",
-                    autoplan,
-                )
-                self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="autoplan invalid")
-                self.log_event("autoplan_invalid", {"path": str(autoplan.relative_to(self.root)), "errors": errors}, slice_id=slice_["id"])
-                return CommandResult(["test", "-f", str(autoplan)], 24, "", "; ".join(errors))
-            return CommandResult(["test", "-f", str(autoplan)], 0, "autoplan exists", "")
-
-        autoplan_policy = self.policy.get("autoplan", {})
-        auto_generate = bool(autoplan_policy.get("auto_generate_missing", True))
-        if not auto_generate:
-            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason=f"missing {autoplan_rel}")
-            return CommandResult([], 21, "", f"missing autoplan: {autoplan}")
-
-        design = self.design_doc_path(slice_)
-        autoplan.parent.mkdir(parents=True, exist_ok=True)
-
-        prompt = f"""Create a Keel autoplan artifact for exactly one slice.
+    def build_autoplan_prompt(
+        self,
+        slice_: dict[str, Any],
+        design: Path,
+        autoplan_rel: str,
+        corrective_errors: list[str] | None = None,
+    ) -> str:
+        correction = ""
+        if corrective_errors:
+            correction = (
+                "\nPrevious autoplan attempt failed these checks:\n"
+                + "\n".join(f"- {error}" for error in corrective_errors)
+                + "\n\nRewrite the autoplan so every failed check is explicitly satisfied.\n"
+            )
+        return f"""Create a Keel autoplan artifact for exactly one slice.
 
 Repository: {self.root}
 Slice ID: {slice_["id"]}
@@ -543,7 +529,7 @@ Autonomy requirements:
 - Preserve Health Data Hub v1 scope.
 - Include concrete deliverables and verification expectations.
 - Do not include v2 features or prospective recommendations.
-
+{correction}
 Slice JSON:
 {json.dumps(redact(slice_), indent=2, sort_keys=True)}
 
@@ -551,10 +537,42 @@ Return only a Markdown autoplan suitable to save at:
 {autoplan_rel}
 """
 
+    def archive_invalid_autoplan(self, slice_: dict[str, Any], autoplan: Path, errors: list[str]) -> Path:
+        archive_dir = self.root / "ops" / "autonomy" / "failures" / "archived_autoplans"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive = archive_dir / f"{slice_['id']}-{slug_ts()}-{uuid.uuid4().hex[:8]}-{autoplan.name}"
+        os.replace(autoplan, archive)
+        self.log_event(
+            "autoplan_archived_for_retry",
+            {
+                "from": str(autoplan.relative_to(self.root)),
+                "to": str(archive.relative_to(self.root)),
+                "errors": errors,
+            },
+            slice_id=slice_["id"],
+        )
+        return archive
+
+    def generate_autoplan(
+        self,
+        slice_: dict[str, Any],
+        autoplan: Path,
+        autoplan_rel: str,
+        corrective_errors: list[str] | None = None,
+    ) -> CommandResult:
+        autoplan_policy = self.policy.get("autoplan", {})
+        design = self.design_doc_path(slice_)
+        autoplan.parent.mkdir(parents=True, exist_ok=True)
+
         command = autoplan_policy.get("command") or self.policy.get("compile", {}).get("row_author_command") or "claude -p"
+        prompt = self.build_autoplan_prompt(slice_, design, autoplan_rel, corrective_errors=corrective_errors)
         argv = shlex.split(command) + [prompt]
         if self.dry_run:
-            self.log_event("autoplan_generation_planned", {"path": str(autoplan.relative_to(self.root)), "command": command}, slice_id=slice_["id"])
+            self.log_event(
+                "autoplan_generation_planned",
+                {"path": str(autoplan.relative_to(self.root)), "command": command, "corrective": bool(corrective_errors)},
+                slice_id=slice_["id"],
+            )
             return CommandResult(argv, 0, "dry run autoplan generation planned", "")
 
         result = self.runner.run(argv, cwd=self.root)
@@ -579,23 +597,65 @@ Return only a Markdown autoplan suitable to save at:
         if errors:
             self.log_event(
                 "autoplan_invalid",
-                {"errors": errors, "stdout": result.stdout[-1000:]},
+                {"errors": errors, "stdout": result.stdout[-1000:], "corrective": bool(corrective_errors)},
                 slice_id=slice_["id"],
             )
-            failure = self.record_failure(
-                slice_["id"],
-                "autoplan_invalid",
-                "high",
-                "Generated autoplan does not contain the required autonomous compiler facts.",
-                "Rejected generated autoplan and blocked compilation until a valid autoplan exists.",
-                None,
-            )
-            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="autoplan invalid")
             return CommandResult(argv, 24, result.stdout, "; ".join(errors))
 
         autoplan.write_text(result.stdout, encoding="utf-8")
         self.log_event("autoplan_created", {"path": str(autoplan.relative_to(self.root))}, slice_id=slice_["id"])
         return CommandResult(argv, 0, result.stdout, result.stderr)
+
+    def ensure_autoplan(self, slice_: dict[str, Any]) -> CommandResult:
+        autoplan_rel = slice_.get("autoplan")
+        if not autoplan_rel:
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason="missing autoplan path")
+            return CommandResult([], 20, "", "missing autoplan path in slices.json")
+
+        autoplan = self.root / autoplan_rel
+        if autoplan.exists():
+            errors = self.validate_autoplan_text(slice_, autoplan.read_text(encoding="utf-8"))
+            if not errors:
+                return CommandResult(["test", "-f", str(autoplan)], 0, "autoplan exists", "")
+            self.archive_invalid_autoplan(slice_, autoplan, errors)
+            result = self.generate_autoplan(slice_, autoplan, str(autoplan_rel), corrective_errors=errors)
+            if result.ok:
+                return result
+            failure = self.record_failure(
+                slice_["id"],
+                "autoplan_invalid",
+                "high",
+                "Existing autoplan was invalid and one corrective regeneration attempt failed.",
+                "Archived the invalid autoplan and blocked compilation after the bounded retry.",
+                autoplan,
+            )
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="autoplan invalid")
+            return result
+
+        autoplan_policy = self.policy.get("autoplan", {})
+        auto_generate = bool(autoplan_policy.get("auto_generate_missing", True))
+        if not auto_generate:
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason=f"missing {autoplan_rel}")
+            return CommandResult([], 21, "", f"missing autoplan: {autoplan}")
+
+        result = self.generate_autoplan(slice_, autoplan, str(autoplan_rel))
+        if result.ok or result.exit_code not in {23, 24}:
+            return result
+
+        retry = self.generate_autoplan(slice_, autoplan, str(autoplan_rel), corrective_errors=[result.stderr or "autoplan generation failed validation"])
+        if retry.ok:
+            return retry
+
+        failure = self.record_failure(
+            slice_["id"],
+            "autoplan_invalid",
+            "high",
+            "Generated autoplan does not contain the required autonomous compiler facts after one corrective retry.",
+            "Rejected generated autoplan and blocked compilation until a valid autoplan exists.",
+            None,
+        )
+        self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="autoplan invalid")
+        return retry
 
     def archive_playbook_for_replan(self, slice_: dict[str, Any]) -> None:
         playbook = self.root / slice_["playbook"]
@@ -807,6 +867,102 @@ Return only a Markdown autoplan suitable to save at:
         )
         return result
 
+    def find_slice(self, slice_id: str) -> dict[str, Any] | None:
+        return next((item for item in self.load_slices() if item.get("id") == slice_id), None)
+
+    def build_reviewer_prompt(self, slice_: dict[str, Any], artifact_rel: str, run_id: str) -> str:
+        prompt_path = self.root / "ops" / "autonomy" / "prompts" / "slice_reviewer.md"
+        base_prompt = prompt_path.read_text(encoding="utf-8")
+        return f"""{base_prompt}
+
+## Review Request
+
+Slice ID: {slice_.get("id")}
+Slice name: {slice_.get("name")}
+Run ID: {run_id}
+Target review artifact: {artifact_rel}
+
+Slice JSON:
+```json
+{json.dumps(redact(slice_), indent=2, sort_keys=True)}
+```
+
+Write only the complete Markdown review artifact for `{artifact_rel}`.
+Use local files and commands only. If evidence is missing, write a failing review.
+"""
+
+    def run_reviewer_for_artifact(self, slice_: dict[str, Any], artifact_rel: str, run_id: str) -> CommandResult:
+        reviews = self.policy.get("reviews", {})
+        command = reviews.get("reviewer_command") or self.policy.get("compile", {}).get("row_author_command") or "claude -p"
+        artifact = self.root / artifact_rel
+        prompt = self.build_reviewer_prompt(slice_, artifact_rel, run_id)
+        argv = shlex.split(command) + [prompt]
+
+        if self.dry_run:
+            self.log_event(
+                "review_generation_planned",
+                {"artifact": artifact_rel, "command": command, "run_id": run_id},
+                slice_id=slice_["id"],
+            )
+            return CommandResult(argv, 0, "dry run review generation planned", "")
+
+        result = self.runner.run(argv, cwd=self.root)
+        if not result.ok:
+            self.log_event(
+                "review_generation_failed",
+                {"artifact": artifact_rel, "exit_code": result.exit_code, "stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:]},
+                slice_id=slice_["id"],
+            )
+            return result
+
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(result.stdout, encoding="utf-8")
+        self.log_event(
+            "review_artifact_created",
+            {"artifact": artifact_rel, "run_id": run_id, "chars": len(result.stdout)},
+            slice_id=slice_["id"],
+        )
+        return result
+
+    def ensure_review_artifacts(self, slice_id: str, run_id: str) -> CommandResult:
+        slice_ = self.find_slice(slice_id)
+        if not slice_:
+            return CommandResult([], 60, "", f"unknown slice: {slice_id}")
+
+        artifacts = [str(item) for item in slice_.get("review_artifacts", [])]
+        if not artifacts:
+            return CommandResult([], 0, "no review artifacts required", "")
+
+        missing = [artifact for artifact in artifacts if not (self.root / artifact).exists()]
+        reviews_policy = self.policy.get("reviews", {})
+        if missing and not bool(reviews_policy.get("auto_generate_missing", True)):
+            return self.runner.run(
+                ["python", "-m", "scripts.check_autonomous_review_exists", slice_id, "--json"],
+                cwd=self.root,
+                execute_in_dry_run=True,
+            )
+        if self.dry_run and missing:
+            for artifact in missing:
+                self.run_reviewer_for_artifact(slice_, artifact, run_id)
+            return CommandResult([], 0, "dry run review generation planned", "")
+
+        for artifact in missing:
+            result = self.run_reviewer_for_artifact(slice_, artifact, run_id)
+            if not result.ok:
+                return result
+
+        check = self.runner.run(
+            ["python", "-m", "scripts.check_autonomous_review_exists", slice_id, "--json"],
+            cwd=self.root,
+            execute_in_dry_run=True,
+        )
+        self.log_event(
+            "review_artifacts_validated" if check.ok else "review_artifacts_rejected",
+            {"exit_code": check.exit_code, "stdout": check.stdout[-4000:], "stderr": check.stderr[-4000:]},
+            slice_id=slice_id,
+        )
+        return check
+
     def active_run_is_stale(self, active: dict[str, Any]) -> bool:
         started_at = active.get("started_at")
         if not started_at:
@@ -999,6 +1155,20 @@ Return only a Markdown autoplan suitable to save at:
                 self.mark_slice_status(slice_id, "replan_required", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
                 return "ship_failed"
 
+            reviews = self.ensure_review_artifacts(slice_id, run_id)
+            if not reviews.ok:
+                failure = self.record_failure(
+                    slice_id,
+                    "review_artifact_invalid",
+                    "high",
+                    "PO passed but required autonomous review artifacts were missing or invalid.",
+                    "Rejected completion; reviewer artifacts must be generated and pass validation before slice acceptance.",
+                    None,
+                    run_id=run_id,
+                )
+                self.mark_slice_status(slice_id, "replan_required", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
+                return "review_failed"
+
             acceptance = self.verify_slice_acceptance(slice_id)
             if not acceptance.ok:
                 failure = self.record_failure(
@@ -1147,7 +1317,7 @@ Return only a Markdown autoplan suitable to save at:
         )
         return checkout
 
-    def run_once(self, requested_slice: str | None = None) -> int:
+    def run_once(self, requested_slice: str | None = None, force_slice: bool = False) -> int:
         self.log_heartbeat()
 
         verify = self.run_verify_v1()
@@ -1172,7 +1342,7 @@ Return only a Markdown autoplan suitable to save at:
                 self.log_event("tripwire_failure_unresolved", {"stdout": tripwires.stdout[-4000:], "stderr": tripwires.stderr[-4000:]})
                 return 6
 
-        slice_ = self.choose_next_slice(requested_slice)
+        slice_ = self.choose_next_slice(requested_slice, force=force_slice)
         if not slice_:
             self.log_event("no_actionable_slice", {})
             return 1
@@ -1240,10 +1410,10 @@ Return only a Markdown autoplan suitable to save at:
         self.handle_po_status(slice_["id"], run_id, status)
         return 0
 
-    def run_loop(self, max_loops: int | None = None, requested_slice: str | None = None) -> int:
+    def run_loop(self, max_loops: int | None = None, requested_slice: str | None = None, force_slice: bool = False) -> int:
         loops = 0
         while True:
-            code = self.run_once(requested_slice=requested_slice)
+            code = self.run_once(requested_slice=requested_slice, force_slice=force_slice)
             loops += 1
             if code == 0 and self.load_state().get("v1_complete"):
                 return 0
@@ -1275,6 +1445,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Log intended commands without executing them.")
     parser.add_argument("--max-loops", type=int, default=None, help="Maximum loop count before exiting.")
     parser.add_argument("--slice", dest="slice_id", default=None, help="Force a specific slice id or slug.")
+    parser.add_argument("--force", action="store_true", help="Allow --slice to bypass dependency checks.")
     parser.add_argument("--status", action="store_true", help="Print current autonomy state and exit.")
     parser.add_argument("--failures", action="store_true", help="Include failure ledger rows with --status.")
     parser.add_argument("--doctor", action="store_true", help="Run AutoKeel preflight checks and exit.")
@@ -1306,7 +1477,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(result.stderr, file=sys.stderr, end="")
             return result.exit_code
         if args.next_slice:
-            print(json.dumps(autokeel.choose_next_slice(args.slice_id), indent=2, sort_keys=True))
+            print(json.dumps(autokeel.choose_next_slice(args.slice_id, force=args.force), indent=2, sort_keys=True))
             return 0
         if args.replay_events:
             print(json.dumps(list(iter_jsonl(autokeel.events_path) or []), indent=2, sort_keys=True))
@@ -1334,8 +1505,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
         if args.once:
-            return autokeel.run_once(requested_slice=args.slice_id)
-        return autokeel.run_loop(max_loops=args.max_loops, requested_slice=args.slice_id)
+            return autokeel.run_once(requested_slice=args.slice_id, force_slice=args.force)
+        return autokeel.run_loop(max_loops=args.max_loops, requested_slice=args.slice_id, force_slice=args.force)
 
 
 if __name__ == "__main__":

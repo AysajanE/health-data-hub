@@ -127,6 +127,9 @@ evidence_collectors:
   s03_mood_shortcut_smoke: scripts/evidence/mood_shortcut_smoke.py
 
 reviews:
+  auto_generate_missing: true
+  reviewer_command: claude -p
+  prompt: ops/autonomy/prompts/slice_reviewer.md
   security_requires_two_ai_reviews: true
   model_requires_two_ai_reviews: true
   ui_language_requires_banned_word_scan: true

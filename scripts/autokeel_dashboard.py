@@ -24,6 +24,23 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def next_actionable_slice(slices: list[dict[str, Any]]) -> dict[str, Any] | None:
+    completed = {item.get("id") for item in slices if item.get("status") == "complete"}
+    blocked = {"blocked", "blocked_external", "blocked_external_waiting_for_evidence", "blocked_compile_inputs", "complete"}
+    actionable = {"pending", "waiting_for_playbook", "replan_required", "evidence_ready"}
+    for item in slices:
+        if not item.get("required"):
+            continue
+        if item.get("status", "pending") in blocked:
+            continue
+        deps = set(item.get("depends_on", []))
+        if deps and not deps.issubset(completed):
+            continue
+        if item.get("status", "pending") in actionable:
+            return item
+    return None
+
+
 def render(root: Path) -> str:
     state = read_json(root / "ops/autonomy/autonomy_state.json", {})
     slices = read_json(root / "ops/autonomy/slices.json", [])
@@ -51,6 +68,12 @@ def render(root: Path) -> str:
         for name, decision in sorted(tripwire_decisions.items())
         if isinstance(decision, dict)
     )
+    next_slice = next_actionable_slice(slices if isinstance(slices, list) else [])
+    next_slice_text = (
+        f"{html.escape(str(next_slice.get('id', '')))}: {html.escape(str(next_slice.get('name', '')))}"
+        if next_slice
+        else "none"
+    )
     return f"""<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -66,6 +89,8 @@ code, pre {{ background: #f6f8fa; padding: 2px 4px; }}
 <pre>{html.escape(json.dumps(state, indent=2, sort_keys=True))}</pre>
 <h2>Status Counts</h2>
 <ul>{count_rows or '<li>none</li>'}</ul>
+<h2>Next Actionable Slice</h2>
+<p>{next_slice_text}</p>
 <h2>Slices</h2>
 <table><tr><th>ID</th><th>Name</th><th>Status</th></tr>{rows}</table>
 <h2>Open Failures</h2>

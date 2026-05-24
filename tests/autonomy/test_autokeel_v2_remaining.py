@@ -123,6 +123,21 @@ CREATE TABLE IF NOT EXISTS sleep_merge_diagnostics (
             (decisions / "pyeight_bad.json").write_text(json.dumps({"status": "ok"}), encoding="utf-8")
             self.assertIsNone(fallback_decision_exists(root))
 
+    def test_pyeight_fallback_takes_precedence_over_installed_module(self) -> None:
+        from scripts.evidence.pyeight_smoke import collect as collect_pyeight
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            decisions = root / "ops/autonomy/decisions"
+            decisions.mkdir(parents=True)
+            (decisions / "pyeight_good.json").write_text(
+                json.dumps({"status": "fallback_accepted", "action": "oura_only_v1"}),
+                encoding="utf-8",
+            )
+            with mock.patch("importlib.util.find_spec", side_effect=AssertionError("module lookup should not run")):
+                report = collect_pyeight(root)
+            self.assertEqual(report["status"], "fallback_accepted", report)
+
     def test_acceptance_allowlist_reads_policy(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -238,6 +253,51 @@ CREATE TABLE IF NOT EXISTS sleep_merge_diagnostics (
         self.assertEqual(report["status"], "ok", report)
         self.assertIn("/v2/usercollection/sleep?", str(captured["url"]))
         self.assertNotIn("personal_info", str(captured["url"]))
+
+    def test_forbidden_command_safety_prose_is_allowed_but_executable_command_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            policy = root / "policy.yaml"
+            policy.write_text(
+                "playbook_validation:\n"
+                "  forbidden_commands:\n"
+                "    - mark-manual-gate\n"
+                "  required_columns:\n"
+                "    - action\n"
+                "    - deliverable\n"
+                "    - allowed_write_roots\n"
+                "    - requires_red_green\n"
+                "    - required_verification_commands\n"
+                "    - exit_criteria\n",
+                encoding="utf-8",
+            )
+
+            allowed = root / "allowed.md"
+            allowed.write_text(
+                """# Safety Policy
+
+Never call mark-manual-gate.
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Build schema | src/db/schema.sql | src/db | true | python -m pytest tests/warehouse -q | tests pass | none | none |
+""",
+                encoding="utf-8",
+            )
+            report = validate_playbook(allowed, policy_path=policy)
+            self.assertEqual(report["status"], "ok", report)
+
+            blocked = root / "blocked.md"
+            blocked.write_text(
+                """| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Bad command | scripts/bad.py | scripts | true | keel-run mark-manual-gate --run-id run_1 | command runs | none | none |
+""",
+                encoding="utf-8",
+            )
+            report = validate_playbook(blocked, policy_path=policy)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("forbidden executable command" in error for error in report["errors"]))
 
 
 if __name__ == "__main__":

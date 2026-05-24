@@ -38,6 +38,8 @@ CRITICAL_FAILURES = {
     "compile_failure",
     "provider_auth_failure",
     "autoplan_invalid",
+    "review_artifact_invalid",
+    "acceptance_command_rejected",
 }
 
 UI_BANNED_RE = re.compile(
