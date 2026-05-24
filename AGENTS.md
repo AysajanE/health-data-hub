@@ -19,6 +19,7 @@ Important paths:
 - `scripts/` — verification, status, preflight, dashboard, and project checks.
 - `scripts/evidence/` — external evidence collectors.
 - `docs/reviews/` — autonomous review artifacts.
+- `docs/local/` — local-only docs, scratch notes, and non-public review inputs; ignored except for its README.
 - `docs/briefs/` — slice briefs.
 - `docs/playbooks/` — Keel playbooks.
 - `docs/gstack/` — promoted design/autoplan artifacts.

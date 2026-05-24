@@ -22,3 +22,8 @@ orchestrator/
 ops/autonomy/.autokeel.lock
 ops/autonomy/*.tmp
 *.log
+
+# Local-only docs, scratch notes, and non-public review inputs.
+docs/local/**
+!docs/local/
+!docs/local/README.md
