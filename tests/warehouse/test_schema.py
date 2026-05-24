@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from uuid import uuid4
 
@@ -143,6 +144,20 @@ class WarehouseModelsTest(unittest.TestCase):
 
 
 class WarehouseWriteApiTest(unittest.TestCase):
+    def test_connect_duckdb_creates_missing_parent_directory_for_filesystem_path(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nested" / "warehouse.duckdb"
+
+            conn = connect_duckdb(db_path, apply_schema=True)
+            try:
+                tables = conn.execute("SHOW TABLES").fetchall()
+            finally:
+                conn.close()
+
+            self.assertTrue(db_path.parent.exists())
+            self.assertTrue(db_path.exists())
+            self.assertEqual({name for (name,) in tables}, EXPECTED_TABLES)
+
     def test_insert_sleep_night_persists_row_into_duckdb(self) -> None:
         conn = connect_duckdb(":memory:", apply_schema=True)
         try:

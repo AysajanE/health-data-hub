@@ -267,12 +267,23 @@ def apply_schema(conn: duckdb.DuckDBPyConnection, schema_path: Path = SCHEMA_PAT
     conn.execute(schema_path.read_text(encoding="utf-8"))
 
 
+def _filesystem_database_path(database: str | Path) -> Path | None:
+    if isinstance(database, Path):
+        return database
+    if database == ":memory:" or "://" in database:
+        return None
+    return Path(database)
+
+
 def connect_duckdb(
     database: str | Path = DEFAULT_DATABASE_PATH,
     *,
     apply_schema: bool = False,
     read_only: bool = False,
 ) -> duckdb.DuckDBPyConnection:
+    database_path = _filesystem_database_path(database)
+    if database_path is not None and not read_only:
+        database_path.parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(str(database), read_only=read_only)
     if apply_schema:
         globals()["apply_schema"](conn)
