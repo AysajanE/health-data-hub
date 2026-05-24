@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -242,27 +243,38 @@ class CommandRunner:
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         execute_in_dry_run: bool = False,
+        timeout: int | None = None,
     ) -> CommandResult:
         self.assert_allowed(argv)
         if self.dry_run and not execute_in_dry_run:
             return CommandResult(argv=argv, exit_code=0, stdout='{"dry_run": true}', stderr="")
 
+        effective_timeout = self.timeout if timeout is None else timeout
+        proc: subprocess.Popen[str] | None = None
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 argv,
                 cwd=str(cwd or self.root),
                 env={**os.environ, **(env or {})},
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=self.timeout,
-                check=False,
+                start_new_session=True,
             )
-            return CommandResult(argv=argv, exit_code=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
+            stdout, stderr = proc.communicate(timeout=effective_timeout)
+            return CommandResult(argv=argv, exit_code=proc.returncode, stdout=stdout, stderr=stderr)
         except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-            timeout_msg = f"command timed out after {self.timeout}s: {' '.join(shlex.quote(part) for part in argv)}"
+            if proc is not None:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                    stdout, stderr = proc.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    stdout, stderr = proc.communicate()
+            else:
+                stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+                stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            timeout_msg = f"command timed out after {effective_timeout}s: {' '.join(shlex.quote(part) for part in argv)}"
             return CommandResult(
                 argv=argv,
                 exit_code=124,
@@ -540,6 +552,9 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
     def plan_orchestrator_command(self, *args: str) -> list[str]:
         runner = self.ensure_plan_orchestrator_product_shim()
         return [sys.executable, str(runner), *args]
+
+    def po_timeout_seconds(self) -> int:
+        return int(self.policy.get("loop", {}).get("po_timeout_seconds", 7200))
 
     def checkpoint_allowed_pre_po_changes(self, slice_id: str) -> CommandResult:
         status = self._git_status_paths()
@@ -1175,6 +1190,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
+            timeout=self.po_timeout_seconds(),
         )
         self.log_event(
             "po_resumed_with_evidence" if result.ok else "po_resume_with_evidence_failed",
@@ -1228,6 +1244,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
+            timeout=self.po_timeout_seconds(),
         )
         run_id = self._extract_run_id(result.stdout) or self._extract_run_id(result.stderr)
         if not result.ok:

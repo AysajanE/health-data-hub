@@ -172,10 +172,11 @@ Manual gates are forbidden.
         seen: dict[str, object] = {}
 
         class CapturingRunner:
-            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False):
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
                 seen["argv"] = list(argv)
                 seen["cwd"] = cwd
                 seen["env"] = dict(env or {})
+                seen["timeout"] = timeout
                 return CommandResult(list(argv), 0, '{"run_id": "RUN_TEST"}', "")
 
         with tempfile.TemporaryDirectory() as temp:
@@ -196,6 +197,7 @@ Manual gates are forbidden.
             self.assertNotIn("keel-run", " ".join(argv))
             self.assertEqual(Path(seen["cwd"]).resolve(), root.resolve())
             self.assertEqual(seen["env"], {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"})
+            self.assertEqual(seen["timeout"], 7200)
             self.assertEqual(op.load_state()["active_run"]["run_id"], "RUN_TEST")
 
     def test_pre_po_checkpoint_commits_only_autokeel_runtime_changes(self) -> None:
@@ -269,7 +271,7 @@ Manual gates are forbidden.
 
     def test_failed_po_start_does_not_persist_active_run(self) -> None:
         class FailingRunner:
-            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False):
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
                 return CommandResult(
                     list(argv),
                     1,

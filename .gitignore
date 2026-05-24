@@ -17,6 +17,9 @@ private/
 *.sqlite3
 *.parquet
 
+# Project SQL schema files are source artifacts, even if a global ignore has *.sql.
+!src/db/*.sql
+
 # Local agent/tool runtime output.
 orchestrator/
 automation/plan_orchestrator
