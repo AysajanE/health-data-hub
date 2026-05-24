@@ -1,5 +1,5 @@
 {
-  "compiled_at": "2026-05-24T19:28:40+00:00",
+  "compiled_at": "2026-05-24T19:31:53+00:00",
   "compiled_by": "gstack_to_markdown_playbook_v1",
   "compiler_git_sha": "4bba861caaa504f75b391187e424ad16dd264ad8",
   "compiler_preflight": "pass",
@@ -20,7 +20,7 @@
     "UNKNOWN_VERIFICATION_COMMAND[06]: verification command is not in the compiler allowlist: 'python scripts/check_autonomous_review_exists.py S01'"
   ],
   "emitted_playbook_path": "/Users/aeziz-local/health-data-hub/docs/playbooks/s01-warehouse.playbook.md",
-  "emitted_playbook_sha256": "ec3a6566562bed04416b01fd7d036245bae12321a1a27bc6b80fadd0b6a50a29",
+  "emitted_playbook_sha256": "378d041b83a9c59d6c438e93d73fa4ecc6e439f54210ed3eb6d9a30fa368d395",
   "po_contract_verification": {
     "commands": [
       {
@@ -49,7 +49,7 @@
         ],
         "returncode": 1,
         "stderr": "",
-        "stdout": "{\n  \"ok\": false,\n  \"exit_code\": 1,\n  \"repo_root\": \"/Users/aeziz-local/keel/tools/plan-orchestrator\",\n  \"checks\": [\n    {\n      \"name\": \"agent_environment\",\n      \"status\": \"ok\"\n    },\n    {\n      \"name\": \"required_commands\",\n      \"status\": \"ok\"\n    },\n    {\n      \"name\": \"git_identity\",\n      \"status\": \"ok\"\n    },\n    {\n      \"name\": \"clean_tracked_checkout\",\n      \"status\": \"error\",\n      \"detail\": \"Tracked main checkout must be clean before starting the orchestrator.\\nM .gitignore\"\n    },\n    {\n      \"name\": \"playbook_parse\",\n      \"status\": \"ok\",\n      \"path\": \"/Users/aeziz-local/health-data-hub/docs/playbooks/s01-warehouse.playbook.md.tmp\",\n      \"sha256\": \"ec3a6566562bed04416b01fd7d036245bae12321a1a27bc6b80fadd0b6a50a29\"\n    },\n    {\n      \"name\": \"playbook_normalize\",\n      \"status\": \"ok\",\n      \"adapter_id\": \"markdown_playbook_v1\",\n      \"item_count\": 6\n    }\n  ],\n  \"repairs\": []\n}\n"
+        "stdout": "{\n  \"ok\": false,\n  \"exit_code\": 1,\n  \"repo_root\": \"/Users/aeziz-local/keel/tools/plan-orchestrator\",\n  \"checks\": [\n    {\n      \"name\": \"agent_environment\",\n      \"status\": \"ok\"\n    },\n    {\n      \"name\": \"required_commands\",\n      \"status\": \"ok\"\n    },\n    {\n      \"name\": \"git_identity\",\n      \"status\": \"ok\"\n    },\n    {\n      \"name\": \"clean_tracked_checkout\",\n      \"status\": \"error\",\n      \"detail\": \"Tracked main checkout must be clean before starting the orchestrator.\\nM .gitignore\"\n    },\n    {\n      \"name\": \"playbook_parse\",\n      \"status\": \"ok\",\n      \"path\": \"/Users/aeziz-local/health-data-hub/docs/playbooks/s01-warehouse.playbook.md.tmp\",\n      \"sha256\": \"378d041b83a9c59d6c438e93d73fa4ecc6e439f54210ed3eb6d9a30fa368d395\"\n    },\n    {\n      \"name\": \"playbook_normalize\",\n      \"status\": \"ok\",\n      \"adapter_id\": \"markdown_playbook_v1\",\n      \"item_count\": 6\n    }\n  ],\n  \"repairs\": []\n}\n"
       }
     ],
     "non_playbook_warnings": [
