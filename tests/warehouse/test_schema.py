@@ -16,6 +16,7 @@ from src.warehouse.models import (
     SleepNightRow,
     ValidationFailureMetadata,
 )
+from src.warehouse.warehouse import compute_daily_features, connect_duckdb, insert_mood_entry, insert_sleep_night
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -139,6 +140,125 @@ class WarehouseModelsTest(unittest.TestCase):
         self.assertEqual(metadata.detected_at_utc, datetime(2026, 5, 23, 22, 1, tzinfo=UTC))
         self.assertIn("feeling", metadata.error_summary)
         self.assertRegex(metadata.payload_hash, r"^[0-9a-f]{64}$")
+
+
+class WarehouseWriteApiTest(unittest.TestCase):
+    def test_insert_sleep_night_persists_row_into_duckdb(self) -> None:
+        conn = connect_duckdb(":memory:", apply_schema=True)
+        try:
+            row = insert_sleep_night(
+                conn,
+                {
+                    "source": "oura",
+                    "sleep_date": date(2026, 5, 23),
+                    "bedtime_utc": datetime(2026, 5, 22, 21, 30, tzinfo=UTC),
+                    "waketime_utc": datetime(2026, 5, 23, 5, 45, tzinfo=UTC),
+                    "total_sleep_min": 450,
+                    "rem_min": 90,
+                    "deep_min": 90,
+                    "light_min": 240,
+                    "awake_min": 30,
+                    "hrv_avg_ms": 44.0,
+                    "rhr_avg_bpm": 53,
+                    "body_temp_dev_c": 0.2,
+                    "sleep_score": 82,
+                    "ingested_at_utc": datetime(2026, 5, 23, 6, 0, tzinfo=UTC),
+                },
+            )
+            stored = conn.execute(
+                "SELECT source, sleep_date, total_sleep_min, hrv_avg_ms FROM sleep_nights"
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertEqual(row.source, "oura")
+        self.assertEqual(stored, ("oura", date(2026, 5, 23), 450, 44.0))
+
+    def test_compute_daily_features_builds_v1_row_and_diagnostics(self) -> None:
+        feature_date = date(2026, 5, 23)
+        conn = connect_duckdb(":memory:", apply_schema=True)
+        try:
+            for offset, hrv_value in enumerate([37.0, 38.5, 39.0, 40.0, 41.5, 42.0, 43.0], start=1):
+                sleep_date = date(2026, 5, 23 - (8 - offset))
+                insert_sleep_night(
+                    conn,
+                    {
+                        "source": "oura",
+                        "sleep_date": sleep_date,
+                        "bedtime_utc": datetime(2026, 5, sleep_date.day - 1, 21, 30, tzinfo=UTC),
+                        "waketime_utc": datetime(2026, 5, sleep_date.day, 5, 45, tzinfo=UTC),
+                        "total_sleep_min": 430 + offset,
+                        "rem_min": 90,
+                        "deep_min": 86,
+                        "light_min": 230,
+                        "awake_min": 25,
+                        "hrv_avg_ms": hrv_value,
+                        "rhr_avg_bpm": 53,
+                        "body_temp_dev_c": 0.0,
+                        "sleep_score": 79,
+                        "ingested_at_utc": datetime(2026, 5, sleep_date.day, 6, 0, tzinfo=UTC),
+                    },
+                )
+
+            insert_mood_entry(
+                conn,
+                {
+                    "log_id": uuid4(),
+                    "logged_at_utc": datetime(2026, 5, 22, 22, 0, tzinfo=UTC),
+                    "mood_date": date(2026, 5, 22),
+                    "feeling": 6,
+                    "energy": 6,
+                    "notes": None,
+                    "context_chips": (),
+                    "source": "manual",
+                    "supersedes_log_id": None,
+                },
+            )
+            insert_sleep_night(
+                conn,
+                {
+                    "source": "oura",
+                    "sleep_date": feature_date,
+                    "bedtime_utc": datetime(2026, 5, 22, 21, 45, tzinfo=UTC),
+                    "waketime_utc": datetime(2026, 5, 23, 5, 45, tzinfo=UTC),
+                    "total_sleep_min": 450,
+                    "rem_min": 100,
+                    "deep_min": 90,
+                    "light_min": 230,
+                    "awake_min": 30,
+                    "hrv_avg_ms": 45.0,
+                    "rhr_avg_bpm": 52,
+                    "body_temp_dev_c": 0.1,
+                    "sleep_score": 83,
+                    "ingested_at_utc": datetime(2026, 5, 23, 6, 15, tzinfo=UTC),
+                },
+            )
+
+            row = compute_daily_features(conn, feature_date)
+            diagnostics = conn.execute(
+                """
+                SELECT hrv_merge_method, stage_source, warning
+                FROM sleep_merge_diagnostics
+                WHERE sleep_date = ?
+                """,
+                [feature_date],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.feature_date, feature_date)
+        self.assertEqual(row.total_sleep_min, 450)
+        self.assertAlmostEqual(row.deep_sleep_pct or 0.0, 0.2)
+        self.assertEqual(row.prior_day_feeling, 6)
+        self.assertFalse(row.prior_day_feeling_imputed)
+        self.assertEqual(row.sleep_source_count, 1)
+        self.assertEqual(row.sleep_merge_warning, None)
+        self.assertEqual(row.hrv_avg_ms, 45.0)
+        self.assertEqual(row.hrv_z_method, "prior_28d")
+        self.assertIsNotNone(row.hrv_z)
+        self.assertEqual(diagnostics, ("oura_primary", "oura", None))
 
 
 if __name__ == "__main__":
