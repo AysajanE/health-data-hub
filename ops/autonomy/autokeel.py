@@ -274,6 +274,13 @@ class CommandRunner:
 class AutoKeel:
     ACTIONABLE_STATUSES = {"pending", "waiting_for_playbook", "replan_required", "evidence_ready"}
     BLOCKED_STATUSES = {"blocked", "blocked_external", "blocked_external_waiting_for_evidence", "blocked_compile_inputs", "complete"}
+    DRY_RUN_RESTORE_PATHS = (
+        "ops/autonomy/autonomy_state.json",
+        "ops/autonomy/events.jsonl",
+        "ops/autonomy/failure_ledger.jsonl",
+        "ops/autonomy/progress.md",
+        "ops/autonomy/slices.json",
+    )
 
     def __init__(self, root: Path, dry_run: bool = False):
         self.root = root.resolve()
@@ -290,6 +297,22 @@ class AutoKeel:
         statuses = self.policy.get("slice_statuses", {})
         self.actionable_statuses = set(statuses.get("actionable", self.ACTIONABLE_STATUSES))
         self.blocked_statuses = set(statuses.get("blocked", self.BLOCKED_STATUSES))
+
+    def snapshot_dry_run_state(self) -> dict[Path, bytes | None]:
+        snapshots: dict[Path, bytes | None] = {}
+        for rel in self.DRY_RUN_RESTORE_PATHS:
+            path = self.root / rel
+            snapshots[path] = path.read_bytes() if path.exists() else None
+        return snapshots
+
+    def restore_dry_run_state(self, snapshots: dict[Path, bytes | None]) -> None:
+        for path, content in snapshots.items():
+            if content is None:
+                if path.exists():
+                    path.unlink()
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
 
     def load_state(self) -> dict[str, Any]:
         return read_json(self.state_path, {})
@@ -481,10 +504,137 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             return fallback
         raise AutoKeelError(f"missing design doc: {design}")
 
+    def plan_orchestrator_root(self) -> str:
+        configured = os.environ.get("KEEL_PO_ROOT") or self.policy.get("plan_orchestrator_root")
+        if configured:
+            return str(configured)
+        return str(Path(self.policy.get("keel_root", "/Users/aeziz-local/keel")) / "tools" / "plan-orchestrator")
+
+    def ensure_plan_orchestrator_product_shim(self) -> Path:
+        """Expose the Keel PO runtime under this product repo for repo-root resolution."""
+        tool_root = Path(self.plan_orchestrator_root())
+        tool_runner = tool_root / "automation" / "run_plan_orchestrator.py"
+        tool_package = tool_root / "automation" / "plan_orchestrator"
+        if not tool_runner.is_file():
+            raise AutoKeelError(f"plan-orchestrator runner not found: {tool_runner}")
+        if not tool_package.is_dir():
+            raise AutoKeelError(f"plan-orchestrator package not found: {tool_package}")
+
+        automation_dir = self.root / "automation"
+        automation_dir.mkdir(exist_ok=True)
+        runner = automation_dir / "run_plan_orchestrator.py"
+        package = automation_dir / "plan_orchestrator"
+        self._ensure_local_shim_path(package, tool_package)
+        self._ensure_local_shim_path(runner, tool_runner)
+        return runner
+
+    def _ensure_local_shim_path(self, path: Path, target: Path) -> None:
+        if path.is_symlink():
+            if path.resolve() == target.resolve():
+                return
+            path.unlink()
+        elif path.exists():
+            return
+        path.symlink_to(target, target_is_directory=target.is_dir())
+
+    def plan_orchestrator_command(self, *args: str) -> list[str]:
+        runner = self.ensure_plan_orchestrator_product_shim()
+        return [sys.executable, str(runner), *args]
+
+    def checkpoint_allowed_pre_po_changes(self, slice_id: str) -> CommandResult:
+        status = self._git_status_paths()
+        if status is None or not status:
+            return CommandResult(["git", "status", "--porcelain"], 0, "clean", "")
+
+        disallowed = [path for path in status if not self._is_pre_po_checkpoint_path(path)]
+        if disallowed:
+            return CommandResult(
+                ["git", "status", "--porcelain"],
+                42,
+                "",
+                "refusing to start PO with non-AutoKeel dirty paths: " + ", ".join(disallowed),
+            )
+
+        paths = sorted(set(status))
+        add = subprocess.run(
+            ["git", "add", "--", *paths],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if add.returncode != 0:
+            return CommandResult(["git", "add", "--", *paths], add.returncode, add.stdout, add.stderr)
+
+        diff = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if diff.returncode == 0:
+            return CommandResult(["git", "diff", "--cached", "--quiet"], 0, "nothing staged", "")
+
+        commit = subprocess.run(
+            ["git", "commit", "-m", f"Record AutoKeel {slice_id} pre-PO state"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return CommandResult(
+            ["git", "commit", "-m", f"Record AutoKeel {slice_id} pre-PO state"],
+            commit.returncode,
+            commit.stdout,
+            commit.stderr,
+        )
+
+    def _git_status_paths(self) -> list[str] | None:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode != 0:
+            return None
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if status.returncode != 0:
+            return None
+        paths: list[str] = []
+        for line in status.stdout.splitlines():
+            if not line.strip():
+                continue
+            path = line[3:] if len(line) > 3 else line
+            if " -> " in path:
+                paths.extend(part.strip('"') for part in path.split(" -> ", 1))
+            else:
+                paths.append(path.strip('"'))
+        return paths
+
+    def _is_pre_po_checkpoint_path(self, path: str) -> bool:
+        return (
+            path.startswith("ops/autonomy/")
+            or path.startswith("docs/briefs/")
+            or path.startswith("docs/evidence/")
+            or path.startswith("docs/gstack/")
+            or path.startswith("docs/playbooks/")
+        )
+
     def validate_autoplan_text(self, slice_: dict[str, Any], text: str) -> list[str]:
         lowered = text.lower()
         errors: list[str] = []
         slice_id = str(slice_.get("id", "")).lower()
+        if "write permission was denied" in lowered or "let me know if" in lowered:
+            errors.append("autoplan contains assistant wrapper/refusal text")
         if slice_id and slice_id not in lowered:
             errors.append(f"autoplan missing slice id {slice_.get('id')}")
         if "deliverable" not in lowered:
@@ -493,6 +643,14 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             errors.append("autoplan missing verification expectations")
         if "manual gate" not in lowered and "manual_gate" not in lowered:
             errors.append("autoplan missing explicit no manual gate policy")
+        if "implementation tasks" not in lowered:
+            errors.append("autoplan missing Implementation Tasks section")
+        has_files = re.search(r"(?im)^\s*files\s*:", text) or re.search(r"(?im)^\s*\|.*\bfiles\b.*\|", text)
+        has_verify = re.search(r"(?im)^\s*verify\s*:", text) or re.search(r"(?im)^\s*\|.*\bverify\b.*\|", text)
+        if not has_files:
+            errors.append("autoplan missing compiler-parseable Files fields")
+        if not has_verify:
+            errors.append("autoplan missing compiler-parseable Verify fields")
         if slice_.get("risk") == "high" and "autonomous_gate_review" not in lowered:
             errors.append("high-risk autoplan missing autonomous_gate_review requirement")
         return errors
@@ -528,6 +686,9 @@ Autonomy requirements:
 - Keep write roots narrow and repo-relative.
 - Preserve Health Data Hub v1 scope.
 - Include concrete deliverables and verification expectations.
+- Include a `## Implementation Tasks` section.
+- Under each implementation task, include `Files:` with concrete repo-relative paths.
+- Under each implementation task, include `Verify:` with concrete acceptance commands.
 - Do not include v2 features or prospective recommendations.
 {correction}
 Slice JSON:
@@ -657,10 +818,10 @@ Return only a Markdown autoplan suitable to save at:
         self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="autoplan invalid")
         return retry
 
-    def archive_playbook_for_replan(self, slice_: dict[str, Any]) -> None:
+    def archive_playbook_for_replan(self, slice_: dict[str, Any]) -> Path | None:
         playbook = self.root / slice_["playbook"]
         if not playbook.exists():
-            return
+            return None
         archive_dir = self.root / "ops" / "autonomy" / "failures" / "archived_playbooks"
         archive_dir.mkdir(parents=True, exist_ok=True)
         archive = archive_dir / f"{slice_['id']}-{slug_ts()}-{playbook.name}"
@@ -670,6 +831,7 @@ Return only a Markdown autoplan suitable to save at:
             {"from": str(playbook.relative_to(self.root)), "to": str(archive.relative_to(self.root))},
             slice_id=slice_["id"],
         )
+        return archive
 
     def ensure_playbook(self, slice_: dict[str, Any]) -> CommandResult:
         playbook = self.root / slice_["playbook"]
@@ -710,10 +872,16 @@ Return only a Markdown autoplan suitable to save at:
             "--row-author-command",
             self.policy.get("compile", {}).get("row_author_command", "claude -p"),
             "--plan-orchestrator-root",
-            os.environ.get("KEEL_PO_ROOT", str(Path(self.policy.get("keel_root", "/Users/aeziz-local/keel")) / "plan-orchestrator")),
+            self.plan_orchestrator_root(),
             "--human-approved-by",
             "AUTO-KEEL-AUTONOMOUS-NOT-HUMAN",
         ]
+        compile_policy = self.policy.get("compile", {})
+        if compile_policy.get("row_author_allow_repo_cwd"):
+            cmd.append("--row-author-allow-repo-cwd")
+        allow_warnings_reason = str(compile_policy.get("allow_warnings_reason") or "").strip()
+        if allow_warnings_reason:
+            cmd.extend(["--allow-warnings", allow_warnings_reason])
 
         result = self.runner.run(cmd, cwd=self.root)
         self.log_event(
@@ -992,17 +1160,19 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if not evidence_dir.exists():
             return CommandResult([], 52, "", f"cannot resume evidence: missing directory {evidence_dir}")
 
-        keel_run = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel")) / "bin" / "keel-run"
+        checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
+        if not checkpoint.ok:
+            return checkpoint
+
         result = self.runner.run(
-            [
-                str(keel_run),
+            self.plan_orchestrator_command(
                 "supervise",
                 "resume",
                 "--run-id",
                 str(run_id),
                 "--external-evidence-dir",
                 str(evidence_dir),
-            ],
+            ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
         )
@@ -1045,20 +1215,24 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if not playbook.exists():
             self.log_event("playbook_missing", {"playbook": str(playbook.relative_to(self.root))}, slice_id=slice_["id"])
             return CommandResult([], 3, "", f"missing playbook: {playbook}")
+        checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
+        if not checkpoint.ok:
+            return checkpoint
         result = self.runner.run(
-            [
-                str(Path(self.policy.get("keel_root", "/Users/aeziz-local/keel")) / "bin" / "keel-run"),
+            self.plan_orchestrator_command(
                 "supervise",
                 "run",
                 "--playbook",
                 str(playbook.relative_to(self.root)),
                 "--next",
-            ],
+            ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
         )
         run_id = self._extract_run_id(result.stdout) or self._extract_run_id(result.stderr)
-        if run_id:
+        if not result.ok:
+            run_id = None
+        if result.ok and run_id:
             state["active_run"] = {"slice": slice_["id"], "run_id": run_id, "started_at": now_iso()}
             state["current_slice"] = slice_["id"]
             history = state.setdefault("run_history", [])
@@ -1127,6 +1301,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             )
 
     def inspect_po_status(self, run_id: str) -> dict[str, Any]:
+        self.ensure_plan_orchestrator_product_shim()
         result = self.runner.run(["python", "-m", "scripts.keel_status_digest", "--run-id", run_id], cwd=self.root, execute_in_dry_run=True)
         if not result.ok:
             self.log_event("po_status_failed", {"run_id": run_id, "stderr": result.stderr})
@@ -1318,6 +1493,16 @@ Use local files and commands only. If evidence is missing, write a failing revie
         return checkout
 
     def run_once(self, requested_slice: str | None = None, force_slice: bool = False) -> int:
+        if not self.dry_run:
+            return self._run_once_impl(requested_slice=requested_slice, force_slice=force_slice)
+
+        snapshots = self.snapshot_dry_run_state()
+        try:
+            return self._run_once_impl(requested_slice=requested_slice, force_slice=force_slice)
+        finally:
+            self.restore_dry_run_state(snapshots)
+
+    def _run_once_impl(self, requested_slice: str | None = None, force_slice: bool = False) -> int:
         self.log_heartbeat()
 
         verify = self.run_verify_v1()
@@ -1377,16 +1562,21 @@ Use local files and commands only. If evidence is missing, write a failing revie
 
         validation = self.validate_playbook(slice_)
         if not validation.ok:
+            evidence_path = self.archive_playbook_for_replan(slice_) or (self.root / slice_["playbook"])
             self.record_failure(
                 slice_["id"],
                 "unsafe_write_root",
                 "high",
                 "Autonomous playbook validation failed.",
-                "Rejected playbook before PO execution.",
-                self.root / slice_["playbook"],
+                "Rejected and archived the playbook before PO execution.",
+                evidence_path,
             )
             self.mark_slice_status(slice_["id"], "replan_required")
             return 3
+
+        if self.dry_run:
+            self.log_event("dry_run_po_start_skipped", {"playbook": slice_.get("playbook")}, slice_id=slice_["id"])
+            return 0
 
         run = self.start_or_resume_po(slice_)
         if not run.ok:
@@ -1429,10 +1619,12 @@ Use local files and commands only. If evidence is missing, write a failing revie
             payload = json.loads(text)
             for key in ("run_id", "id"):
                 if isinstance(payload, dict) and payload.get(key):
-                    return str(payload[key])
+                    candidate = str(payload[key])
+                    if re.fullmatch(r"RUN_[A-Za-z0-9_.:-]+", candidate):
+                        return candidate
         except json.JSONDecodeError:
             pass
-        match = re.search(r"\b(run[_-][A-Za-z0-9_.:-]+)\b", text)
+        match = re.search(r"\b(RUN_[A-Za-z0-9_.:-]+)\b", text)
         if match:
             return match.group(1)
         return None

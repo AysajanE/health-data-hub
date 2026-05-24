@@ -115,8 +115,8 @@ def determine_terminal_state(payload: dict[str, Any]) -> str:
     return top or "unknown"
 
 
-def run_json_command(argv: list[str]) -> tuple[int, dict[str, Any] | None, str]:
-    proc = subprocess.run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+def run_json_command(argv: list[str], *, cwd: Path | None = None) -> tuple[int, dict[str, Any] | None, str]:
+    proc = subprocess.run(argv, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if proc.returncode != 0:
         return proc.returncode, None, proc.stderr
     try:
@@ -132,15 +132,22 @@ def load_status(args: argparse.Namespace) -> dict[str, Any]:
     if not args.run_id:
         raise ValueError("--run-id or --from-file is required")
 
-    keel_run = Path(args.keel_root) / "bin" / "keel-run"
+    repo_root = Path(args.root).resolve()
+    local_runner = repo_root / "automation" / "run_plan_orchestrator.py"
     attempts = [
-        [str(keel_run), "supervise", "status", "--run-id", args.run_id, "--format", "json"],
-        [str(keel_run), "status", "--run-id", args.run_id, "--format", "json"],
+        [args.python, str(local_runner), "supervise", "status", "--run-id", args.run_id, "--format", "json"],
+        [args.python, str(local_runner), "status", "--run-id", args.run_id, "--format", "json"],
     ]
+    if not local_runner.exists():
+        keel_run = Path(args.keel_root) / "bin" / "keel-run"
+        attempts = [
+            [str(keel_run), "supervise", "status", "--run-id", args.run_id, "--format", "json"],
+            [str(keel_run), "status", "--run-id", args.run_id, "--format", "json"],
+        ]
 
     errors: list[str] = []
     for argv in attempts:
-        code, payload, err = run_json_command(argv)
+        code, payload, err = run_json_command(argv, cwd=repo_root)
         if payload is not None:
             if isinstance(payload, dict):
                 payload.setdefault("run_id", args.run_id)
@@ -169,6 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-id")
     parser.add_argument("--from-file")
     parser.add_argument("--keel-root", default="/Users/aeziz-local/keel")
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--python", default=sys.executable)
     args = parser.parse_args(argv)
 
     try:

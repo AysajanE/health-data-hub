@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from ops.autonomy.autokeel import write_json_atomic
 from scripts.close_failure import close_failure
 from scripts.evaluate_tripwires import evaluate_tripwires
 
@@ -18,6 +19,21 @@ def copy_autonomy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "ops", dst / "ops")
     shutil.copytree(ROOT / "scripts", dst / "scripts")
     (dst / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+    for rel in ("ops/autonomy/failures/archived_playbooks", "ops/autonomy/failures/archived_autoplans", "ops/autonomy/heartbeats"):
+        shutil.rmtree(dst / rel, ignore_errors=True)
+    slices_path = dst / "ops/autonomy/slices.json"
+    slices = json.loads(slices_path.read_text(encoding="utf-8"))
+    for item in slices:
+        item["status"] = "pending"
+        item.pop("retry_count", None)
+        item.pop("failure_path", None)
+        item.pop("run_id", None)
+    write_json_atomic(slices_path, slices)
+    write_json_atomic(
+        dst / "ops/autonomy/autonomy_state.json",
+        {"active_run": None, "completed_slices": [], "current_slice": None, "last_event_id": 0, "v1_complete": False},
+    )
+    (dst / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
 
 
 class AutoKeelOpsToolTests(unittest.TestCase):

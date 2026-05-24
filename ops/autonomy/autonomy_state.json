@@ -1,12 +1,12 @@
 {
-  "schema_version": 1,
-  "mode": "autonomous_zero_human",
-  "project": "health-data-hub",
-  "current_slice": null,
   "active_run": null,
   "completed_slices": [],
+  "current_slice": null,
+  "last_event_id": 97,
+  "last_heartbeat_at": "2026-05-24T14:42:28-04:00",
+  "mode": "autonomous_zero_human",
+  "project": "health-data-hub",
   "run_history": [],
-  "last_event_id": 0,
-  "last_heartbeat_at": null,
+  "schema_version": 1,
   "v1_complete": false
 }

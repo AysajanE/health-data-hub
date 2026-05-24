@@ -1,0 +1,180 @@
+{
+  "candidate_repo_paths": [
+    "/",
+    "data/warehouse.duckdb",
+    "models/eval.jsonl",
+    "Library/Logs/healthhub.log",
+    "data/secrets/oura_tokens.json",
+    "scripts/oura_auth.py",
+    "data/secrets/eight_session.json",
+    "data/.healthhub.lock",
+    "scripts/setup_permissions.py",
+    "src/db/schema.sql",
+    "src/warehouse/models.py",
+    "src/warehouse/warehouse.py",
+    "tests/warehouse/test_schema.py",
+    "tests/warehouse/test_mood_correction.py",
+    "tests/warehouse/test_quarantine.py",
+    "docs/reviews/s01-autonomous-schema-review.md",
+    "scripts/check_schema_contract.py",
+    "scripts/check_no_tracked_data.py",
+    "scripts/check_autonomous_review_exists.py"
+  ],
+  "compiled_at": "2026-05-24T18:26:53+00:00",
+  "constraints": [
+    "**Personal use first.** No multi-tenant infra, no compliance gates, no scale concerns.",
+    "**Local-first / user-owned data.** No cloud lock-in, no third-party data brokers. DuckDB on the user's Mac. Backups to iCloud Drive (encrypted with `age`, or via Advanced Data Protection).",
+    "**Reuse plumbing.** Use Open Wearables (`github.com/the-momentum/open-wearables`) for device ingestion where supported; use community-built `pyEight` for 8 Sleep. Don't reinvent OAuth and provider adapters.",
+    "**Sleep stack MVP first.** **Oura + mood log are required for v1.** 8 Sleep is included if `pyEight` ingestion is stable by end of week 2 (per Tripwires); if not, ship Oura-only as a first-class path, not a disappointing exception. Garmin / Withings / chest HRM deferred to v2.",
+    "**Mood-log UX must be sustainable.** A daily mood log that takes >30 seconds will not survive. Target: one tap on phone home screen via iOS Shortcut. **MVP frequency: 1x/day (evening reflection).** Multi-daily logging deferred to v2 once the once-a-day discipline is proven sustainable for 30 consecutive days.",
+    "**Network access:** v1 default is **home Wi-Fi only** for the mood-log iOS Shortcut. Simplest possible path; eliminates Tailscale + Shortcut + iOS-sleep fragility from the critical path. If 30-day usage proves it's too constraining (mood-logging missed because you weren't home in the evening), upgrade to Tailscale post-v1. Single decision saves an entire category of debugging.",
+    "**Statistical floor:** with `N_model` < 30 model-ready days (see \"N_model definition\" below), ridge will overfit. v1 model uses exactly **4 features**: `total_sleep_min`, `hrv_z` (z-score against prior-only baseline; `hrv_avg_ms` is display metadata only), `deep_sleep_pct`, `prior_day_feeling`. Workout zone time / training load deferred to v2 (requires Garmin). Feature expansion deferred until `N_model` \u226560.",
+    "**`N_model` definition (CRITICAL \u2014 used by all gates):**",
+    "**Honest uncertainty.** Counterfactuals must surface confidence intervals; predictions must avoid false precision. A \"your sleep score will be 73 tomorrow\" claim with no uncertainty erodes trust the first time it's wrong.",
+    "**Solo build, weekends + evenings.** No team, no full-time hours. **~6-10 hours per week realistically available, ~96-160 hours total over the 16-week plan** (low end = 6\u00d716, high end = 10\u00d716). All \"X weeks\" references in this doc are calendar weeks on that solo schedule, not full-time equivalents. **Honest acknowledgment:** the external expert review estimated 140-210 hours for this scope. The doc's 96-160 range is at the optimistic end of that. The mitigation isn't \"less work\" \u2014 it's \"if week 9 baseline gate fails, halt feature work and let data accumulate,\" which defers ~30 hours of UI polish work into the contingency window.",
+    "Manual gates are forbidden; no `manual_gate` rows and no `keel-run mark-manual-gate`.",
+    "Use `docs/reviews/s01-autonomous-schema-review.md` as the autonomous_gate_review artifact instead of human approval.",
+    "Keep write roots narrow and repo-relative.",
+    "Use exactly five core warehouse tables: `sleep_nights`, `mood_entries`, `mood_current`, `daily_features`, and `sleep_merge_diagnostics`.",
+    "Persist `hrv_z`; keep `hrv_avg_ms` as display metadata only.",
+    "Do not add v2 feature columns to `daily_features`.",
+    "Do not forward-fill sleep rows. Mood labels are never imputed.",
+    "Quarantine invalid raw payloads under `data/quarantine/` with file mode `0600`; do not track `data/`, `private/`, `.env`, DuckDB, SQLite, or Parquet files."
+  ],
+  "external_dependency_hints": [
+    "open wearables",
+    "oura",
+    "8 sleep",
+    "icloud",
+    "tailscale"
+  ],
+  "implementation_tasks": [
+    {
+      "files": [
+        "src/db/schema.sql",
+        "tests/warehouse/test_schema.py"
+      ],
+      "notes": "",
+      "phase": "Warehouse schema",
+      "task": "Author the canonical DuckDB schema with exactly five core tables and the locked v1 `daily_features` feature set.",
+      "verify": [
+        "python scripts/check_schema_contract.py",
+        "python -m pytest tests/warehouse/test_schema.py -q"
+      ]
+    },
+    {
+      "files": [
+        "src/warehouse/models.py",
+        "tests/warehouse/test_schema.py"
+      ],
+      "notes": "",
+      "phase": "Warehouse models",
+      "task": "Add Pydantic models for the warehouse rows and validation failure metadata.",
+      "verify": [
+        "python -m pytest tests/warehouse/test_schema.py -q"
+      ]
+    },
+    {
+      "files": [
+        "src/warehouse/warehouse.py",
+        "tests/warehouse/test_schema.py",
+        "tests/warehouse/test_mood_correction.py"
+      ],
+      "notes": "",
+      "phase": "Warehouse write API",
+      "task": "Implement the local DuckDB connection, schema application, sleep insert, mood insert, mood correction, and daily-feature row helpers.",
+      "verify": [
+        "python -m pytest tests/warehouse/test_schema.py tests/warehouse/test_mood_correction.py -q"
+      ]
+    },
+    {
+      "files": [
+        "src/warehouse/warehouse.py",
+        "tests/warehouse/test_quarantine.py"
+      ],
+      "notes": "",
+      "phase": "Quarantine handling",
+      "task": "Add validation-failure quarantine behavior with `0600` payload files and redacted general logs.",
+      "verify": [
+        "python -m pytest tests/warehouse/test_quarantine.py -q",
+        "python scripts/check_no_tracked_data.py"
+      ]
+    },
+    {
+      "files": [
+        "scripts/setup_permissions.py"
+      ],
+      "notes": "",
+      "phase": "Permissions and tracked-data safety",
+      "task": "Add an idempotent permissions script for local data directories and sensitive local files.",
+      "verify": [
+        "python scripts/setup_permissions.py",
+        "python scripts/check_no_tracked_data.py"
+      ]
+    },
+    {
+      "files": [
+        "docs/reviews/s01-autonomous-schema-review.md"
+      ],
+      "notes": "",
+      "phase": "Autonomous schema review",
+      "task": "Generate the S01 autonomous schema review artifact with table inventory, v1-scope checks, mood correction checks, quarantine checks, and deterministic-test references.",
+      "verify": [
+        "python scripts/check_autonomous_review_exists.py S01"
+      ]
+    }
+  ],
+  "manual_gate_hints": [
+    "approval",
+    "signoff",
+    "manual gate",
+    "reviewer"
+  ],
+  "non_goals": [
+    "S02 FastAPI mood endpoint and iOS Shortcut transport.",
+    "S03 Oura or 8 Sleep evidence collection.",
+    "S04 source reconciliation and full feature engineering.",
+    "S05 model training, baseline gates, and SHAP.",
+    "S06 counterfactual search.",
+    "S07 Streamlit UI.",
+    "S08 backup/restore.",
+    "Prospective predictions, recommendations, Autopilot, Coach, Garmin, Withings, chest strap, nutrition, or medical advice."
+  ],
+  "product_goal": "Aysajan is hyper-health-conscious and owns five separate connected devices that each generate rich health analytics in isolated silos:",
+  "recommended_approach": "### Approach A: Weekend MVP (Codex's pragmatic plan)\n\nSingle Streamlit page showing yesterday's mood, top SHAP contributors, one retrospective counterfactual, confidence warning. iOS Shortcut for mood logging. launchd cron pulls Oura + 8 Sleep data daily. Built in 1-2 weekends. No FastAPI initially; no autopilot; no coach. Retrospective explainer only.\n\n- Effort: S (1-2 weekends, ~25-40 hours)\n- Risk: Low\n- Pros: Ships fast, validates the whole loop cheaply, easy to iterate\n- Cons: No coach or autopilot; Streamlit ceiling is real; harder to evolve into the hybrid 10x without a refactor\n\n### Approach B: Layered Backend + Streamlit (selected)\n\nSix-layer architecture from day 1: Ingestion \u2192 Warehouse \u2192 Feature Store \u2192 Model \u2192 API \u2192 UI. FastAPI is real (not vestigial); Streamlit consumes it. Polars for feature engineering. Pydantic models for the API contract. Pluggable model layer so SHAP attribution + counterfactual search can evolve independently. Architecture explicitly designed so the Autopilot tier (scheduled jobs reading from the API and delivering interventions) and the Coach tier (LLM-with-tools agent calling the API) can be added in v2/v3 without rewrites.\n\n- Effort: M (~96-160 hours total over 16 calendar weeks of solo evenings/weekends, at 6-10 hr/wk)\n- Risk: Medium\n- Pros: Architecture supports the full hybrid 10x; API surface is reusable for mobile companion later; clean layer separation enables independent evolution\n- Cons: 2-3x build time vs A; risk of over-engineering before validating loop; \"ideal architecture\" trap of polishing forever\n\n### Approach C: Daily Health Newsletter (calm-tech lateral)\n\n\"The app you don't open.\" Every morning at 6am, an email arrives: yesterday's feeling + counterfactual, today's predicted feeling, today's one experimental nudge, weekly trends as embedded charts. Mood logging via iOS Shortcut. Backend is cron + Python + Jinja + smtplib + DuckDB. No web UI at all.\n\n- Effort: S-M (2-3 weeks, ~30-50 hours)\n- Risk: Low-Medium\n- Pros: Zero app fatigue; calm-tech ethos; lowest UX surface area; the email is shareable with a doctor by definition\n- Cons: No bidirectional interaction beyond mood logging; not a \"product\" you can demo; bolting on a conversational coach later requires a different surface",
+  "risk_hints": [],
+  "schema_version": "gstack_plan_ir_v1",
+  "source_artifacts": [
+    {
+      "byte_size": 97734,
+      "kind": "office_hours",
+      "path": "docs/gstack/health-data-hub-office-hours.md",
+      "sha256": "31abacb70ba2dab90cf8938e98803448462423fbb5da081f45d74617bf4ff3c7"
+    },
+    {
+      "byte_size": 3770,
+      "kind": "autoplan",
+      "path": "docs/gstack/s01-warehouse-autoplan.md",
+      "sha256": "341f12f7b15ff21a1e4727b3aaec3db3652b2bdc91b19b5d54ac291f87d4ee98"
+    },
+    {
+      "byte_size": 1213,
+      "kind": "approved_brief",
+      "path": "docs/briefs/s01-warehouse.autonomous-brief.md",
+      "sha256": "1dfef68c749175ffb646e858aaa133bcd216114cdbf4219a61725f1097809179"
+    }
+  ],
+  "stack_profile": {
+    "build_tools": [],
+    "languages": [
+      "python"
+    ],
+    "package_managers": [
+      "pip"
+    ],
+    "test_runners": [
+      "pytest"
+    ]
+  },
+  "verification_hints": []
+}

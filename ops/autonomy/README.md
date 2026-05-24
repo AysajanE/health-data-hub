@@ -23,6 +23,11 @@ Missing autoplans are generated through the configured `autoplan.command`.
 When a slice enters `replan_required`, AutoKeel archives the existing playbook
 before recompiling so the same stale artifact is not reused.
 
+For PO execution, AutoKeel creates a local ignored `automation/` shim that
+points at the installed Keel plan-orchestrator runtime. This lets the
+plan-orchestrator resolve this product checkout as the repo under execution,
+while still using the Keel runtime as the execution kernel.
+
 ## Safety Rules
 
 - AutoKeel must never call `mark-manual-gate`.
