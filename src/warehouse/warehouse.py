@@ -1,19 +1,30 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+import json
+import os
 from pathlib import Path
 import statistics
 from typing import Any, Mapping, Sequence, TypeVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import duckdb
+from pydantic import ValidationError
 
-from src.warehouse.models import DailyFeaturesRow, MoodEntryRow, SleepMergeDiagnosticsRow, SleepNightRow
+from src.warehouse.models import (
+    DailyFeaturesRow,
+    MoodEntryRow,
+    SleepMergeDiagnosticsRow,
+    SleepNightRow,
+    ValidationFailureMetadata,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO_ROOT / "src" / "db" / "schema.sql"
 DEFAULT_DATABASE_PATH = REPO_ROOT / "data" / "warehouse.duckdb"
+DEFAULT_GENERAL_LOG_PATH = Path.home() / "Library" / "Logs" / "healthhub.log"
+DEFAULT_QUARANTINE_DIR = REPO_ROOT / "data" / "quarantine"
 DEFAULT_FEATURE_VERSION = "v1.0"
 SLEEP_DISAGREEMENT_WARNING = "sleep_disagreement_60min"
 
@@ -76,6 +87,109 @@ def _coerce_row(model_type: type[_ModelT], payload: _ModelT | Mapping[str, Any])
     if isinstance(payload, model_type):
         return payload
     return model_type.model_validate(payload)
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=UTC).isoformat()
+        return value.astimezone(UTC).isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"unsupported JSON value: {type(value)!r}")
+
+
+def _extract_validation_source(payload: Any, *, fallback: str) -> str:
+    if isinstance(payload, Mapping):
+        source = payload.get("source")
+        if isinstance(source, str) and source.strip():
+            return source
+    source = getattr(payload, "source", None)
+    if isinstance(source, str) and source.strip():
+        return source
+    return fallback
+
+
+def _append_redacted_validation_log(
+    general_log_path: Path,
+    metadata: ValidationFailureMetadata,
+) -> None:
+    general_log_path.parent.mkdir(parents=True, exist_ok=True)
+    with general_log_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                metadata.model_dump(mode="json"),
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        handle.write("\n")
+
+
+def _write_private_json(quarantine_path: Path, payload: Any) -> None:
+    quarantine_path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(
+        payload,
+        default=_json_default,
+        indent=2,
+        sort_keys=True,
+    )
+    file_descriptor = os.open(quarantine_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+        handle.write(serialized)
+        handle.write("\n")
+    os.chmod(quarantine_path, 0o600)
+
+
+def _record_validation_failure(
+    *,
+    source: str,
+    payload: Any,
+    error: ValidationError,
+    quarantine_dir: Path,
+    general_log_path: Path,
+) -> None:
+    metadata = ValidationFailureMetadata.from_validation_error(
+        source=source,
+        payload=payload,
+        error=error,
+    )
+    quarantine_path = quarantine_dir / f"{metadata.detected_at_utc.date().isoformat()}-{uuid4()}.json"
+    _write_private_json(
+        quarantine_path,
+        {
+            "metadata": metadata.model_dump(mode="json"),
+            "payload": payload,
+        },
+    )
+    _append_redacted_validation_log(general_log_path, metadata)
+
+
+def _coerce_ingest_row(
+    model_type: type[_ModelT],
+    payload: _ModelT | Mapping[str, Any],
+    *,
+    validation_source: str,
+    quarantine_dir: Path,
+    general_log_path: Path,
+) -> _ModelT:
+    if isinstance(payload, model_type):
+        return payload
+    try:
+        return _coerce_row(model_type, payload)
+    except ValidationError as error:
+        _record_validation_failure(
+            source=validation_source,
+            payload=payload,
+            error=error,
+            quarantine_dir=quarantine_dir,
+            general_log_path=general_log_path,
+        )
+        raise
 
 
 def _normalize_db_datetime(value: Any) -> Any:
@@ -293,8 +407,17 @@ def connect_duckdb(
 def insert_sleep_night(
     conn: duckdb.DuckDBPyConnection,
     payload: SleepNightRow | Mapping[str, Any],
+    *,
+    quarantine_dir: Path = DEFAULT_QUARANTINE_DIR,
+    general_log_path: Path = DEFAULT_GENERAL_LOG_PATH,
 ) -> SleepNightRow:
-    row = _coerce_row(SleepNightRow, payload)
+    row = _coerce_ingest_row(
+        SleepNightRow,
+        payload,
+        validation_source=_extract_validation_source(payload, fallback="sleep_night"),
+        quarantine_dir=quarantine_dir,
+        general_log_path=general_log_path,
+    )
     conn.execute(
         """
         INSERT OR REPLACE INTO sleep_nights (
@@ -326,8 +449,17 @@ def insert_sleep_night(
 def insert_mood_entry(
     conn: duckdb.DuckDBPyConnection,
     payload: MoodEntryRow | Mapping[str, Any],
+    *,
+    quarantine_dir: Path = DEFAULT_QUARANTINE_DIR,
+    general_log_path: Path = DEFAULT_GENERAL_LOG_PATH,
 ) -> MoodEntryRow:
-    row = _coerce_row(MoodEntryRow, payload)
+    row = _coerce_ingest_row(
+        MoodEntryRow,
+        payload,
+        validation_source=_extract_validation_source(payload, fallback="mood_entry"),
+        quarantine_dir=quarantine_dir,
+        general_log_path=general_log_path,
+    )
     current_row = conn.execute(
         "SELECT log_id FROM mood_current WHERE mood_date = ?",
         [row.mood_date],
@@ -535,6 +667,8 @@ def compute_daily_features(
 __all__ = [
     "DEFAULT_DATABASE_PATH",
     "DEFAULT_FEATURE_VERSION",
+    "DEFAULT_GENERAL_LOG_PATH",
+    "DEFAULT_QUARANTINE_DIR",
     "SCHEMA_PATH",
     "apply_schema",
     "compute_daily_features",
