@@ -855,7 +855,14 @@ Return only a Markdown autoplan suitable to save at:
         playbook = self.root / slice_["playbook"]
 
         if slice_.get("status") == "replan_required":
-            self.archive_playbook_for_replan(slice_)
+            if self.dry_run:
+                self.log_event(
+                    "dry_run_playbook_archive_skipped",
+                    {"playbook": str(playbook.relative_to(self.root))},
+                    slice_id=slice_["id"],
+                )
+            else:
+                self.archive_playbook_for_replan(slice_)
 
         if playbook.exists():
             return CommandResult(["test", "-f", str(playbook)], 0, "playbook exists", "")

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ops.autonomy.autokeel import AutoKeel, CommandRunner, write_json_atomic
+from ops.autonomy.autokeel import AutoKeel, CommandResult, CommandRunner, write_json_atomic
 from scripts.check_no_tracked_data import check_no_tracked_data
 from scripts.evaluate_tripwires import evaluate_tripwires
 from scripts.evidence.pyeight_smoke import collect as collect_pyeight
@@ -70,7 +70,12 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             state["active_run"] = {"slice": "S01", "run_id": "run_old", "started_at": "2026-05-23T00:00:00-04:00"}
             write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
 
-            op = AutoKeel(root=root, dry_run=True)
+            class CompileRunner:
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    return CommandResult(list(argv), 0, "compiled", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CompileRunner()
             op.mark_slice_status("S01", "replan_required")
             slices = op.load_slices()
             result = op.ensure_playbook(next(item for item in slices if item["id"] == "S01"))

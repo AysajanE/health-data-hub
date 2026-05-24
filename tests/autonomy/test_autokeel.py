@@ -363,6 +363,33 @@ Manual gates are forbidden.
             self.assertEqual(result, 0)
             self.assertEqual({path: path.read_bytes() for path in tracked}, before)
 
+    def test_dry_run_replan_does_not_archive_playbook(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text(
+                """# Playbook
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 01 | Add schema test | `tests/warehouse/test_schema.py` | tests/warehouse | true | python -m pytest tests/warehouse/test_schema.py -q | tests pass | none | none |
+""",
+                encoding="utf-8",
+            )
+            slices_path = root / "ops/autonomy/slices.json"
+            slices = json.loads(slices_path.read_text(encoding="utf-8"))
+            slices[0]["status"] = "replan_required"
+            write_json_atomic(slices_path, slices)
+
+            op = AutoKeel(root=root, dry_run=True)
+            result = op.run_once(requested_slice="S01")
+
+            self.assertEqual(result, 0)
+            self.assertTrue(playbook.exists())
+            self.assertFalse((root / "ops/autonomy/failures/archived_playbooks").exists())
+
     def test_awaiting_human_gate_records_manual_gate_leak(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

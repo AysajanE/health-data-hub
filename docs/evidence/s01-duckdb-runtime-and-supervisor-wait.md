@@ -21,6 +21,7 @@ The same run then parked at `ST120_BLOCKED_EXTERNAL`, but AutoKeel continued wai
 - Updated the S01 autoplan so row 01 requires an in-memory DuckDB schema execution test.
 - Added `loop.po_supervisor_wait_seconds` and pass `--max-wait-seconds` to supervised PO run/resume calls.
 - Updated close-failure handling so a blocked slice with all failures closed is requeued to `replan_required` with retry count reset.
+- Updated dry-run playbook handling so `replan_required` does not archive the tracked playbook during a dry-run.
 
 ## Evidence
 
