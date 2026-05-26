@@ -26,7 +26,7 @@
     "docs/gstack/s02-mood-api-autoplan.md",
     "scripts/verify_slice.py"
   ],
-  "compiled_at": "2026-05-26T17:23:34+00:00",
+  "compiled_at": "2026-05-26T17:30:04+00:00",
   "constraints": [
     "**Personal use first.** No multi-tenant infra, no compliance gates, no scale concerns.",
     "**Local-first / user-owned data.** No cloud lock-in, no third-party data brokers. DuckDB on the user's Mac. Backups to iCloud Drive (encrypted with `age`, or via Advanced Data Protection).",

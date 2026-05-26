@@ -2,8 +2,8 @@
   "invented_paths": [],
   "model_stderr_excerpt": "",
   "model_stderr_sha256": "",
-  "prompt_sha256": "92c88385f3842be643de6e043781715f5c018e0edb5f5a3e5006bb77c58b216e",
-  "raw_model_output_sha256": "b0d72cadb29a3eaa8f7da8c6fdd6d24490c8b89ecbfa4048c451bc2f266521e1",
+  "prompt_sha256": "1ed58a792a506b2ae2f2e6b0c7aeb11aa4207d37e7395351605bca7bbb23ec90",
+  "raw_model_output_sha256": "7d43b351111e4633e985b2e0ae5803391a500c67ba4608110621a4d4ba12478e",
   "repair_attempted": false,
   "row_author": "external-json",
   "row_to_source_tasks": {
