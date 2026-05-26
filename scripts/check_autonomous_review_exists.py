@@ -21,6 +21,7 @@ PASS_RE = re.compile(r"(?im)^\s*(verdict|result)\s*:\s*pass\s*$")
 FAIL_RE = re.compile(r"(?im)^\s*(verdict|result)\s*:\s*fail\s*$")
 EVIDENCE_RE = re.compile(r"(?i)evidence files? checked|evidence checked|files checked")
 COMMANDS_RE = re.compile(r"(?i)exact commands run|commands run|verification commands")
+COMMAND_EVIDENCE_RE = re.compile(r"(?im)^\s*(?:[-*]\s*)?Command evidence:\s*`?([^`\s]+)`?\s*$")
 BLOCKING_RE = re.compile(r"(?i)blocking findings|blocking issues|blockers")
 BLOCKING_NONE_RE = re.compile(r"(?im)^\s*(blocking findings|blocking issues|blockers)\s*:\s*(none|no blocking findings|no blockers)\s*$")
 PROVENANCE_RE = re.compile(r"(?i)autonomous slice review|independent reviewer|autonomous review")
@@ -52,6 +53,17 @@ def validate_review_file(root: Path, rel_path: str) -> list[str]:
         errors.append(f"review artifact must list evidence files checked: {rel_path}")
     if not COMMANDS_RE.search(text):
         errors.append(f"review artifact must list exact commands run: {rel_path}")
+    command_evidence = COMMAND_EVIDENCE_RE.findall(text)
+    if not command_evidence:
+        errors.append(f"review artifact must include at least one 'Command evidence: <path>' line: {rel_path}")
+    for evidence_rel in command_evidence:
+        evidence_path = root / evidence_rel
+        if Path(evidence_rel).is_absolute():
+            errors.append(f"command evidence path must be repo-relative: {rel_path}: {evidence_rel}")
+        elif not evidence_path.exists():
+            errors.append(f"command evidence path does not exist: {rel_path}: {evidence_rel}")
+        elif not evidence_path.is_file():
+            errors.append(f"command evidence path is not a file: {rel_path}: {evidence_rel}")
     if not BLOCKING_RE.search(text):
         errors.append(f"review artifact must mention blocking findings/blockers: {rel_path}")
     elif PASS_RE.search(text) and not BLOCKING_NONE_RE.search(text):

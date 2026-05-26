@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from ops.autonomy.autokeel import AutoKeel, CommandRunner, write_json_atomic
+from ops.autonomy.autokeel import AutoKeel, CommandResult, CommandRunner, write_json_atomic
 from scripts.check_no_tracked_data import check_no_tracked_data
 from scripts.evaluate_tripwires import evaluate_tripwires
 from scripts.evidence.pyeight_smoke import collect as collect_pyeight
@@ -22,6 +24,21 @@ def copy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "ops", dst / "ops")
     shutil.copytree(ROOT / "scripts", dst / "scripts")
     (dst / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+    for rel in ("ops/autonomy/failures/archived_playbooks", "ops/autonomy/failures/archived_autoplans", "ops/autonomy/heartbeats"):
+        shutil.rmtree(dst / rel, ignore_errors=True)
+    slices_path = dst / "ops/autonomy/slices.json"
+    slices = json.loads(slices_path.read_text(encoding="utf-8"))
+    for item in slices:
+        item["status"] = "pending"
+        item.pop("retry_count", None)
+        item.pop("failure_path", None)
+        item.pop("run_id", None)
+    write_json_atomic(slices_path, slices)
+    write_json_atomic(
+        dst / "ops/autonomy/autonomy_state.json",
+        {"active_run": None, "completed_slices": [], "current_slice": None, "last_event_id": 0, "v1_complete": False},
+    )
+    (dst / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
 
 
 class AutoKeelV1FeedbackTests(unittest.TestCase):
@@ -40,13 +57,27 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             playbook.write_text("old playbook", encoding="utf-8")
             autoplan = root / "docs/gstack/s01-warehouse-autoplan.md"
             autoplan.parent.mkdir(parents=True)
-            autoplan.write_text("S01 autoplan\n\nDeliverables: schema.\n\nVerification: tests.\n\nManual gates are forbidden.\n", encoding="utf-8")
+            autoplan.write_text(
+                "# S01 autoplan\n\n"
+                "Deliverables and verification are listed below.\n\n"
+                "Manual gates are forbidden.\n\n"
+                "## Implementation Tasks\n\n"
+                "- [ ] Add schema.\n"
+                "  Files: `src/db/schema.sql`; `tests/warehouse/test_schema.py`\n"
+                "  Verify: `python -m pytest tests/warehouse/test_schema.py -q`\n",
+                encoding="utf-8",
+            )
             (root / "docs/gstack/health-data-hub-office-hours.md").write_text("design", encoding="utf-8")
             state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
             state["active_run"] = {"slice": "S01", "run_id": "run_old", "started_at": "2026-05-23T00:00:00-04:00"}
             write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
 
-            op = AutoKeel(root=root, dry_run=True)
+            class CompileRunner:
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    return CommandResult(list(argv), 0, "compiled", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CompileRunner()
             op.mark_slice_status("S01", "replan_required")
             slices = op.load_slices()
             result = op.ensure_playbook(next(item for item in slices if item["id"] == "S01"))
@@ -77,6 +108,48 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertTrue(result.ok)
             self.assertIn("dry_run", result.stdout)
 
+    def test_high_risk_swr_missing_lane_decision_blocks_not_downgrades(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_lane_decision(slice_)
+
+            self.assertFalse(result.ok)
+            self.assertIn("missing reviewed lane_decision", result.stderr)
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertEqual(updated["status"], "blocked_compile_inputs")
+            self.assertNotIn("lane_decision", updated)
+            self.assertIn("missing reviewed lane_decision", updated["reason"])
+
+    def test_complete_status_clears_stale_failure_fields_and_records_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            slices[0]["failure_path"] = "ops/autonomy/failures/old.md"
+            slices[0]["reason"] = "old failure"
+            slices[0]["retry_count"] = 2
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            op = AutoKeel(root=root, dry_run=True)
+
+            op.mark_slice_status(
+                "S01",
+                "complete",
+                run_id="RUN_DONE",
+                ship_branch="ship/s01",
+                ship_commit="abc123",
+            )
+
+            updated = next(item for item in op.load_slices() if item["id"] == "S01")
+            self.assertEqual(updated["retry_count"], 0)
+            self.assertNotIn("failure_path", updated)
+            self.assertNotIn("reason", updated)
+            history = op.load_state()["run_history"]
+            self.assertTrue(any(item["slice"] == "S01" and item["run_id"] == "RUN_DONE" for item in history))
+
     def test_tripwire_rejects_latest_blocked_external_report(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -91,6 +164,24 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             report = evaluate_tripwires(root)
             self.assertEqual(report["status"], "error")
             self.assertEqual(report["fired"][0]["evidence_status"]["status"], "blocked_external")
+
+    def test_s03_required_oura_preflight_blocks_before_po_without_token(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            op = AutoKeel(root=root, dry_run=False)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S03")
+
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("OURA_ACCESS_TOKEN", None)
+                result = op.required_external_evidence_ready(slice_)
+
+            self.assertFalse(result.ok)
+            updated = next(item for item in op.load_slices() if item["id"] == "S03")
+            self.assertEqual(updated["status"], "blocked_external")
+            self.assertEqual(updated["reason"], "required Oura evidence unavailable")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("blocked_external_missing_evidence", ledger)
 
     def test_pyeight_can_use_fallback_decision(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

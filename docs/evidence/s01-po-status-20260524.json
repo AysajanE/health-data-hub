@@ -1,0 +1,40 @@
+{
+  "captured_at": "2026-05-26T09:51:10-04:00",
+  "command": "python automation/run_plan_orchestrator.py supervise status --run-id RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370 --format json",
+  "run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
+  "kernel_status": {
+    "current_state": "ST130_PASSED",
+    "run_branch_name": "orchestrator/run/RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
+    "playbook_source_path": "docs/playbooks/s01-warehouse.playbook.md",
+    "updated_at_utc": "2026-05-24T21:05:23Z",
+    "status_level": "ok",
+    "exit_code": 0,
+    "pending_action": null,
+    "current_item": null,
+    "terminal_counts": {
+      "none": 0,
+      "passed": 6,
+      "awaiting_human_gate": 0,
+      "blocked_external": 0,
+      "escalated": 0
+    },
+    "checks": {
+      "run_state_path_exists": true,
+      "playbook_source_path_exists": true,
+      "normalized_plan_path_exists": true,
+      "normalized_plan_path_within_run_root": true,
+      "runtime_policy_path_exists": true,
+      "runtime_policy_sha256_matches": true,
+      "runtime_policy_matches_run_state": true
+    }
+  },
+  "supervision_status": {
+    "claim_class": "terminal_observed",
+    "last_heartbeat_claim_class": "terminal_observed",
+    "exit_code": 12,
+    "reason": "The supervisor observed a terminal completion or parked case.",
+    "active_stage": null,
+    "last_rejection_reason": null
+  },
+  "redaction": "Sanitized to terminal status, run identity, command, and structural checks only; no provider payloads, tokens, health data, or local raw evidence are included."
+}

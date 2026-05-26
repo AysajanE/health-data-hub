@@ -1,0 +1,558 @@
+{
+  "context_findings": [],
+  "external_dependency_hints": [
+    "open wearables",
+    "oura",
+    "8 sleep",
+    "icloud",
+    "tailscale"
+  ],
+  "global_rules": {
+    "constrained_allowed_write_roots": [],
+    "forbidden_write_roots": [
+      ".",
+      "src",
+      "tests",
+      ".local",
+      ".git",
+      ".codex",
+      ".claude",
+      ".mcp.json",
+      "ops/config",
+      "secrets",
+      ".env",
+      ".env.*"
+    ],
+    "markdown_is_python_emitted": true,
+    "max_repo_files": 5000,
+    "max_rows": 25,
+    "max_write_roots_per_row": 3,
+    "pipe_characters_forbidden": true
+  },
+  "known_paths": [
+    "Library/Logs/healthhub.log",
+    "data/.healthhub.lock",
+    "data/warehouse.duckdb",
+    "docs/briefs/s01-warehouse.autonomous-brief.md",
+    "docs/gstack/health-data-hub-office-hours.md",
+    "docs/gstack/s01-warehouse-autoplan.md",
+    "docs/reviews",
+    "docs/reviews/s01-autonomous-schema-review.md",
+    "models/eval.jsonl",
+    "scripts",
+    "scripts/check_autonomous_review_exists.py",
+    "scripts/check_no_tracked_data.py",
+    "scripts/check_schema_contract.py",
+    "scripts/oura_auth.py",
+    "scripts/setup_permissions.py",
+    "src/db/schema.sql",
+    "src/warehouse/models.py",
+    "src/warehouse/warehouse.py",
+    "tests",
+    "tests/warehouse/test_mood_correction.py",
+    "tests/warehouse/test_quarantine.py",
+    "tests/warehouse/test_schema.py"
+  ],
+  "known_write_roots": [
+    "src/db",
+    "tests/warehouse",
+    "src/warehouse",
+    "scripts",
+    "docs/reviews"
+  ],
+  "manual_gate_hints": [
+    "approval",
+    "signoff",
+    "manual gate",
+    "reviewer"
+  ],
+  "path_ledger": [
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "Library/Logs/healthhub.log",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "data/.healthhub.lock",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "data/warehouse.duckdb",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "source_doc",
+      "mentioned_by": [
+        "source_artifact"
+      ],
+      "path": "docs/briefs/s01-warehouse.autonomous-brief.md",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "source_doc",
+      "mentioned_by": [
+        "source_artifact"
+      ],
+      "path": "docs/gstack/health-data-hub-office-hours.md",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "source_doc",
+      "mentioned_by": [
+        "source_artifact"
+      ],
+      "path": "docs/gstack/s01-warehouse-autoplan.md",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "doc",
+      "mentioned_by": [
+        "task_006"
+      ],
+      "path": "docs/reviews",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "doc",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_006"
+      ],
+      "path": "docs/reviews/s01-autonomous-schema-review.md",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "models/eval.jsonl",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "task_005"
+      ],
+      "path": "scripts",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/check_autonomous_review_exists.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/check_no_tracked_data.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/check_schema_contract.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/oura_auth.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_005"
+      ],
+      "path": "scripts/setup_permissions.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "db",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_001"
+      ],
+      "path": "src/db/schema.sql",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_002"
+      ],
+      "path": "src/warehouse/models.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_003",
+        "task_004"
+      ],
+      "path": "src/warehouse/warehouse.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "task_001",
+        "task_002",
+        "task_003",
+        "task_004"
+      ],
+      "path": "tests",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "test",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_003"
+      ],
+      "path": "tests/warehouse/test_mood_correction.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "test",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_004"
+      ],
+      "path": "tests/warehouse/test_quarantine.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "test",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_001",
+        "task_002",
+        "task_003"
+      ],
+      "path": "tests/warehouse/test_schema.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    }
+  ],
+  "repo_root": ".",
+  "risk_hints": [],
+  "schema_version": "row_author_context_v1",
+  "source_artifact_paths": [
+    "docs/gstack/health-data-hub-office-hours.md",
+    "docs/gstack/s01-warehouse-autoplan.md",
+    "docs/briefs/s01-warehouse.autonomous-brief.md"
+  ],
+  "stack_profile": {
+    "build_tools": [],
+    "languages": [
+      "python"
+    ],
+    "package_managers": [
+      "pip"
+    ],
+    "test_runners": [
+      "pytest"
+    ]
+  },
+  "task_cards": [
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/db",
+        "tests/warehouse"
+      ],
+      "declared_deliverables": [
+        "src/db/schema.sql",
+        "tests/warehouse/test_schema.py"
+      ],
+      "declared_files": [
+        "src/db/schema.sql",
+        "tests/warehouse/test_schema.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist.",
+      "phase": "Warehouse schema",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 1,
+      "suggested_allowed_write_roots": [
+        "src/db",
+        "tests/warehouse"
+      ],
+      "task": "Author the canonical DuckDB schema with exactly five core tables and the locked v1 `daily_features` feature set.",
+      "task_id": "task_001",
+      "verification_candidates": [
+        "python scripts/check_schema_contract.py",
+        "python -m pytest tests/warehouse/test_schema.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/warehouse",
+        "tests/warehouse"
+      ],
+      "declared_deliverables": [
+        "src/warehouse/models.py",
+        "tests/warehouse/test_schema.py"
+      ],
+      "declared_files": [
+        "src/warehouse/models.py",
+        "tests/warehouse/test_schema.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Warehouse models",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 2,
+      "suggested_allowed_write_roots": [
+        "src/warehouse",
+        "tests/warehouse"
+      ],
+      "task": "Add Pydantic models for the warehouse rows and validation failure metadata.",
+      "task_id": "task_002",
+      "verification_candidates": [
+        "python -m pytest tests/warehouse/test_schema.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/warehouse",
+        "tests/warehouse"
+      ],
+      "declared_deliverables": [
+        "src/warehouse/warehouse.py",
+        "tests/warehouse/test_schema.py",
+        "tests/warehouse/test_mood_correction.py"
+      ],
+      "declared_files": [
+        "src/warehouse/warehouse.py",
+        "tests/warehouse/test_schema.py",
+        "tests/warehouse/test_mood_correction.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Warehouse write API",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 3,
+      "suggested_allowed_write_roots": [
+        "src/warehouse",
+        "tests/warehouse"
+      ],
+      "task": "Implement the local DuckDB connection, schema application, sleep insert, mood insert, mood correction, and daily-feature row helpers.",
+      "task_id": "task_003",
+      "verification_candidates": [
+        "python -m pytest tests/warehouse/test_schema.py tests/warehouse/test_mood_correction.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/warehouse",
+        "tests/warehouse"
+      ],
+      "declared_deliverables": [
+        "src/warehouse/warehouse.py",
+        "tests/warehouse/test_quarantine.py"
+      ],
+      "declared_files": [
+        "src/warehouse/warehouse.py",
+        "tests/warehouse/test_quarantine.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Quarantine handling",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 4,
+      "suggested_allowed_write_roots": [
+        "src/warehouse",
+        "tests/warehouse"
+      ],
+      "task": "Add validation-failure quarantine behavior with `0600` payload files and redacted general logs.",
+      "task_id": "task_004",
+      "verification_candidates": [
+        "python -m pytest tests/warehouse/test_quarantine.py -q",
+        "python scripts/check_no_tracked_data.py"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "scripts"
+      ],
+      "declared_deliverables": [
+        "scripts/setup_permissions.py"
+      ],
+      "declared_files": [
+        "scripts/setup_permissions.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "scripts"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Permissions and tracked-data safety",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 5,
+      "suggested_allowed_write_roots": [
+        "scripts"
+      ],
+      "task": "Add an idempotent permissions script for local data directories and sensitive local files.",
+      "task_id": "task_005",
+      "verification_candidates": [
+        "python scripts/setup_permissions.py",
+        "python scripts/check_no_tracked_data.py"
+      ]
+    },
+    {
+      "behavioral": false,
+      "clamped_allowed_write_roots": [
+        "docs/reviews"
+      ],
+      "declared_deliverables": [
+        "docs/reviews/s01-autonomous-schema-review.md"
+      ],
+      "declared_files": [
+        "docs/reviews/s01-autonomous-schema-review.md"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "docs/reviews"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Autonomous schema review",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 6,
+      "suggested_allowed_write_roots": [
+        "docs/reviews"
+      ],
+      "task": "Generate the S01 autonomous schema review artifact with table inventory, v1-scope checks, mood correction checks, quarantine checks, and deterministic-test references.",
+      "task_id": "task_006",
+      "verification_candidates": [
+        "python scripts/check_autonomous_review_exists.py S01"
+      ]
+    }
+  ]
+}

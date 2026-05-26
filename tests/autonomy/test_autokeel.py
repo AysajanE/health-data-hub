@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import stat
 import shutil
+import subprocess
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
-from ops.autonomy.autokeel import AutoKeel, CommandRunner, PolicyError, write_json_atomic
+from ops.autonomy.autokeel import AutoKeel, CommandResult, CommandRunner, PolicyError, write_json_atomic
+from scripts.autokeel_row_author import row_for_card
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,6 +20,46 @@ def copy_autonomy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "ops", dst / "ops")
     shutil.copytree(ROOT / "scripts", dst / "scripts")
     (dst / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+    for rel in ("ops/autonomy/failures/archived_playbooks", "ops/autonomy/failures/archived_autoplans", "ops/autonomy/heartbeats"):
+        shutil.rmtree(dst / rel, ignore_errors=True)
+    slices_path = dst / "ops/autonomy/slices.json"
+    slices = json.loads(slices_path.read_text(encoding="utf-8"))
+    for item in slices:
+        item["status"] = "pending"
+        item.pop("retry_count", None)
+        item.pop("failure_path", None)
+        item.pop("run_id", None)
+    write_json_atomic(slices_path, slices)
+    write_json_atomic(
+        dst / "ops/autonomy/autonomy_state.json",
+        {"active_run": None, "completed_slices": [], "current_slice": None, "last_event_id": 0, "v1_complete": False},
+    )
+    (dst / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
+
+
+def configure_fake_po_root(root: Path) -> Path:
+    po_root = root / "keel" / "tools" / "plan-orchestrator"
+    (po_root / "automation" / "plan_orchestrator").mkdir(parents=True)
+    (po_root / "automation" / "run_plan_orchestrator.py").write_text("# runner\n", encoding="utf-8")
+    policy = root / "ops/autonomy/policy.yaml"
+    policy.write_text(
+        "mode: autonomous_zero_human\n"
+        f"keel_root: {root / 'keel'}\n"
+        f"plan_orchestrator_root: {po_root}\n"
+        "manual_gates:\n"
+        "  forbidden_commands:\n"
+        "    - mark-manual-gate\n",
+        encoding="utf-8",
+    )
+    return po_root
+
+
+def init_git_repo(root: Path) -> None:
+    subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
 
 class AutoKeelTests(unittest.TestCase):
@@ -47,9 +91,381 @@ class AutoKeelTests(unittest.TestCase):
             slices_path = root / "ops/autonomy/slices.json"
             slices = json.loads(slices_path.read_text(encoding="utf-8"))
             slices[0]["status"] = "complete"
+            slices[0]["run_id"] = "run_s01"
             write_json_atomic(slices_path, slices)
             op = AutoKeel(root=root, dry_run=True)
             self.assertEqual(op.choose_next_slice()["id"], "S02")
+
+    def test_autoplan_validation_rejects_assistant_wrapper_without_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = op.load_slices()[0]
+            text = """Write permission was denied. Here is the autoplan:
+
+# S01 Warehouse Foundation
+
+Deliverables: schema.
+Verification: tests.
+Manual gates are forbidden.
+
+Let me know if you want changes.
+"""
+            errors = op.validate_autoplan_text(slice_, text)
+            self.assertIn("autoplan contains assistant wrapper/refusal text", errors)
+            self.assertIn("autoplan missing Implementation Tasks section", errors)
+            self.assertIn("autoplan missing compiler-parseable Files fields", errors)
+            self.assertIn("autoplan missing compiler-parseable Verify fields", errors)
+
+    def test_autoplan_validation_accepts_compiler_parseable_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = op.load_slices()[0]
+            text = """# S01 Autoplan
+
+Deliverables and verification are listed below.
+Manual gates are forbidden.
+
+## Implementation Tasks
+
+- [ ] Add warehouse schema.
+  Files: `src/db/schema.sql`; `tests/warehouse/test_schema.py`
+  Verify: `python -m pytest tests/warehouse/test_schema.py -q`
+"""
+            self.assertEqual(op.validate_autoplan_text(slice_, text), [])
+
+    def test_plan_orchestrator_root_matches_keel_tool_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            policy = root / "ops/autonomy/policy.yaml"
+            policy.write_text(
+                "mode: autonomous_zero_human\n"
+                "keel_root: /tmp/keel\n"
+                "manual_gates:\n"
+                "  forbidden_commands:\n"
+                "    - mark-manual-gate\n",
+                encoding="utf-8",
+            )
+
+            op = AutoKeel(root=root, dry_run=True)
+
+            self.assertEqual(op.plan_orchestrator_root(), "/tmp/keel/tools/plan-orchestrator")
+
+    def test_po_product_shim_points_to_configured_tool_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            po_root = configure_fake_po_root(root)
+
+            op = AutoKeel(root=root, dry_run=True)
+            runner = op.ensure_plan_orchestrator_product_shim()
+
+            self.assertEqual(runner.resolve(), (po_root / "automation" / "run_plan_orchestrator.py").resolve())
+            self.assertEqual(
+                (root / "automation" / "plan_orchestrator").resolve(),
+                (po_root / "automation" / "plan_orchestrator").resolve(),
+            )
+
+    def test_po_start_uses_product_local_runner_not_keel_run_wrapper(self) -> None:
+        seen: dict[str, object] = {}
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                seen["argv"] = list(argv)
+                seen["cwd"] = cwd
+                seen["env"] = dict(env or {})
+                seen["timeout"] = timeout
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_TEST"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("playbook", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(result.ok)
+            argv = seen["argv"]
+            self.assertEqual(Path(argv[1]).resolve(), (root / "automation" / "run_plan_orchestrator.py").resolve())
+            self.assertNotIn("keel-run", " ".join(argv))
+            self.assertIn("--max-wait-seconds", argv)
+            self.assertEqual(argv[argv.index("--max-wait-seconds") + 1], "5")
+            self.assertEqual(Path(seen["cwd"]).resolve(), root.resolve())
+            self.assertEqual(seen["env"], {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"})
+            self.assertEqual(seen["timeout"], 7200)
+            self.assertEqual(op.load_state()["active_run"]["run_id"], "RUN_TEST")
+
+    def test_active_same_slice_run_invokes_supervise_resume(self) -> None:
+        seen: dict[str, object] = {}
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                seen["argv"] = list(argv)
+                seen["cwd"] = cwd
+                seen["env"] = dict(env or {})
+                seen["timeout"] = timeout
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_TEST"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(result.ok)
+            argv = seen["argv"]
+            self.assertEqual(argv[2:4], ["supervise", "resume"])
+            self.assertIn("--run-id", argv)
+            self.assertEqual(argv[argv.index("--run-id") + 1], "RUN_TEST")
+            self.assertIn("--max-wait-seconds", argv)
+            self.assertEqual(seen["env"], {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"})
+            self.assertEqual(seen["timeout"], 7200)
+            active = op.load_state()["active_run"]
+            self.assertEqual(active["run_id"], "RUN_TEST")
+            self.assertIn("last_seen_at", active)
+
+    def test_pre_po_checkpoint_commits_only_autokeel_runtime_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            init_git_repo(root)
+            op = AutoKeel(root=root, dry_run=False)
+            op.log_event("checkpoint_test", {"ok": True}, slice_id="S01")
+
+            result = op.checkpoint_allowed_pre_po_changes("S01")
+
+            self.assertTrue(result.ok, result.stderr)
+            status = subprocess.run(
+                ["git", "status", "--short"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout
+            self.assertEqual(status, "")
+            log = subprocess.run(
+                ["git", "log", "--oneline", "-1"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout
+            self.assertIn("Record AutoKeel S01 pre-PO state", log)
+
+    def test_pre_po_checkpoint_rejects_product_code_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            init_git_repo(root)
+            (root / "src").mkdir()
+            (root / "src" / "unexpected.py").write_text("print('no')\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+
+            result = op.checkpoint_allowed_pre_po_changes("S01")
+
+            self.assertFalse(result.ok)
+            self.assertIn("non-AutoKeel dirty paths", result.stderr)
+            self.assertIn("src/unexpected.py", result.stderr)
+
+    def test_ship_slice_rejects_dirty_product_changes_before_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            init_git_repo(root)
+            base_branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "checkout", "-b", "orchestrator/run/RUN_TEST"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "run.txt").write_text("run branch\n", encoding="utf-8")
+            subprocess.run(["git", "add", "run.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "run branch"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "src").mkdir()
+            (root / "src" / "unexpected.py").write_text("print('no')\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+
+            result = op.ship_slice("S01", "RUN_TEST")
+
+            self.assertFalse(result.ok)
+            self.assertIn("non-AutoKeel dirty paths", result.stderr)
+            branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(branch, base_branch)
+
+    def test_row_author_keeps_verification_for_artifact_tasks(self) -> None:
+        row = row_for_card(
+            {
+                "task_id": "task_006",
+                "phase": "Autonomous schema review",
+                "task": "Generate the autonomous review artifact.",
+                "declared_deliverables": ["docs/reviews/s01-autonomous-schema-review.md"],
+                "clamped_allowed_write_roots": ["docs/reviews"],
+                "verification_candidates": ["python scripts/check_autonomous_review_exists.py S01"],
+                "behavioral": False,
+            },
+            6,
+        )
+
+        self.assertTrue(row["requires_red_green"])
+        self.assertEqual(row["required_verification_commands"], ["python scripts/check_autonomous_review_exists.py S01"])
+        self.assertEqual(row["required_verification_artifacts"], [])
+
+    def test_row_author_preserves_task_notes_in_exit_criteria(self) -> None:
+        row = row_for_card(
+            {
+                "task_id": "task_001",
+                "phase": "Warehouse schema",
+                "task": "Author the canonical DuckDB schema.",
+                "declared_deliverables": ["src/db/schema.sql", "tests/warehouse/test_schema.py"],
+                "clamped_allowed_write_roots": ["src/db", "tests/warehouse"],
+                "verification_candidates": ["python -m pytest tests/warehouse/test_schema.py -q"],
+                "notes": [
+                    "Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist."
+                ],
+                "behavioral": True,
+            },
+            1,
+        )
+
+        self.assertIn("in-memory DuckDB", row["exit_criteria"])
+        self.assertTrue(any("in-memory DuckDB" in note for note in row["notes"]))
+
+    def test_row_author_preserves_string_task_note(self) -> None:
+        row = row_for_card(
+            {
+                "task_id": "task_001",
+                "phase": "Warehouse schema",
+                "task": "Author the canonical DuckDB schema.",
+                "declared_deliverables": ["src/db/schema.sql"],
+                "clamped_allowed_write_roots": ["src/db"],
+                "verification_candidates": ["python scripts/check_schema_contract.py"],
+                "notes": "Include a bounded test that opens an in-memory DuckDB database.",
+                "behavioral": True,
+            },
+            1,
+        )
+
+        self.assertIn("in-memory DuckDB", row["exit_criteria"])
+        self.assertNotIn("I; n; c; l; u; d; e", row["exit_criteria"])
+
+    def test_extract_run_id_ignores_run_state_path(self) -> None:
+        text = "missing runs/RUN_20260524T182654Z_599d47fbb3784447bbb2386ea88ad935/run_state.json"
+        self.assertEqual(
+            AutoKeel._extract_run_id(text),
+            "RUN_20260524T182654Z_599d47fbb3784447bbb2386ea88ad935",
+        )
+        self.assertIsNone(AutoKeel._extract_run_id("missing run_state.json"))
+
+    def test_failed_po_start_does_not_persist_active_run(self) -> None:
+        class FailingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                return CommandResult(
+                    list(argv),
+                    1,
+                    "",
+                    "ERROR: missing runs/RUN_20260524T182654Z_599d47fbb3784447bbb2386ea88ad935/run_state.json",
+                )
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("playbook", encoding="utf-8")
+            configure_fake_po_root(root)
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = FailingRunner()
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertFalse(result.ok)
+            self.assertIsNone(op.load_state().get("active_run"))
+
+    def test_dry_run_once_restores_tracked_state_and_skips_po_start(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text(
+                """# Playbook
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 01 | Add schema test | `tests/warehouse/test_schema.py` | tests/warehouse | true | python -m pytest tests/warehouse/test_schema.py -q | tests pass | none | none |
+""",
+                encoding="utf-8",
+            )
+            tracked = [
+                root / "ops/autonomy/autonomy_state.json",
+                root / "ops/autonomy/events.jsonl",
+                root / "ops/autonomy/failure_ledger.jsonl",
+                root / "ops/autonomy/progress.md",
+                root / "ops/autonomy/slices.json",
+            ]
+            before = {path: path.read_bytes() for path in tracked}
+
+            op = AutoKeel(root=root, dry_run=True)
+            result = op.run_once(requested_slice="S01")
+
+            self.assertEqual(result, 0)
+            self.assertEqual({path: path.read_bytes() for path in tracked}, before)
+
+    def test_dry_run_replan_does_not_archive_playbook(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text(
+                """# Playbook
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 01 | Add schema test | `tests/warehouse/test_schema.py` | tests/warehouse | true | python -m pytest tests/warehouse/test_schema.py -q | tests pass | none | none |
+""",
+                encoding="utf-8",
+            )
+            slices_path = root / "ops/autonomy/slices.json"
+            slices = json.loads(slices_path.read_text(encoding="utf-8"))
+            slices[0]["status"] = "replan_required"
+            write_json_atomic(slices_path, slices)
+
+            op = AutoKeel(root=root, dry_run=True)
+            result = op.run_once(requested_slice="S01")
+
+            self.assertEqual(result, 0)
+            self.assertTrue(playbook.exists())
+            self.assertFalse((root / "ops/autonomy/failures/archived_playbooks").exists())
 
     def test_awaiting_human_gate_records_manual_gate_leak(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -72,7 +488,10 @@ class AutoKeelTests(unittest.TestCase):
             self.assertEqual(result, "blocked_external")
             evidence_roots = list((root / "private/evidence/S03").glob("*"))
             self.assertEqual(len(evidence_roots), 1)
-            self.assertTrue((evidence_roots[0] / "README.md").exists())
+            readme = evidence_roots[0] / "README.md"
+            self.assertTrue(readme.exists())
+            self.assertEqual(stat.S_IMODE(evidence_roots[0].stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(readme.stat().st_mode), 0o600)
 
     def test_verify_v1_does_not_pass_without_real_deliverables(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -1,0 +1,320 @@
+{
+  "compiler_warnings": [
+    "AUTHOR_DB_WITHOUT_MANUAL_GATE[01]: database deliverable should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[01]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[02]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[03]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[04]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[05]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[06]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_EXTERNAL_HINTS_WITHOUT_CHECK: source artifacts mention external dependencies, but no row requires external evidence",
+    "UNKNOWN_VERIFICATION_COMMAND[01]: verification command is not in the compiler allowlist: 'python scripts/check_schema_contract.py'",
+    "UNKNOWN_VERIFICATION_COMMAND[04]: verification command is not in the compiler allowlist: 'python scripts/check_no_tracked_data.py'",
+    "UNKNOWN_VERIFICATION_COMMAND[05]: verification command is not in the compiler allowlist: 'python scripts/setup_permissions.py'",
+    "UNKNOWN_VERIFICATION_COMMAND[05]: verification command is not in the compiler allowlist: 'python scripts/check_no_tracked_data.py'",
+    "UNKNOWN_VERIFICATION_COMMAND[06]: verification command is not in the compiler allowlist: 'python scripts/check_autonomous_review_exists.py S01'"
+  ],
+  "rows": [
+    {
+      "action": "Create the canonical DuckDB schema with exactly five core tables and the locked v1 `daily_features` feature set.",
+      "allowed_write_roots": [
+        "src/db",
+        "tests/warehouse"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/db/schema.sql",
+        "tests/warehouse/test_schema.py"
+      ],
+      "exit_criteria": "src/db/schema.sql, tests/warehouse/test_schema.py exist with the required S01 behavior; Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist.; python scripts/check_schema_contract.py, python -m pytest tests/warehouse/test_schema.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_001",
+        "Include a bounded test that opens an in-memory DuckDB database, executes `src/db/schema.sql`, and asserts the five expected tables exist.",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Warehouse schema",
+      "prerequisites": "none",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python scripts/check_schema_contract.py",
+        "python -m pytest tests/warehouse/test_schema.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "01",
+      "why_now": "Required for the S01 warehouse foundation acceptance contract."
+    },
+    {
+      "action": "Add Pydantic models for the warehouse rows and validation failure metadata.",
+      "allowed_write_roots": [
+        "src/warehouse",
+        "tests/warehouse"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/warehouse/models.py",
+        "tests/warehouse/test_schema.py"
+      ],
+      "exit_criteria": "src/warehouse/models.py, tests/warehouse/test_schema.py exist with the required S01 behavior; python -m pytest tests/warehouse/test_schema.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_002",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Warehouse models",
+      "prerequisites": "01",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/warehouse/test_schema.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "02",
+      "why_now": "Required for the S01 warehouse foundation acceptance contract."
+    },
+    {
+      "action": "Implement the local DuckDB connection, schema application, sleep insert, mood insert, mood correction, and daily-feature row helpers.",
+      "allowed_write_roots": [
+        "src/warehouse",
+        "tests/warehouse"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/warehouse/warehouse.py",
+        "tests/warehouse/test_schema.py",
+        "tests/warehouse/test_mood_correction.py"
+      ],
+      "exit_criteria": "src/warehouse/warehouse.py, tests/warehouse/test_schema.py, tests/warehouse/test_mood_correction.py exist with the required S01 behavior; python -m pytest tests/warehouse/test_schema.py tests/warehouse/test_mood_correction.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_003",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Warehouse write API",
+      "prerequisites": "02",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/warehouse/test_schema.py tests/warehouse/test_mood_correction.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "03",
+      "why_now": "Required for the S01 warehouse foundation acceptance contract."
+    },
+    {
+      "action": "Add validation-failure quarantine behavior with `0600` payload files and redacted general logs.",
+      "allowed_write_roots": [
+        "src/warehouse",
+        "tests/warehouse"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/warehouse/warehouse.py",
+        "tests/warehouse/test_quarantine.py"
+      ],
+      "exit_criteria": "src/warehouse/warehouse.py, tests/warehouse/test_quarantine.py exist with the required S01 behavior; python -m pytest tests/warehouse/test_quarantine.py -q, python scripts/check_no_tracked_data.py passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_004",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Quarantine handling",
+      "prerequisites": "03",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/warehouse/test_quarantine.py -q",
+        "python scripts/check_no_tracked_data.py"
+      ],
+      "requires_red_green": true,
+      "step_id": "04",
+      "why_now": "Required for the S01 warehouse foundation acceptance contract."
+    },
+    {
+      "action": "Add an idempotent permissions script for local data directories and sensitive local files.",
+      "allowed_write_roots": [
+        "scripts"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "scripts/setup_permissions.py"
+      ],
+      "exit_criteria": "scripts/setup_permissions.py exist with the required S01 behavior; python scripts/setup_permissions.py, python scripts/check_no_tracked_data.py passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_005",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Permissions and tracked-data safety",
+      "prerequisites": "04",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "scripts"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python scripts/setup_permissions.py",
+        "python scripts/check_no_tracked_data.py"
+      ],
+      "requires_red_green": true,
+      "step_id": "05",
+      "why_now": "Required for the S01 warehouse foundation acceptance contract."
+    },
+    {
+      "action": "Generate the S01 autonomous schema review artifact with table inventory, v1-scope checks, mood correction checks, quarantine checks, and deterministic-test references.",
+      "allowed_write_roots": [
+        "docs/reviews"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "docs/reviews/s01-autonomous-schema-review.md"
+      ],
+      "exit_criteria": "docs/reviews/s01-autonomous-schema-review.md exist with the required S01 behavior; python scripts/check_autonomous_review_exists.py S01 passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_006",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Autonomous schema review",
+      "prerequisites": "05",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s01-warehouse-autoplan.md",
+        "docs/briefs/s01-warehouse.autonomous-brief.md",
+        "docs/reviews"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python scripts/check_autonomous_review_exists.py S01"
+      ],
+      "requires_red_green": true,
+      "step_id": "06",
+      "why_now": "Required for the S01 warehouse foundation acceptance contract."
+    }
+  ],
+  "schema_version": "po_candidate_rows_v1",
+  "support_sections": {
+    "immediate_next_actions": "Run S01 acceptance commands only after all rows complete.",
+    "phase_details": [
+      {
+        "body": "Executes S01 task rows for Warehouse schema.",
+        "phase_slug": "warehouse-schema",
+        "title": "Warehouse schema"
+      },
+      {
+        "body": "Executes S01 task rows for Warehouse models.",
+        "phase_slug": "warehouse-models",
+        "title": "Warehouse models"
+      },
+      {
+        "body": "Executes S01 task rows for Warehouse write API.",
+        "phase_slug": "warehouse-write-api",
+        "title": "Warehouse write API"
+      },
+      {
+        "body": "Executes S01 task rows for Quarantine handling.",
+        "phase_slug": "quarantine-handling",
+        "title": "Quarantine handling"
+      },
+      {
+        "body": "Executes S01 task rows for Permissions and tracked-data safety.",
+        "phase_slug": "permissions-and-tracked-data-safety",
+        "title": "Permissions and tracked-data safety"
+      },
+      {
+        "body": "Executes S01 task rows for Autonomous schema review.",
+        "phase_slug": "autonomous-schema-review",
+        "title": "Autonomous schema review"
+      }
+    ],
+    "plan_context": "S01 builds the local-first warehouse foundation for Health Data Hub v1.",
+    "risks_and_contingencies": "If verification fails, stop and record an AutoKeel failure instead of fabricating evidence.",
+    "shared_guidance": [
+      {
+        "body": "Manual gates are forbidden; deterministic tests and autonomous review artifacts are required instead.",
+        "title": "Autonomous Gate Policy"
+      },
+      {
+        "body": "Do not commit raw health data, provider payloads, secrets, DuckDB files, snapshots, or quarantine payloads.",
+        "title": "Health Data Safety"
+      }
+    ]
+  }
+}

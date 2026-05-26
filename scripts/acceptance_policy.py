@@ -14,8 +14,14 @@ if __package__ in {None, ""}:
 
 DEFAULT_ALLOW_PREFIXES = (
     "python -m pytest",
-    "python scripts/",
-    "python -m scripts",
+)
+
+DEFAULT_ALLOW_COMMANDS = (
+    "python scripts/check_schema_contract.py",
+    "python scripts/check_no_tracked_data.py",
+    "python scripts/check_autonomous_review_exists.py",
+    "python scripts/setup_permissions.py",
+    "python scripts/evidence/oura_smoke.py",
 )
 
 
@@ -39,6 +45,14 @@ def acceptance_allow_prefixes(root: Path) -> list[str]:
     return [str(prefix) for prefix in prefixes if str(prefix).strip()]
 
 
+def acceptance_allow_commands(root: Path) -> list[str]:
+    policy = load_policy(root)
+    commands = policy.get("acceptance_commands", {}).get("allow_commands", [])
+    if not isinstance(commands, list) or not commands:
+        return list(DEFAULT_ALLOW_COMMANDS)
+    return [str(command) for command in commands if str(command).strip()]
+
+
 def _matches_part(value: str, expected: str, last: bool = False) -> bool:
     if expected.endswith("/"):
         return value.startswith(expected)
@@ -56,6 +70,16 @@ def command_allowed(command: str, root: Path) -> bool:
         return False
     if not argv:
         return False
+
+    for allowed in acceptance_allow_commands(root):
+        try:
+            allowed_argv = shlex.split(allowed)
+        except ValueError:
+            continue
+        if len(argv) < len(allowed_argv):
+            continue
+        if argv[: len(allowed_argv)] == allowed_argv:
+            return True
 
     for prefix in acceptance_allow_prefixes(root):
         try:

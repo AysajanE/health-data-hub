@@ -1,12 +1,22 @@
 {
-  "schema_version": 1,
+  "active_run": null,
+  "completed_slices": [
+    "S01"
+  ],
+  "current_slice": null,
+  "last_event_id": 121,
+  "last_heartbeat_at": "2026-05-24T15:31:53-04:00",
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
-  "current_slice": null,
-  "active_run": null,
-  "completed_slices": [],
-  "run_history": [],
-  "last_event_id": 0,
-  "last_heartbeat_at": null,
+  "run_history": [
+    {
+      "completed_at": "2026-05-24T17:10:28-04:00",
+      "run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
+      "ship_branch": "ship/s01",
+      "ship_commit": "50a58201058536b7518cd8fb4d5774a3c69df53d",
+      "slice": "S01"
+    }
+  ],
+  "schema_version": 1,
   "v1_complete": false
 }

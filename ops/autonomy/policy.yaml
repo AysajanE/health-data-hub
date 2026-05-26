@@ -1,11 +1,14 @@
 mode: autonomous_zero_human
 keel_root: /Users/aeziz-local/keel
+plan_orchestrator_root: /Users/aeziz-local/keel/tools/plan-orchestrator
 product_repo: /Users/aeziz-local/health-data-hub
 
 compile:
   design_doc: docs/gstack/health-data-hub-office-hours.md
   row_author: external-json
-  row_author_command: claude -p
+  row_author_command: python scripts/autokeel_row_author.py
+  row_author_allow_repo_cwd: true
+  allow_warnings_reason: AutoKeel autonomous profile forbids manual gates; S01 uses deterministic tests and autonomous review artifacts instead.
 
 autoplan:
   auto_generate_missing: true
@@ -118,8 +121,12 @@ playbook_validation:
 acceptance_commands:
   allow_prefixes:
     - python -m pytest
-    - python scripts/
-    - python -m scripts
+  allow_commands:
+    - python scripts/check_schema_contract.py
+    - python scripts/check_no_tracked_data.py
+    - python scripts/check_autonomous_review_exists.py
+    - python scripts/setup_permissions.py
+    - python scripts/evidence/oura_smoke.py
 
 evidence_collectors:
   s03_oura_smoke: scripts/evidence/oura_smoke.py
@@ -139,6 +146,8 @@ loop:
   stop_only_when: scripts/verify_v1.py
   max_retries_per_slice_before_replan: 3
   stale_run_minutes: 60
+  po_timeout_seconds: 7200
+  po_supervisor_wait_seconds: 5
   heartbeat_path: ops/autonomy/heartbeats/latest.json
 
 commands:

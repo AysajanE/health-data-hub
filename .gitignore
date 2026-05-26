@@ -17,10 +17,16 @@ private/
 *.sqlite3
 *.parquet
 
+# Project SQL schema files are source artifacts, even if a global ignore has *.sql.
+!src/db/*.sql
+
 # Local agent/tool runtime output.
 orchestrator/
+automation/plan_orchestrator
+automation/run_plan_orchestrator.py
 ops/autonomy/.autokeel.lock
 ops/autonomy/*.tmp
+ops/autonomy/heartbeats/*.json
 *.log
 
 # Local-only docs, scratch notes, and non-public review inputs.

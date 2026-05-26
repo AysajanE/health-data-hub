@@ -101,6 +101,8 @@ Exact commands run:
 - `<command>`
 - `<command>`
 
+Command evidence: <repo-relative path to saved command-output evidence>
+
 Blocking findings: none
 
 Non-blocking observations:

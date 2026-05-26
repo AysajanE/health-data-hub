@@ -97,6 +97,18 @@ def git_verify(root: Path, *argv: str) -> bool:
     return proc.returncode == 0
 
 
+def git_stdout(root: Path, *argv: str) -> tuple[bool, str, str]:
+    proc = subprocess.run(
+        ["git", *argv],
+        cwd=str(root),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    return proc.returncode == 0, proc.stdout.strip(), proc.stderr.strip()
+
+
 def run_acceptance(root: Path, command: str, timeout: int) -> dict[str, Any]:
     if "mark-manual-gate" in command:
         return {
@@ -172,6 +184,15 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
                 errors.append(f"{slice_id}: completed slice missing ship_commit")
             elif not git_verify(root, "cat-file", "-e", str(ship_commit)):
                 errors.append(f"{slice_id}: ship_commit is not reachable: {ship_commit}")
+            if ship_branch and ship_commit:
+                ok, branch_head, stderr = git_stdout(root, "rev-parse", "--verify", str(ship_branch))
+                if ok and branch_head != str(ship_commit):
+                    errors.append(
+                        f"{slice_id}: ship_branch {ship_branch} points to {branch_head} "
+                        f"but recorded ship_commit is {ship_commit}"
+                    )
+                elif not ok:
+                    errors.append(f"{slice_id}: could not resolve ship_branch {ship_branch}: {stderr}")
 
             playbook_rel = item.get("playbook")
             if playbook_rel:

@@ -1,3 +1,14 @@
 [tool.pytest.ini_options]
+addopts = [
+  "-p", "no:anyio",
+  "-p", "no:asyncio",
+  "-p", "no:benchmark",
+  "-p", "no:dash",
+  "-p", "no:faker",
+  "-p", "no:pytest_cov",
+  "-p", "no:pytest_ethereum",
+  "-p", "no:pytest_integration",
+  "-p", "no:pytest_mock",
+]
 testpaths = ["tests"]
 pythonpath = ["."]

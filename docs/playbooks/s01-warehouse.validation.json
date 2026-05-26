@@ -1,0 +1,130 @@
+{
+  "errors": [],
+  "repair_attempts": 0,
+  "row_summaries": [
+    {
+      "issues": 0,
+      "phase": "Warehouse schema",
+      "step_id": "01"
+    },
+    {
+      "issues": 0,
+      "phase": "Warehouse models",
+      "step_id": "02"
+    },
+    {
+      "issues": 0,
+      "phase": "Warehouse write API",
+      "step_id": "03"
+    },
+    {
+      "issues": 0,
+      "phase": "Quarantine handling",
+      "step_id": "04"
+    },
+    {
+      "issues": 0,
+      "phase": "Permissions and tracked-data safety",
+      "step_id": "05"
+    },
+    {
+      "issues": 0,
+      "phase": "Autonomous schema review",
+      "step_id": "06"
+    }
+  ],
+  "schema_version": "compiler_validation_report_v1",
+  "status": "pass",
+  "validated_at": "2026-05-24T19:31:53+00:00",
+  "warnings": [
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/check_schema_contract.py'",
+      "severity": "warning",
+      "step_id": "01"
+    },
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/check_no_tracked_data.py'",
+      "severity": "warning",
+      "step_id": "04"
+    },
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/setup_permissions.py'",
+      "severity": "warning",
+      "step_id": "05"
+    },
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/check_no_tracked_data.py'",
+      "severity": "warning",
+      "step_id": "05"
+    },
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/check_autonomous_review_exists.py S01'",
+      "severity": "warning",
+      "step_id": "06"
+    },
+    {
+      "code": "AUTHOR_DB_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "database deliverable should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "01"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "01"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "02"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "03"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "04"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "05"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "06"
+    },
+    {
+      "code": "AUTHOR_EXTERNAL_HINTS_WITHOUT_CHECK",
+      "message": "source artifacts mention external dependencies, but no row requires external evidence",
+      "severity": "warning"
+    }
+  ]
+}

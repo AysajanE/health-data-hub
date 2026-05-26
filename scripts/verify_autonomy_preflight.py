@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -164,6 +165,14 @@ def preflight(root: Path, keel_root: Path, strict_tools: bool = False, run_keel_
     for command in ("claude", "codex", "gh", "jq"):
         if not command_exists(command):
             (errors if strict_tools else warnings).append(f"optional tool missing: {command}")
+
+    required_modules = ("duckdb",)
+    checks["python_modules"] = {}
+    for module in required_modules:
+        available = importlib.util.find_spec(module) is not None
+        checks["python_modules"][module] = available
+        if not available:
+            errors.append(f"missing required Python module: {module}")
 
     for rel in ("ops/autonomy/policy.yaml", "ops/autonomy/slices.json", "ops/autonomy/autonomy_state.json", "ops/autonomy/events.jsonl", "ops/autonomy/failure_ledger.jsonl"):
         if not (root / rel).exists():
