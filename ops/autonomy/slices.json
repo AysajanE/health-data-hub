@@ -19,7 +19,6 @@
       "tests/warehouse/test_quarantine.py",
       "docs/reviews/s01-autonomous-schema-review.md"
     ],
-    "failure_path": "ops/autonomy/failures/S01-compile_failure-20260524T142000-0400-d8eace87.md",
     "hard_constraints": [
       "exactly five core tables",
       "no v2 feature columns in daily_features",
@@ -43,10 +42,10 @@
     "risk": "medium",
     "run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
     "ship_branch": "ship/s01",
-    "ship_commit": "48a9319acea51bf210b669d8dde65d4b80ad6ac9",
+    "ship_commit": "50a58201058536b7518cd8fb4d5774a3c69df53d",
     "slug": "s01-warehouse",
     "status": "complete",
-    "updated_at": "2026-05-24T17:10:28-04:00"
+    "updated_at": "2026-05-26T09:51:10-04:00"
   },
   {
     "acceptance": [

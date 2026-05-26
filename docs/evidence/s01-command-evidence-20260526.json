@@ -1,0 +1,33 @@
+{
+  "captured_at": "2026-05-26T09:51:10-04:00",
+  "slice": "S01",
+  "status": "ok",
+  "po_status_evidence": "docs/evidence/s01-po-status-20260524.json",
+  "commands": [
+    {
+      "command": "python scripts/check_schema_contract.py",
+      "exit_code": 0,
+      "stdout_tail": "ok",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python -m pytest tests/warehouse/test_schema.py tests/warehouse/test_mood_correction.py tests/warehouse/test_quarantine.py -q",
+      "exit_code": 0,
+      "stdout_tail": "12 passed in 1.43s",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "stdout_tail": "ok",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_autonomous_review_exists.py S01",
+      "exit_code": 0,
+      "stdout_tail": "ok",
+      "stderr_tail": ""
+    }
+  ],
+  "redaction": "Command tails are sanitized summaries; no raw health data, provider payloads, tokens, DuckDB files, private evidence, quarantine payloads, or secrets are included."
+}

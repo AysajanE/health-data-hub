@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import stat
 import shutil
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from ops.autonomy.autokeel import AutoKeel, CommandResult, CommandRunner, PolicyError, write_json_atomic
@@ -202,6 +204,47 @@ Manual gates are forbidden.
             self.assertEqual(seen["timeout"], 7200)
             self.assertEqual(op.load_state()["active_run"]["run_id"], "RUN_TEST")
 
+    def test_active_same_slice_run_invokes_supervise_resume(self) -> None:
+        seen: dict[str, object] = {}
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                seen["argv"] = list(argv)
+                seen["cwd"] = cwd
+                seen["env"] = dict(env or {})
+                seen["timeout"] = timeout
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_TEST"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(result.ok)
+            argv = seen["argv"]
+            self.assertEqual(argv[2:4], ["supervise", "resume"])
+            self.assertIn("--run-id", argv)
+            self.assertEqual(argv[argv.index("--run-id") + 1], "RUN_TEST")
+            self.assertIn("--max-wait-seconds", argv)
+            self.assertEqual(seen["env"], {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"})
+            self.assertEqual(seen["timeout"], 7200)
+            active = op.load_state()["active_run"]
+            self.assertEqual(active["run_id"], "RUN_TEST")
+            self.assertIn("last_seen_at", active)
+
     def test_pre_po_checkpoint_commits_only_autokeel_runtime_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -244,6 +287,40 @@ Manual gates are forbidden.
             self.assertFalse(result.ok)
             self.assertIn("non-AutoKeel dirty paths", result.stderr)
             self.assertIn("src/unexpected.py", result.stderr)
+
+    def test_ship_slice_rejects_dirty_product_changes_before_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            init_git_repo(root)
+            base_branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "checkout", "-b", "orchestrator/run/RUN_TEST"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "run.txt").write_text("run branch\n", encoding="utf-8")
+            subprocess.run(["git", "add", "run.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "run branch"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "src").mkdir()
+            (root / "src" / "unexpected.py").write_text("print('no')\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+
+            result = op.ship_slice("S01", "RUN_TEST")
+
+            self.assertFalse(result.ok)
+            self.assertIn("non-AutoKeel dirty paths", result.stderr)
+            branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(branch, base_branch)
 
     def test_row_author_keeps_verification_for_artifact_tasks(self) -> None:
         row = row_for_card(
@@ -411,7 +488,10 @@ Manual gates are forbidden.
             self.assertEqual(result, "blocked_external")
             evidence_roots = list((root / "private/evidence/S03").glob("*"))
             self.assertEqual(len(evidence_roots), 1)
-            self.assertTrue((evidence_roots[0] / "README.md").exists())
+            readme = evidence_roots[0] / "README.md"
+            self.assertTrue(readme.exists())
+            self.assertEqual(stat.S_IMODE(evidence_roots[0].stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(readme.stat().st_mode), 0o600)
 
     def test_verify_v1_does_not_pass_without_real_deliverables(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

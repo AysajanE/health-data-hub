@@ -434,6 +434,8 @@ class AutoKeel:
 
             if status == "complete":
                 slice_["retry_count"] = 0
+                for stale_key in ("failure_path", "reason"):
+                    slice_.pop(stale_key, None)
 
             slice_["status"] = status
             slice_["updated_at"] = now_iso()
@@ -453,6 +455,19 @@ class AutoKeel:
         if status == "complete":
             completed = list(dict.fromkeys([*state.get("completed_slices", []), slice_id]))
             state["completed_slices"] = completed
+            run_id = extra.get("run_id")
+            if run_id:
+                history = state.setdefault("run_history", [])
+                if not any(item.get("slice") == slice_id and item.get("run_id") == run_id for item in history if isinstance(item, dict)):
+                    history.append(
+                        {
+                            "slice": slice_id,
+                            "run_id": run_id,
+                            "completed_at": extra.get("completed_at") or now_iso(),
+                            "ship_branch": extra.get("ship_branch"),
+                            "ship_commit": extra.get("ship_commit"),
+                        }
+                    )
             if state.get("current_slice") == slice_id:
                 state["current_slice"] = None
             if active_belongs_to_slice:
@@ -1157,11 +1172,11 @@ Use local files and commands only. If evidence is missing, write a failing revie
         return check
 
     def active_run_is_stale(self, active: dict[str, Any]) -> bool:
-        started_at = active.get("started_at")
-        if not started_at:
+        observed_at = active.get("last_seen_at") or active.get("started_at")
+        if not observed_at:
             return False
         try:
-            started = datetime.fromisoformat(str(started_at))
+            started = datetime.fromisoformat(str(observed_at))
         except ValueError:
             return False
         stale_minutes = int(self.policy.get("loop", {}).get("stale_run_minutes", 60))
@@ -1215,6 +1230,49 @@ Use local files and commands only. If evidence is missing, write a failing revie
             },
             slice_id=slice_["id"],
         )
+        self.update_active_run_seen(slice_["id"], str(run_id), result.ok)
+        return result
+
+    def update_active_run_seen(self, slice_id: str, run_id: str, resumed: bool) -> None:
+        state = self.load_state()
+        active = state.get("active_run") or {}
+        if active.get("slice") != slice_id or active.get("run_id") != run_id:
+            return
+        active["last_seen_at"] = now_iso()
+        if resumed:
+            state["current_slice"] = slice_id
+        state["active_run"] = active
+        self.save_state(state)
+
+    def resume_active_po(self, slice_: dict[str, Any], active: dict[str, Any]) -> CommandResult:
+        run_id = active.get("run_id")
+        if not run_id:
+            return CommandResult([], 50, "", "cannot resume active PO: missing run_id")
+
+        result = self.runner.run(
+            self.plan_orchestrator_command(
+                "supervise",
+                "resume",
+                "--run-id",
+                str(run_id),
+                "--max-wait-seconds",
+                str(self.po_supervisor_wait_seconds()),
+            ),
+            cwd=self.root,
+            env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
+            timeout=self.po_timeout_seconds(),
+        )
+        self.update_active_run_seen(slice_["id"], str(run_id), result.ok)
+        self.log_event(
+            "po_resumed" if result.ok else "po_resume_failed",
+            {
+                "run_id": run_id,
+                "exit_code": result.exit_code,
+                "stdout": result.stdout[-2000:],
+                "stderr": result.stderr[-2000:],
+            },
+            slice_id=slice_["id"],
+        )
         return result
 
     def start_or_resume_po(self, slice_: dict[str, Any]) -> CommandResult:
@@ -1236,8 +1294,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 self.clear_active_run()
                 self.mark_slice_status(slice_["id"], "replan_required", run_id=active.get("run_id"), reason="stale run")
                 return CommandResult([], 40, "", "active PO run is stale")
-            self.log_event("po_resume_existing", active, slice_id=slice_["id"])
-            return CommandResult([], 0, json.dumps(active), "")
+            return self.resume_active_po(slice_, active)
 
         playbook = self.root / slice_["playbook"]
         if not playbook.exists():
@@ -1272,17 +1329,33 @@ Use local files and commands only. If evidence is missing, write a failing revie
         self.log_event("po_started" if result.ok else "po_start_failed", {"exit_code": result.exit_code, "run_id": run_id, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}, slice_id=slice_["id"])
         return result
 
-    def ensure_lane_decision(self, slice_: dict[str, Any]) -> None:
+    def ensure_lane_decision(self, slice_: dict[str, Any]) -> CommandResult:
         lane = slice_.get("lane")
         if lane != "swr_preferred":
-            return
+            return CommandResult([], 0, "lane decision not required", "")
         policy = self.policy.get("lanes", {})
         mode = policy.get("swr_preferred", "compile_with_decision")
         if mode != "compile_with_decision":
-            return
+            return CommandResult([], 0, "lane decision mode not required", "")
         existing = slice_.get("lane_decision")
         if existing and (self.root / str(existing)).exists():
-            return
+            return CommandResult(["test", "-f", str(existing)], 0, "lane decision exists", "")
+        if slice_.get("risk") == "high":
+            failure = self.record_failure(
+                slice_["id"],
+                "compile_failure",
+                "high",
+                "High-risk swr_preferred slice is missing reviewed lane_decision evidence.",
+                "Blocked compilation instead of auto-downgrading the SWR-preferred lane.",
+                None,
+            )
+            self.mark_slice_status(
+                slice_["id"],
+                "blocked_compile_inputs",
+                failure_path=str(failure.relative_to(self.root)),
+                reason="missing reviewed lane_decision",
+            )
+            return CommandResult([], 25, "", "missing reviewed lane_decision for high-risk swr_preferred slice")
         decision = self.write_decision(
             f"{slice_['id']}-swr-downgrade",
             {
@@ -1294,6 +1367,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             },
         )
         self.mark_slice_status(slice_["id"], slice_.get("status", "pending"), lane_decision=str(decision.relative_to(self.root)))
+        return CommandResult(["test", "-f", str(decision.relative_to(self.root))], 0, "lane decision created", "")
 
     def optional_evidence_fallback(self, slice_: dict[str, Any], command: str) -> str | None:
         try:
@@ -1330,6 +1404,43 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 details,
                 slice_id=slice_["id"],
             )
+
+    def required_external_evidence_ready(self, slice_: dict[str, Any]) -> CommandResult:
+        if slice_.get("id") != "S03":
+            return CommandResult([], 0, "no required external evidence preflight", "")
+
+        result = self.runner.run(
+            ["python", "scripts/evidence/oura_smoke.py", "--json"],
+            cwd=self.root,
+            execute_in_dry_run=True,
+        )
+        self.log_event(
+            "required_external_evidence_ready" if result.ok else "required_external_evidence_blocked",
+            {
+                "exit_code": result.exit_code,
+                "stdout": result.stdout[-2000:],
+                "stderr": result.stderr[-2000:],
+            },
+            slice_id="S03",
+        )
+        if result.ok:
+            return result
+
+        failure = self.record_failure(
+            "S03",
+            "blocked_external_missing_evidence",
+            "high",
+            "Required Oura smoke evidence is missing or blocked.",
+            "Blocked S03 before PO execution; did not fabricate provider evidence.",
+            None,
+        )
+        self.mark_slice_status(
+            "S03",
+            "blocked_external",
+            failure_path=str(failure.relative_to(self.root)),
+            reason="required Oura evidence unavailable",
+        )
+        return result
 
     def inspect_po_status(self, run_id: str) -> dict[str, Any]:
         self.ensure_plan_orchestrator_product_shim()
@@ -1456,7 +1567,16 @@ Use local files and commands only. If evidence is missing, write a failing revie
     def create_external_evidence_request(self, slice_id: str, run_id: str, status: dict[str, Any]) -> Path:
         evidence_dir = self.root / "private" / "evidence" / slice_id / f"{slug_ts()}-{run_id}"
         evidence_dir.mkdir(parents=True, exist_ok=True)
-        (evidence_dir / "README.md").write_text(
+        for path in (
+            self.root / "private",
+            self.root / "private" / "evidence",
+            self.root / "private" / "evidence" / slice_id,
+            evidence_dir,
+        ):
+            if path.exists():
+                os.chmod(path, 0o700)
+        readme = evidence_dir / "README.md"
+        readme.write_text(
             "# External Evidence Request\n\n"
             f"Slice: {slice_id}\n\n"
             f"Run ID: {run_id}\n\n"
@@ -1467,6 +1587,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             f"```json\n{json.dumps(redact(status), indent=2, sort_keys=True)}\n```\n",
             encoding="utf-8",
         )
+        os.chmod(readme, 0o600)
         self.log_event("evidence_request_created", {"path": str(evidence_dir.relative_to(self.root))}, slice_id=slice_id)
         return evidence_dir
 
@@ -1502,6 +1623,23 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 slice_id=slice_id,
             )
             return CommandResult(["git", "rev-parse", "--verify", run_branch], 30, verify.stdout, verify.stderr)
+
+        checkpoint = self.checkpoint_allowed_pre_po_changes(slice_id)
+        if not checkpoint.ok:
+            self.log_event(
+                "slice_ship_failed",
+                {
+                    "run_id": run_id,
+                    "run_branch": run_branch,
+                    "ship_branch": branch,
+                    "reason": "pre_ship_checkpoint_failed",
+                    "exit_code": checkpoint.exit_code,
+                    "stdout": checkpoint.stdout[-2000:],
+                    "stderr": checkpoint.stderr[-2000:],
+                },
+                slice_id=slice_id,
+            )
+            return checkpoint
 
         checkout = self.runner.run(["git", "checkout", "-B", branch, run_branch], cwd=self.root)
         ship_commit = ""
@@ -1564,7 +1702,17 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return 1
 
         self.ensure_slice_brief(slice_)
-        self.ensure_lane_decision(slice_)
+        lane_decision = self.ensure_lane_decision(slice_)
+        if not lane_decision.ok:
+            self.log_event(
+                "waiting_for_lane_decision",
+                {"exit_code": lane_decision.exit_code, "stderr": lane_decision.stderr[-2000:]},
+                slice_id=slice_["id"],
+            )
+            return lane_decision.exit_code or 2
+        required_evidence = self.required_external_evidence_ready(slice_)
+        if not required_evidence.ok:
+            return required_evidence.exit_code or 4
         if slice_.get("lane") == "compiler_external_evidence":
             self.run_optional_evidence(slice_)
 

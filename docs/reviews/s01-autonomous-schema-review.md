@@ -23,12 +23,17 @@ This autonomous review covers the S01 warehouse foundation artifacts for the loc
 - `tests/warehouse/test_schema.py`
 - `tests/warehouse/test_mood_correction.py`
 - `tests/warehouse/test_quarantine.py`
+- `docs/evidence/s01-po-status-20260524.json`
+- `docs/evidence/s01-command-evidence-20260526.json`
 
 ## Exact commands run
 
 - `python scripts/check_schema_contract.py`
 - `python -m pytest tests/warehouse/test_schema.py tests/warehouse/test_mood_correction.py tests/warehouse/test_quarantine.py -q`
+- `python scripts/check_no_tracked_data.py`
 - `python scripts/check_autonomous_review_exists.py S01`
+
+Command evidence: docs/evidence/s01-command-evidence-20260526.json
 
 ## Table inventory
 

@@ -40,6 +40,18 @@ def load_slices(root: Path) -> list[dict[str, Any]]:
     return json.loads((root / "ops" / "autonomy" / "slices.json").read_text(encoding="utf-8"))
 
 
+def git_stdout(root: Path, *argv: str) -> tuple[bool, str, str]:
+    proc = subprocess.run(
+        ["git", *argv],
+        cwd=str(root),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    return proc.returncode == 0, proc.stdout.strip(), proc.stderr.strip()
+
+
 def run_command(root: Path, command: str, timeout: int) -> dict[str, Any]:
     if "mark-manual-gate" in command:
         return {
@@ -98,6 +110,22 @@ def verify_slice(
 
     if require_complete and target.get("status") != "complete":
         errors.append(f"slice {slice_id} is not marked complete")
+    if require_complete and target.get("status") == "complete":
+        ship_branch = target.get("ship_branch")
+        ship_commit = target.get("ship_commit")
+        if not ship_branch:
+            errors.append(f"completed slice missing ship_branch")
+        if not ship_commit:
+            errors.append(f"completed slice missing ship_commit")
+        if ship_branch and ship_commit:
+            ok, branch_head, stderr = git_stdout(root, "rev-parse", "--verify", str(ship_branch))
+            if not ok:
+                errors.append(f"could not resolve ship_branch {ship_branch}: {stderr}")
+            elif branch_head != str(ship_commit):
+                errors.append(
+                    f"ship_branch {ship_branch} points to {branch_head} "
+                    f"but recorded ship_commit is {ship_commit}"
+                )
 
     errors.extend(validate_swr_lane_requirements(root, target))
 

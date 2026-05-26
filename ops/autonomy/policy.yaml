@@ -121,8 +121,12 @@ playbook_validation:
 acceptance_commands:
   allow_prefixes:
     - python -m pytest
-    - python scripts/
-    - python -m scripts
+  allow_commands:
+    - python scripts/check_schema_contract.py
+    - python scripts/check_no_tracked_data.py
+    - python scripts/check_autonomous_review_exists.py
+    - python scripts/setup_permissions.py
+    - python scripts/evidence/oura_smoke.py
 
 evidence_collectors:
   s03_oura_smoke: scripts/evidence/oura_smoke.py

@@ -152,6 +152,14 @@ CREATE TABLE IF NOT EXISTS sleep_merge_diagnostics (
             self.assertTrue(command_allowed("git status --short", root))
             self.assertFalse(command_allowed("python scripts/check.py", root))
 
+    def test_acceptance_default_rejects_arbitrary_python_scripts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.assertTrue(command_allowed("python scripts/check_no_tracked_data.py", root))
+            self.assertTrue(command_allowed("python scripts/check_autonomous_review_exists.py S01", root))
+            self.assertTrue(command_allowed("python scripts/evidence/oura_smoke.py --json", root))
+            self.assertFalse(command_allowed("python scripts/arbitrary.py", root))
+
     def test_oura_tripwire_is_not_auto_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
