@@ -61,13 +61,15 @@
     "name": "Mood API loop",
     "playbook": "docs/playbooks/s02-mood-api.playbook.md",
     "required": true,
+    "retry_count": 1,
     "review_artifacts": [
       "docs/reviews/s02-autonomous-security-review.md",
       "docs/reviews/s02-autonomous-privacy-review.md"
     ],
     "risk": "high",
     "slug": "s02-mood-api",
-    "status": "pending"
+    "status": "replan_required",
+    "updated_at": "2026-05-26T13:23:34-04:00"
   },
   {
     "acceptance": [

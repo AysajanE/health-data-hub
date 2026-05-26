@@ -3,8 +3,8 @@
   "completed_slices": [
     "S01"
   ],
-  "current_slice": null,
-  "last_event_id": 121,
+  "current_slice": "S02",
+  "last_event_id": 130,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [

@@ -1,0 +1,776 @@
+{
+  "context_findings": [],
+  "external_dependency_hints": [
+    "open wearables",
+    "oura",
+    "8 sleep",
+    "icloud",
+    "tailscale"
+  ],
+  "global_rules": {
+    "constrained_allowed_write_roots": [],
+    "forbidden_write_roots": [
+      ".",
+      "src",
+      "tests",
+      ".local",
+      ".git",
+      ".codex",
+      ".claude",
+      ".mcp.json",
+      "ops/config",
+      "secrets",
+      ".env",
+      ".env.*"
+    ],
+    "markdown_is_python_emitted": true,
+    "max_repo_files": 5000,
+    "max_rows": 25,
+    "max_write_roots_per_row": 3,
+    "pipe_characters_forbidden": true
+  },
+  "known_paths": [
+    "Library/Logs/healthhub.log",
+    "data/.healthhub.lock",
+    "data/warehouse.duckdb",
+    "docs/briefs/s02-mood-api.autonomous-brief.md",
+    "docs/gstack/health-data-hub-office-hours.md",
+    "docs/gstack/s02-mood-api-autoplan.md",
+    "docs/reviews",
+    "docs/reviews/s02-autonomous-privacy-review.md",
+    "docs/reviews/s02-autonomous-security-review.md",
+    "models/eval.jsonl",
+    "scripts/check_autonomous_review_exists.py",
+    "scripts/check_no_tracked_data.py",
+    "scripts/oura_auth.py",
+    "scripts/setup_permissions.py",
+    "scripts/verify_slice.py",
+    "src",
+    "src/api/__init__.py",
+    "src/api/app.py",
+    "src/api/dependencies.py",
+    "src/api/mood_date.py",
+    "src/api/schemas.py",
+    "src/api/security.py",
+    "src/warehouse/warehouse.py",
+    "tests",
+    "tests/test_api_security.py",
+    "tests/test_mood_correction.py",
+    "tests/test_mood_date.py"
+  ],
+  "known_write_roots": [
+    "src/api",
+    "tests/test_api_security.py",
+    "tests/test_mood_date.py",
+    "tests/test_mood_correction.py",
+    "docs/reviews"
+  ],
+  "manual_gate_hints": [
+    "approval",
+    "signoff",
+    "manual gate",
+    "reviewer",
+    "security review"
+  ],
+  "path_ledger": [
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "Library/Logs/healthhub.log",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "data/.healthhub.lock",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "data/warehouse.duckdb",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "source_doc",
+      "mentioned_by": [
+        "source_artifact"
+      ],
+      "path": "docs/briefs/s02-mood-api.autonomous-brief.md",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "source_doc",
+      "mentioned_by": [
+        "source_artifact"
+      ],
+      "path": "docs/gstack/health-data-hub-office-hours.md",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "source_doc",
+      "mentioned_by": [
+        "source_artifact",
+        "candidate_repo_paths"
+      ],
+      "path": "docs/gstack/s02-mood-api-autoplan.md",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "doc",
+      "mentioned_by": [
+        "task_009",
+        "task_010"
+      ],
+      "path": "docs/reviews",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "doc",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_010"
+      ],
+      "path": "docs/reviews/s02-autonomous-privacy-review.md",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "doc",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_009"
+      ],
+      "path": "docs/reviews/s02-autonomous-security-review.md",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "models/eval.jsonl",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/check_autonomous_review_exists.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/check_no_tracked_data.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/oura_auth.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/setup_permissions.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/verify_slice.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "task_001",
+        "task_002",
+        "task_003",
+        "task_004",
+        "task_005"
+      ],
+      "path": "src",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_001"
+      ],
+      "path": "src/api/__init__.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_001",
+        "task_002",
+        "task_005"
+      ],
+      "path": "src/api/app.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_002"
+      ],
+      "path": "src/api/dependencies.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_003"
+      ],
+      "path": "src/api/mood_date.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_004"
+      ],
+      "path": "src/api/schemas.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_002"
+      ],
+      "path": "src/api/security.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "src/warehouse/warehouse.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "task_002",
+        "task_003",
+        "task_004",
+        "task_005",
+        "task_006",
+        "task_007",
+        "task_008"
+      ],
+      "path": "tests",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "test",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_002",
+        "task_004",
+        "task_006"
+      ],
+      "path": "tests/test_api_security.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "test",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_005",
+        "task_008"
+      ],
+      "path": "tests/test_mood_correction.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "test",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_003",
+        "task_007"
+      ],
+      "path": "tests/test_mood_date.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    }
+  ],
+  "repo_root": ".",
+  "risk_hints": [],
+  "schema_version": "row_author_context_v1",
+  "source_artifact_paths": [
+    "docs/gstack/health-data-hub-office-hours.md",
+    "docs/gstack/s02-mood-api-autoplan.md",
+    "docs/briefs/s02-mood-api.autonomous-brief.md"
+  ],
+  "stack_profile": {
+    "build_tools": [],
+    "languages": [
+      "python"
+    ],
+    "package_managers": [
+      "pip"
+    ],
+    "test_runners": [
+      "pytest"
+    ]
+  },
+  "task_cards": [
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/api"
+      ],
+      "declared_deliverables": [
+        "src/api/__init__.py",
+        "src/api/app.py"
+      ],
+      "declared_files": [
+        "src/api/__init__.py",
+        "src/api/app.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "FastAPI application skeleton",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 1,
+      "suggested_allowed_write_roots": [
+        "src/api"
+      ],
+      "task": "Author the FastAPI app, expose the v1 endpoint set (`POST /api/mood`, `GET /api/health`, `GET /api/insights/{date}`, `GET /api/insights/latest_logged_day`, `GET /api/counterfactuals/{date}`, `GET /api/counterfactuals/latest_logged_day`), and wire the same-host read middleware so non-allowed client hosts receive HTTP 403 before any handler runs.",
+      "task_id": "task_001",
+      "verification_candidates": [
+        "python -m pytest tests/test_api_security.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/api",
+        "tests/test_api_security.py"
+      ],
+      "declared_deliverables": [
+        "src/api/security.py",
+        "src/api/dependencies.py",
+        "src/api/app.py",
+        "tests/test_api_security.py"
+      ],
+      "declared_files": [
+        "src/api/security.py",
+        "src/api/dependencies.py",
+        "src/api/app.py",
+        "tests/test_api_security.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Token authentication and request gating",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 2,
+      "suggested_allowed_write_roots": [
+        "src/api",
+        "tests"
+      ],
+      "task": "Implement `require_token` as a FastAPI dependency that validates `X-Mood-Token` against `MOOD_TOKEN` using `secrets.compare_digest`. Attach it to every `/api/*` route (POST and GET). Add the `slowapi` 10 req/min limiter on `POST /api/mood`. Never log the header value, the body, or the comparison result.",
+      "task_id": "task_002",
+      "verification_candidates": [
+        "python -m pytest tests/test_api_security.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/api",
+        "tests/test_mood_date.py"
+      ],
+      "declared_deliverables": [
+        "src/api/mood_date.py",
+        "tests/test_mood_date.py"
+      ],
+      "declared_files": [
+        "src/api/mood_date.py",
+        "tests/test_mood_date.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Mood-date attribution",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 3,
+      "suggested_allowed_write_roots": [
+        "src/api",
+        "tests"
+      ],
+      "task": "Implement `resolve_mood_date(logged_at_utc, home_tz)` enforcing the 04:00-local cutoff rule and DST safety via `zoneinfo`. The function returns the `mood_date` that the API persists.",
+      "task_id": "task_003",
+      "verification_candidates": [
+        "python -m pytest tests/test_mood_date.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/api",
+        "tests/test_api_security.py"
+      ],
+      "declared_deliverables": [
+        "src/api/schemas.py",
+        "tests/test_api_security.py"
+      ],
+      "declared_files": [
+        "src/api/schemas.py",
+        "tests/test_api_security.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Mood ingest schemas",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 4,
+      "suggested_allowed_write_roots": [
+        "src/api",
+        "tests"
+      ],
+      "task": "Add Pydantic request/response models for `POST /api/mood` matching the design contract: `feeling` (int 1-10, required), `energy` (int 1-10, optional), `notes` (optional str), `context_chips` (Literal set, optional, defaults empty), and optional `logged_at_utc` (server now if absent). Response returns `log_id`, server-resolved `mood_date`, and `status=\"ok\"`.",
+      "task_id": "task_004",
+      "verification_candidates": [
+        "python -m pytest tests/test_api_security.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/api",
+        "tests/test_mood_correction.py"
+      ],
+      "declared_deliverables": [
+        "src/api/app.py",
+        "tests/test_mood_correction.py"
+      ],
+      "declared_files": [
+        "src/api/app.py",
+        "tests/test_mood_correction.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Mood write path and correction flow",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 5,
+      "suggested_allowed_write_roots": [
+        "src/api",
+        "tests"
+      ],
+      "task": "Implement the `POST /api/mood` handler so it (a) validates the body against the Pydantic schema, (b) resolves `mood_date`, (c) calls the S01 warehouse helpers to append a new `mood_entries` row, (d) updates `mood_current` to point at the new `log_id`, and (e) returns the response model. Corrections are detected by checking `mood_current` for an existing row on the same `mood_date` and setting `supersedes_log_id` on the new entry. Quarantine validation failures via the existing S01 quarantine pathway; do not introduce a second quarantine writer.",
+      "task_id": "task_005",
+      "verification_candidates": [
+        "python -m pytest tests/test_mood_correction.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "tests/test_api_security.py"
+      ],
+      "declared_deliverables": [
+        "tests/test_api_security.py"
+      ],
+      "declared_files": [
+        "tests/test_api_security.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Same-host read security tests",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 6,
+      "suggested_allowed_write_roots": [
+        "tests"
+      ],
+      "task": "Cover the security contract end-to-end: missing token \u2192 401; bad token \u2192 401 (constant-time); GET from a simulated remote IP \u2192 403; POST from a LAN IP with valid token \u2192 200; GET from `127.0.0.1` with valid token \u2192 200; GET from `LAN_BIND_IP` (same host) with valid token \u2192 200. Tests must not write tokens or payloads to logs.",
+      "task_id": "task_006",
+      "verification_candidates": [
+        "python -m pytest tests/test_api_security.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "tests/test_mood_date.py"
+      ],
+      "declared_deliverables": [
+        "tests/test_mood_date.py"
+      ],
+      "declared_files": [
+        "tests/test_mood_date.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Mood-date attribution tests",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 7,
+      "suggested_allowed_write_roots": [
+        "tests"
+      ],
+      "task": "Cover the date-attribution rule: 23:30 local \u2192 same date; 00:30 local \u2192 previous date; 03:59 local \u2192 previous date; 04:01 local \u2192 current date; DST transition night resolves through `zoneinfo` without crashing or off-by-one.",
+      "task_id": "task_007",
+      "verification_candidates": [
+        "python -m pytest tests/test_mood_date.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "tests/test_mood_correction.py"
+      ],
+      "declared_deliverables": [
+        "tests/test_mood_correction.py"
+      ],
+      "declared_files": [
+        "tests/test_mood_correction.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Mood correction tests",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 8,
+      "suggested_allowed_write_roots": [
+        "tests"
+      ],
+      "task": "Cover the correction flow: a second POST on the same `mood_date` appends to `mood_entries` with `supersedes_log_id` set to the prior row's `log_id`; `mood_current` updates to the new `log_id`; the training join (`mood_current` \u22c8 `mood_entries`) returns only the current primary row. Older superseded rows remain in `mood_entries` for audit.",
+      "task_id": "task_008",
+      "verification_candidates": [
+        "python -m pytest tests/test_mood_correction.py -q"
+      ]
+    },
+    {
+      "behavioral": false,
+      "clamped_allowed_write_roots": [
+        "docs/reviews"
+      ],
+      "declared_deliverables": [
+        "docs/reviews/s02-autonomous-security-review.md"
+      ],
+      "declared_files": [
+        "docs/reviews/s02-autonomous-security-review.md"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "docs/reviews",
+        "docs/reviews/s02-autonomous-security-review.md"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Autonomous security review",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 9,
+      "suggested_allowed_write_roots": [
+        "docs/reviews"
+      ],
+      "task": "Generate the S02 autonomous security review artifact covering the same-host read middleware, constant-time token comparison, `X-Mood-Token` defense-in-depth, rate limit on `POST /api/mood`, CORS-disabled posture, token storage policy, and the deterministic-test references that substitute for human security signoff.",
+      "task_id": "task_009",
+      "verification_candidates": [
+        "python scripts/check_autonomous_review_exists.py S02"
+      ]
+    },
+    {
+      "behavioral": false,
+      "clamped_allowed_write_roots": [
+        "docs/reviews"
+      ],
+      "declared_deliverables": [
+        "docs/reviews/s02-autonomous-privacy-review.md"
+      ],
+      "declared_files": [
+        "docs/reviews/s02-autonomous-privacy-review.md"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "docs/reviews",
+        "docs/reviews/s02-autonomous-privacy-review.md"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Autonomous privacy review",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 10,
+      "suggested_allowed_write_roots": [
+        "docs/reviews"
+      ],
+      "task": "Generate the S02 autonomous privacy review artifact covering: mood data stays in the local DuckDB warehouse, no third-party transmission, no tokens or bodies in logs, raw mood payload quarantine reuses the S01 `0600` pathway, `.env` and `data/` exclusion from git, and the mood-date local-time rule that prevents leaking timezone-derived behavioral inference into shared logs.",
+      "task_id": "task_010",
+      "verification_candidates": [
+        "python scripts/check_autonomous_review_exists.py S02"
+      ]
+    }
+  ]
+}

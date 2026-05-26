@@ -129,6 +129,39 @@ class AutoKeelOpsToolTests(unittest.TestCase):
             self.assertTrue(report["checks"]["git_repo"])
             self.assertFalse(any("policy.yaml missing required key" in error for error in report["errors"]))
 
+    def test_row_author_preserves_high_risk_gate_term_and_slice_label(self) -> None:
+        context = {
+            "schema_version": "row_author_context_v1",
+            "source_artifact_paths": ["docs/gstack/s02-mood-api-autoplan.md"],
+            "task_cards": [
+                {
+                    "task_id": "task_001",
+                    "phase": "Autonomous security review",
+                    "task": "Generate the S02 autonomous security review artifact.",
+                    "declared_deliverables": ["docs/reviews/s02-autonomous-security-review.md"],
+                    "existing_repo_surfaces": ["docs/gstack/s02-mood-api-autoplan.md"],
+                    "clamped_allowed_write_roots": ["docs/reviews"],
+                    "verification_candidates": ["python scripts/check_autonomous_review_exists.py S02"],
+                    "behavioral": True,
+                }
+            ],
+        }
+        prompt = "# Input: row_author_context_v1\n" + json.dumps(context)
+        proc = subprocess.run(
+            ["python", str(ROOT / "scripts/autokeel_row_author.py")],
+            input=prompt,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        rendered = json.dumps(payload)
+        self.assertIn("autonomous_gate_review", rendered)
+        self.assertIn("Required for the S02 acceptance contract.", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,235 @@
+{
+  "candidate_repo_paths": [
+    "/",
+    "data/warehouse.duckdb",
+    "models/eval.jsonl",
+    "Library/Logs/healthhub.log",
+    "data/secrets/oura_tokens.json",
+    "scripts/oura_auth.py",
+    "data/secrets/eight_session.json",
+    "data/.healthhub.lock",
+    "scripts/setup_permissions.py",
+    "src/api/__init__.py",
+    "src/api/app.py",
+    "src/api/security.py",
+    "src/api/mood_date.py",
+    "src/api/schemas.py",
+    "src/api/dependencies.py",
+    "tests/test_api_security.py",
+    "tests/test_mood_date.py",
+    "tests/test_mood_correction.py",
+    "docs/reviews/s02-autonomous-security-review.md",
+    "docs/reviews/s02-autonomous-privacy-review.md",
+    "src/warehouse/warehouse.py",
+    "scripts/check_autonomous_review_exists.py",
+    "scripts/check_no_tracked_data.py",
+    "docs/gstack/s02-mood-api-autoplan.md",
+    "scripts/verify_slice.py"
+  ],
+  "compiled_at": "2026-05-26T17:23:34+00:00",
+  "constraints": [
+    "**Personal use first.** No multi-tenant infra, no compliance gates, no scale concerns.",
+    "**Local-first / user-owned data.** No cloud lock-in, no third-party data brokers. DuckDB on the user's Mac. Backups to iCloud Drive (encrypted with `age`, or via Advanced Data Protection).",
+    "**Reuse plumbing.** Use Open Wearables (`github.com/the-momentum/open-wearables`) for device ingestion where supported; use community-built `pyEight` for 8 Sleep. Don't reinvent OAuth and provider adapters.",
+    "**Sleep stack MVP first.** **Oura + mood log are required for v1.** 8 Sleep is included if `pyEight` ingestion is stable by end of week 2 (per Tripwires); if not, ship Oura-only as a first-class path, not a disappointing exception. Garmin / Withings / chest HRM deferred to v2.",
+    "**Mood-log UX must be sustainable.** A daily mood log that takes >30 seconds will not survive. Target: one tap on phone home screen via iOS Shortcut. **MVP frequency: 1x/day (evening reflection).** Multi-daily logging deferred to v2 once the once-a-day discipline is proven sustainable for 30 consecutive days.",
+    "**Network access:** v1 default is **home Wi-Fi only** for the mood-log iOS Shortcut. Simplest possible path; eliminates Tailscale + Shortcut + iOS-sleep fragility from the critical path. If 30-day usage proves it's too constraining (mood-logging missed because you weren't home in the evening), upgrade to Tailscale post-v1. Single decision saves an entire category of debugging.",
+    "**Statistical floor:** with `N_model` < 30 model-ready days (see \"N_model definition\" below), ridge will overfit. v1 model uses exactly **4 features**: `total_sleep_min`, `hrv_z` (z-score against prior-only baseline; `hrv_avg_ms` is display metadata only), `deep_sleep_pct`, `prior_day_feeling`. Workout zone time / training load deferred to v2 (requires Garmin). Feature expansion deferred until `N_model` \u226560.",
+    "**`N_model` definition (CRITICAL \u2014 used by all gates):**",
+    "**Honest uncertainty.** Counterfactuals must surface confidence intervals; predictions must avoid false precision. A \"your sleep score will be 73 tomorrow\" claim with no uncertainty erodes trust the first time it's wrong.",
+    "**Solo build, weekends + evenings.** No team, no full-time hours. **~6-10 hours per week realistically available, ~96-160 hours total over the 16-week plan** (low end = 6\u00d716, high end = 10\u00d716). All \"X weeks\" references in this doc are calendar weeks on that solo schedule, not full-time equivalents. **Honest acknowledgment:** the external expert review estimated 140-210 hours for this scope. The doc's 96-160 range is at the optimistic end of that. The mitigation isn't \"less work\" \u2014 it's \"if week 9 baseline gate fails, halt feature work and let data accumulate,\" which defers ~30 hours of UI polish work into the contingency window.",
+    "Manual gates are forbidden; no `manual_gate` rows and no `keel-run mark-manual-gate`.",
+    "Use `docs/reviews/s02-autonomous-security-review.md` and `docs/reviews/s02-autonomous-privacy-review.md` as autonomous_gate_review artifacts in lieu of human approval.",
+    "Write only under repo-relative roots: `src/api/`, `tests/`, `docs/reviews/`. Do not touch `src/warehouse/` schema, `src/db/`, ingestion code, model code, UI code, `data/`, `private/`, or `.env`.",
+    "Preserve Health Data Hub v1 scope: this slice exposes only `POST /api/mood`, `GET /api/health`, and the retrospective read placeholders. No prospective predictions, no recommendations, no Autopilot, no Coach.",
+    "Reuse the S01 warehouse write API (`src/warehouse/warehouse.py`) for all mood persistence. Do not introduce a second writer path or duplicate the `mood_entries` / `mood_current` correction logic.",
+    "Bind to the explicit `LAN_BIND_IP` from `.env`; do not resolve via `socket.gethostbyname(socket.gethostname())`. Reads must be allowed only when the client host is in `{127.0.0.1, ::1, LAN_BIND_IP}`; all other reads return HTTP 403.",
+    "Every endpoint validates `X-Mood-Token` via `secrets.compare_digest`. Defense in depth: the middleware and the token dependency must both be active on read endpoints. Tokens come from `MOOD_TOKEN` in `.env`; never log token values, headers, or request bodies.",
+    "Apply the mood-date attribution rule server-side: `mood_date = (logged_at_utc.astimezone(home_tz) - timedelta(hours=4)).date()`. Logs between 00:00 and 04:00 local time are attributed to the prior date. DST transitions must be handled by `zoneinfo`.",
+    "Insert mood corrections by appending a new `mood_entries` row with `supersedes_log_id` pointing at the prior row and updating `mood_current` to the new `log_id`. Never mutate or delete an existing `mood_entries` row.",
+    "CORS is disabled. Rate limit `POST /api/mood` to 10 requests/minute using an in-memory backend. Do not enable rate limits on `GET` endpoints in v1.",
+    "Keep raw payloads, tokens, secrets, snapshots, quarantine files, and DuckDB files out of git and out of general logs. Validation failures must reuse the S01 quarantine pathway under `data/quarantine/` with file mode `0600`."
+  ],
+  "external_dependency_hints": [
+    "open wearables",
+    "oura",
+    "8 sleep",
+    "icloud",
+    "tailscale"
+  ],
+  "implementation_tasks": [
+    {
+      "files": [
+        "src/api/__init__.py",
+        "src/api/app.py"
+      ],
+      "notes": "",
+      "phase": "FastAPI application skeleton",
+      "task": "Author the FastAPI app, expose the v1 endpoint set (`POST /api/mood`, `GET /api/health`, `GET /api/insights/{date}`, `GET /api/insights/latest_logged_day`, `GET /api/counterfactuals/{date}`, `GET /api/counterfactuals/latest_logged_day`), and wire the same-host read middleware so non-allowed client hosts receive HTTP 403 before any handler runs.",
+      "verify": [
+        "python -m pytest tests/test_api_security.py -q"
+      ]
+    },
+    {
+      "files": [
+        "src/api/security.py",
+        "src/api/dependencies.py",
+        "src/api/app.py",
+        "tests/test_api_security.py"
+      ],
+      "notes": "",
+      "phase": "Token authentication and request gating",
+      "task": "Implement `require_token` as a FastAPI dependency that validates `X-Mood-Token` against `MOOD_TOKEN` using `secrets.compare_digest`. Attach it to every `/api/*` route (POST and GET). Add the `slowapi` 10 req/min limiter on `POST /api/mood`. Never log the header value, the body, or the comparison result.",
+      "verify": [
+        "python -m pytest tests/test_api_security.py -q"
+      ]
+    },
+    {
+      "files": [
+        "src/api/mood_date.py",
+        "tests/test_mood_date.py"
+      ],
+      "notes": "",
+      "phase": "Mood-date attribution",
+      "task": "Implement `resolve_mood_date(logged_at_utc, home_tz)` enforcing the 04:00-local cutoff rule and DST safety via `zoneinfo`. The function returns the `mood_date` that the API persists.",
+      "verify": [
+        "python -m pytest tests/test_mood_date.py -q"
+      ]
+    },
+    {
+      "files": [
+        "src/api/schemas.py",
+        "tests/test_api_security.py"
+      ],
+      "notes": "",
+      "phase": "Mood ingest schemas",
+      "task": "Add Pydantic request/response models for `POST /api/mood` matching the design contract: `feeling` (int 1-10, required), `energy` (int 1-10, optional), `notes` (optional str), `context_chips` (Literal set, optional, defaults empty), and optional `logged_at_utc` (server now if absent). Response returns `log_id`, server-resolved `mood_date`, and `status=\"ok\"`.",
+      "verify": [
+        "python -m pytest tests/test_api_security.py -q"
+      ]
+    },
+    {
+      "files": [
+        "src/api/app.py",
+        "tests/test_mood_correction.py"
+      ],
+      "notes": "",
+      "phase": "Mood write path and correction flow",
+      "task": "Implement the `POST /api/mood` handler so it (a) validates the body against the Pydantic schema, (b) resolves `mood_date`, (c) calls the S01 warehouse helpers to append a new `mood_entries` row, (d) updates `mood_current` to point at the new `log_id`, and (e) returns the response model. Corrections are detected by checking `mood_current` for an existing row on the same `mood_date` and setting `supersedes_log_id` on the new entry. Quarantine validation failures via the existing S01 quarantine pathway; do not introduce a second quarantine writer.",
+      "verify": [
+        "python -m pytest tests/test_mood_correction.py -q"
+      ]
+    },
+    {
+      "files": [
+        "tests/test_api_security.py"
+      ],
+      "notes": "",
+      "phase": "Same-host read security tests",
+      "task": "Cover the security contract end-to-end: missing token \u2192 401; bad token \u2192 401 (constant-time); GET from a simulated remote IP \u2192 403; POST from a LAN IP with valid token \u2192 200; GET from `127.0.0.1` with valid token \u2192 200; GET from `LAN_BIND_IP` (same host) with valid token \u2192 200. Tests must not write tokens or payloads to logs.",
+      "verify": [
+        "python -m pytest tests/test_api_security.py -q"
+      ]
+    },
+    {
+      "files": [
+        "tests/test_mood_date.py"
+      ],
+      "notes": "",
+      "phase": "Mood-date attribution tests",
+      "task": "Cover the date-attribution rule: 23:30 local \u2192 same date; 00:30 local \u2192 previous date; 03:59 local \u2192 previous date; 04:01 local \u2192 current date; DST transition night resolves through `zoneinfo` without crashing or off-by-one.",
+      "verify": [
+        "python -m pytest tests/test_mood_date.py -q"
+      ]
+    },
+    {
+      "files": [
+        "tests/test_mood_correction.py"
+      ],
+      "notes": "",
+      "phase": "Mood correction tests",
+      "task": "Cover the correction flow: a second POST on the same `mood_date` appends to `mood_entries` with `supersedes_log_id` set to the prior row's `log_id`; `mood_current` updates to the new `log_id`; the training join (`mood_current` \u22c8 `mood_entries`) returns only the current primary row. Older superseded rows remain in `mood_entries` for audit.",
+      "verify": [
+        "python -m pytest tests/test_mood_correction.py -q"
+      ]
+    },
+    {
+      "files": [
+        "docs/reviews/s02-autonomous-security-review.md"
+      ],
+      "notes": "",
+      "phase": "Autonomous security review",
+      "task": "Generate the S02 autonomous security review artifact covering the same-host read middleware, constant-time token comparison, `X-Mood-Token` defense-in-depth, rate limit on `POST /api/mood`, CORS-disabled posture, token storage policy, and the deterministic-test references that substitute for human security signoff.",
+      "verify": [
+        "python scripts/check_autonomous_review_exists.py S02"
+      ]
+    },
+    {
+      "files": [
+        "docs/reviews/s02-autonomous-privacy-review.md"
+      ],
+      "notes": "",
+      "phase": "Autonomous privacy review",
+      "task": "Generate the S02 autonomous privacy review artifact covering: mood data stays in the local DuckDB warehouse, no third-party transmission, no tokens or bodies in logs, raw mood payload quarantine reuses the S01 `0600` pathway, `.env` and `data/` exclusion from git, and the mood-date local-time rule that prevents leaking timezone-derived behavioral inference into shared logs.",
+      "verify": [
+        "python scripts/check_autonomous_review_exists.py S02"
+      ]
+    }
+  ],
+  "manual_gate_hints": [
+    "approval",
+    "signoff",
+    "manual gate",
+    "reviewer",
+    "security review"
+  ],
+  "non_goals": [
+    "S03 Oura or 8 Sleep ingestion, OAuth flows, and provider smoke tests.",
+    "S04 source reconciliation and full feature engineering.",
+    "S05 model training, baseline gates, sign-stability bootstrap, and SHAP.",
+    "S06 counterfactual generation (the `/api/counterfactuals/*` routes return only the gated empty contract in S02; computation lands in S06).",
+    "S07 Streamlit UI, mood-first rendering rules, and read-API payload population beyond the route surface.",
+    "S08 launchd schedules, snapshot encryption, and restore procedures.",
+    "Prospective predictions, recommendations, Autopilot, Coach, Garmin, Withings, chest strap, nutrition, multi-daily mood logging, Tailscale transport, webhook ingestion, or medical advice.",
+    "I attempted to `Write` this to `docs/gstack/s02-mood-api-autoplan.md` but the permission was not granted \u2014 if you'd like me to actually save it, approve the write or let me know and I'll re-issue the tool call.",
+    "I kept the deliverable tree narrow (`src/api/`, `tests/`, `docs/reviews/`) so the autonomous Keel runner has tight write roots \u2014 the playbook compiler in this repo uses these as a literal allowlist for the slice.",
+    "Each `Verify:` line maps to one of the three acceptance commands in `slices.json`, so the autoplan and the slice contract stay in lockstep \u2014 that's what `scripts/verify_slice.py` and `check_autonomous_review_exists.py` check before marking the slice complete."
+  ],
+  "product_goal": "Aysajan is hyper-health-conscious and owns five separate connected devices that each generate rich health analytics in isolated silos:",
+  "recommended_approach": "### Approach A: Weekend MVP (Codex's pragmatic plan)\n\nSingle Streamlit page showing yesterday's mood, top SHAP contributors, one retrospective counterfactual, confidence warning. iOS Shortcut for mood logging. launchd cron pulls Oura + 8 Sleep data daily. Built in 1-2 weekends. No FastAPI initially; no autopilot; no coach. Retrospective explainer only.\n\n- Effort: S (1-2 weekends, ~25-40 hours)\n- Risk: Low\n- Pros: Ships fast, validates the whole loop cheaply, easy to iterate\n- Cons: No coach or autopilot; Streamlit ceiling is real; harder to evolve into the hybrid 10x without a refactor\n\n### Approach B: Layered Backend + Streamlit (selected)\n\nSix-layer architecture from day 1: Ingestion \u2192 Warehouse \u2192 Feature Store \u2192 Model \u2192 API \u2192 UI. FastAPI is real (not vestigial); Streamlit consumes it. Polars for feature engineering. Pydantic models for the API contract. Pluggable model layer so SHAP attribution + counterfactual search can evolve independently. Architecture explicitly designed so the Autopilot tier (scheduled jobs reading from the API and delivering interventions) and the Coach tier (LLM-with-tools agent calling the API) can be added in v2/v3 without rewrites.\n\n- Effort: M (~96-160 hours total over 16 calendar weeks of solo evenings/weekends, at 6-10 hr/wk)\n- Risk: Medium\n- Pros: Architecture supports the full hybrid 10x; API surface is reusable for mobile companion later; clean layer separation enables independent evolution\n- Cons: 2-3x build time vs A; risk of over-engineering before validating loop; \"ideal architecture\" trap of polishing forever\n\n### Approach C: Daily Health Newsletter (calm-tech lateral)\n\n\"The app you don't open.\" Every morning at 6am, an email arrives: yesterday's feeling + counterfactual, today's predicted feeling, today's one experimental nudge, weekly trends as embedded charts. Mood logging via iOS Shortcut. Backend is cron + Python + Jinja + smtplib + DuckDB. No web UI at all.\n\n- Effort: S-M (2-3 weeks, ~30-50 hours)\n- Risk: Low-Medium\n- Pros: Zero app fatigue; calm-tech ethos; lowest UX surface area; the email is shareable with a doctor by definition\n- Cons: No bidirectional interaction beyond mood logging; not a \"product\" you can demo; bolting on a conversational coach later requires a different surface",
+  "risk_hints": [],
+  "schema_version": "gstack_plan_ir_v1",
+  "source_artifacts": [
+    {
+      "byte_size": 97733,
+      "kind": "office_hours",
+      "path": "docs/gstack/health-data-hub-office-hours.md",
+      "sha256": "548af49f81b7063427df5bd1758ac6c0d5a38d985d04ca5a3c23120eb605229e"
+    },
+    {
+      "byte_size": 10413,
+      "kind": "autoplan",
+      "path": "docs/gstack/s02-mood-api-autoplan.md",
+      "sha256": "c98c6c09fb32fca616209e203bf7750d4d0a297fd4217107e2c0c30e411f9041"
+    },
+    {
+      "byte_size": 701,
+      "kind": "approved_brief",
+      "path": "docs/briefs/s02-mood-api.autonomous-brief.md",
+      "sha256": "866d12e22b466c16450eadf542213121441cc8a4e0d3f396698d67bce67ac3f5"
+    }
+  ],
+  "stack_profile": {
+    "build_tools": [],
+    "languages": [
+      "python"
+    ],
+    "package_managers": [
+      "pip"
+    ],
+    "test_runners": [
+      "pytest"
+    ]
+  },
+  "verification_hints": []
+}

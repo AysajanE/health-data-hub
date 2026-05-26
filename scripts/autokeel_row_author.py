@@ -80,7 +80,20 @@ def phase_slug(phase: str) -> str:
     return slug or "implementation"
 
 
-def row_for_card(card: dict[str, Any], index: int) -> dict[str, Any]:
+def infer_slice_id(context: dict[str, Any]) -> str:
+    candidates: list[str] = []
+    for key in ("source_artifact_paths", "known_paths"):
+        values = context.get(key, [])
+        if isinstance(values, list):
+            candidates.extend(str(value) for value in values)
+    for candidate in candidates:
+        match = re.search(r"\b(s[0-9]{2})\b", candidate, flags=re.I)
+        if match:
+            return match.group(1).upper()
+    return "slice"
+
+
+def row_for_card(card: dict[str, Any], index: int, slice_id: str = "S01") -> dict[str, Any]:
     step_id = f"{index:02d}"
     task_id = str(card.get("task_id") or f"task_{index:03d}")
     phase = str(card.get("phase") or "implementation")
@@ -104,7 +117,7 @@ def row_for_card(card: dict[str, Any], index: int) -> dict[str, Any]:
 
     exit_bits = []
     if files:
-        exit_bits.append(f"{', '.join(files)} exist with the required S01 behavior")
+        exit_bits.append(f"{', '.join(files)} exist with the required {slice_id} behavior")
     if task_notes:
         exit_bits.extend(task_notes)
     if verification:
@@ -115,7 +128,7 @@ def row_for_card(card: dict[str, Any], index: int) -> dict[str, Any]:
         "step_id": step_id,
         "phase": phase,
         "action": normalize_action(card.get("task") or ""),
-        "why_now": "Required for the S01 warehouse foundation acceptance contract.",
+        "why_now": f"Required for the {slice_id} acceptance contract.",
         "owner_type": "operator",
         "prerequisites": "none" if index == 1 else f"{index - 1:02d}",
         "repo_surfaces": surfaces,
@@ -142,7 +155,8 @@ def main() -> int:
     if not isinstance(cards, list) or not cards:
         raise SystemExit("no task_cards in row_author_context_v1")
 
-    rows = [row_for_card(card, index) for index, card in enumerate(cards, start=1)]
+    slice_id = infer_slice_id(context)
+    rows = [row_for_card(card, index, slice_id) for index, card in enumerate(cards, start=1)]
     phases = []
     seen = set()
     for row in rows:
@@ -153,7 +167,7 @@ def main() -> int:
             {
                 "phase_slug": phase_slug(row["phase"]),
                 "title": row["phase"],
-                "body": f"Executes S01 task rows for {row['phase']}.",
+                "body": f"Executes {slice_id} task rows for {row['phase']}.",
             }
         )
 
@@ -161,12 +175,12 @@ def main() -> int:
         "schema_version": "po_candidate_rows_v1",
         "rows": rows,
         "support_sections": {
-            "plan_context": "S01 builds the local-first warehouse foundation for Health Data Hub v1.",
+            "plan_context": f"{slice_id} builds one Health Data Hub v1 slice under the autonomous AutoKeel policy.",
             "phase_details": phases,
             "shared_guidance": [
                 {
                     "title": "Autonomous Gate Policy",
-                    "body": "Manual gates are forbidden; deterministic tests and autonomous review artifacts are required instead.",
+                    "body": "Manual gates are forbidden; autonomous_gate_review artifacts, deterministic tests, and recorded evidence are required instead.",
                 },
                 {
                     "title": "Health Data Safety",
@@ -174,7 +188,7 @@ def main() -> int:
                 },
             ],
             "risks_and_contingencies": "If verification fails, stop and record an AutoKeel failure instead of fabricating evidence.",
-            "immediate_next_actions": "Run S01 acceptance commands only after all rows complete.",
+            "immediate_next_actions": f"Run {slice_id} acceptance commands only after all rows complete.",
         },
         "compiler_warnings": [],
     }

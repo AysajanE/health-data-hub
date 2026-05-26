@@ -1,0 +1,155 @@
+{
+  "errors": [],
+  "repair_attempts": 0,
+  "row_summaries": [
+    {
+      "issues": 0,
+      "phase": "FastAPI application skeleton",
+      "step_id": "01"
+    },
+    {
+      "issues": 0,
+      "phase": "Token authentication and request gating",
+      "step_id": "02"
+    },
+    {
+      "issues": 0,
+      "phase": "Mood-date attribution",
+      "step_id": "03"
+    },
+    {
+      "issues": 0,
+      "phase": "Mood ingest schemas",
+      "step_id": "04"
+    },
+    {
+      "issues": 0,
+      "phase": "Mood write path and correction flow",
+      "step_id": "05"
+    },
+    {
+      "issues": 0,
+      "phase": "Same-host read security tests",
+      "step_id": "06"
+    },
+    {
+      "issues": 0,
+      "phase": "Mood-date attribution tests",
+      "step_id": "07"
+    },
+    {
+      "issues": 0,
+      "phase": "Mood correction tests",
+      "step_id": "08"
+    },
+    {
+      "issues": 0,
+      "phase": "Autonomous security review",
+      "step_id": "09"
+    },
+    {
+      "issues": 0,
+      "phase": "Autonomous privacy review",
+      "step_id": "10"
+    }
+  ],
+  "schema_version": "compiler_validation_report_v1",
+  "status": "pass",
+  "validated_at": "2026-05-26T17:23:34+00:00",
+  "warnings": [
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/check_autonomous_review_exists.py S02'",
+      "severity": "warning",
+      "step_id": "09"
+    },
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/check_autonomous_review_exists.py S02'",
+      "severity": "warning",
+      "step_id": "10"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "01"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "02"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "03"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "04"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "05"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "06"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "07"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "08"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "09"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "10"
+    },
+    {
+      "code": "AUTHOR_EXTERNAL_HINTS_WITHOUT_CHECK",
+      "message": "source artifacts mention external dependencies, but no row requires external evidence",
+      "severity": "warning"
+    },
+    {
+      "code": "AUTHOR_MANUAL_HINTS_WITHOUT_GATE",
+      "message": "source artifacts mention a risky manual gate, but no row has manual_gate set",
+      "severity": "warning"
+    }
+  ]
+}
