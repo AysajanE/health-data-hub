@@ -11,6 +11,7 @@ gates, records evidence/failures, and only marks a slice complete after
 ```bash
 python -m ops.autonomy.autokeel --doctor
 python -m ops.autonomy.autokeel --doctor --strict
+python -m ops.autonomy.autokeel --readiness S02
 python -m ops.autonomy.autokeel --once --dry-run
 python -m ops.autonomy.autokeel --next-slice
 python -m ops.autonomy.autokeel --status --failures
@@ -22,6 +23,13 @@ python -m ops.autonomy.autokeel --close-failure S01 manual_gate_leak --closure-e
 Missing autoplans are generated through the configured `autoplan.command`.
 When a slice enters `replan_required`, AutoKeel archives the existing playbook
 before recompiling so the same stale artifact is not reused.
+
+High-risk `swr_preferred` slices require a schema-valid `lane_decision`
+artifact before compilation. Missing decisions are recorded as
+`lane_decision_missing`; malformed or failing decisions are recorded as
+`lane_decision_invalid`. `--readiness S02` runs the pre-launch readiness gate
+for S02, including lane-decision validation, review artifact validation, and
+tracked-data safety checks. It is not a slice completion gate.
 
 For PO execution, AutoKeel creates a local ignored `automation/` shim that
 points at the installed Keel plan-orchestrator runtime. This lets the
@@ -38,3 +46,6 @@ while still using the Keel runtime as the execution kernel.
   not be tracked by git or written to general logs.
 - PO `passed` is not enough for slice completion. The ship branch and slice
   acceptance verification must pass first.
+- Heartbeats are written only to ignored runtime JSON under
+  `ops/autonomy/heartbeats/`; they do not mutate tracked autonomy state or
+  append heartbeat-only events.

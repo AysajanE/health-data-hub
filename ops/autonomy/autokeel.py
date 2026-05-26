@@ -379,9 +379,6 @@ class AutoKeel:
         }
         heartbeat_path = self.root / self.policy.get("loop", {}).get("heartbeat_path", "ops/autonomy/heartbeats/latest.json")
         write_json_atomic(heartbeat_path, heartbeat)
-        state["last_heartbeat_at"] = heartbeat["ts"]
-        self.save_state(state)
-        self.log_event("heartbeat", heartbeat)
 
     def choose_next_slice(self, requested: str | None = None, force: bool = False) -> dict[str, Any] | None:
         slices = self.load_slices()
@@ -1249,6 +1246,20 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if not run_id:
             return CommandResult([], 50, "", "cannot resume active PO: missing run_id")
 
+        checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
+        if not checkpoint.ok:
+            self.log_event(
+                "po_resume_precheck_failed",
+                {
+                    "run_id": run_id,
+                    "exit_code": checkpoint.exit_code,
+                    "stdout": checkpoint.stdout[-2000:],
+                    "stderr": checkpoint.stderr[-2000:],
+                },
+                slice_id=slice_["id"],
+            )
+            return checkpoint
+
         result = self.runner.run(
             self.plan_orchestrator_command(
                 "supervise",
@@ -1338,31 +1349,50 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if mode != "compile_with_decision":
             return CommandResult([], 0, "lane decision mode not required", "")
         existing = slice_.get("lane_decision")
-        if existing and (self.root / str(existing)).exists():
-            return CommandResult(["test", "-f", str(existing)], 0, "lane decision exists", "")
-        if slice_.get("risk") == "high":
+        if existing or slice_.get("risk") == "high":
+            from scripts.lane_decision_policy import validate_lane_decision
+
+            errors = validate_lane_decision(self.root, slice_)
+            if not errors:
+                return CommandResult(["test", "-f", str(existing)], 0, "lane decision exists", "")
+
+            failure_class = "lane_decision_invalid"
+            if not existing or any("missing lane_decision artifact" in err or "artifact missing" in err for err in errors):
+                failure_class = "lane_decision_missing"
+            description = "; ".join(errors)
             failure = self.record_failure(
                 slice_["id"],
-                "compile_failure",
+                failure_class,
                 "high",
-                "High-risk swr_preferred slice is missing reviewed lane_decision evidence.",
-                "Blocked compilation instead of auto-downgrading the SWR-preferred lane.",
-                None,
+                description,
+                "Blocked compilation until a reviewed, schema-valid lane_decision artifact exists.",
+                self.root / str(existing) if existing else None,
             )
             self.mark_slice_status(
                 slice_["id"],
                 "blocked_compile_inputs",
                 failure_path=str(failure.relative_to(self.root)),
-                reason="missing reviewed lane_decision",
+                reason=description[:500],
             )
-            return CommandResult([], 25, "", "missing reviewed lane_decision for high-risk swr_preferred slice")
+            return CommandResult([], 25, "", description)
         decision = self.write_decision(
             f"{slice_['id']}-swr-downgrade",
             {
                 "status": "accepted",
                 "slice": slice_["id"],
                 "lane": lane,
-                "decision": "compile_with_keel_compile_for_now",
+                "decision": "compile_with_keel_compile",
+                "risk": slice_.get("risk", "medium"),
+                "review_artifacts": slice_.get("review_artifacts", []),
+                "commands": [
+                    {
+                        "command": "AutoKeel non-high swr_preferred downgrade decision",
+                        "exit_code": 0,
+                        "stdout_tail": "policy permits non-high swr_preferred compiler-path decision",
+                        "stderr_tail": "",
+                    }
+                ],
+                "verdict": "pass",
                 "reason": "SWR-preferred lane is preserved as policy metadata; current AutoKeel milestone uses compiler path with explicit downgrade decision.",
             },
         )
@@ -1821,6 +1851,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--failures", action="store_true", help="Include failure ledger rows with --status.")
     parser.add_argument("--doctor", action="store_true", help="Run AutoKeel preflight checks and exit.")
     parser.add_argument("--strict", action="store_true", help="Use strict mode with --doctor.")
+    parser.add_argument("--readiness", choices=["S02"], help="Run a slice-specific pre-launch readiness check and exit.")
     parser.add_argument("--next-slice", action="store_true", help="Print the next actionable slice and exit.")
     parser.add_argument("--replay-events", action="store_true", help="Print event log rows and exit.")
     parser.add_argument("--unblock-evidence", nargs=2, metavar=("SLICE_ID", "EVIDENCE_DIR"), help="Mark a blocked slice evidence_ready with a local evidence dir.")
@@ -1847,6 +1878,12 @@ def main(argv: list[str] | None = None) -> int:
             if result.stderr:
                 print(result.stderr, file=sys.stderr, end="")
             return result.exit_code
+        if args.readiness == "S02":
+            from scripts.verify_s02_readiness import verify_s02_readiness
+
+            report = verify_s02_readiness(root)
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 0 if report["status"] == "ok" else 1
         if args.next_slice:
             print(json.dumps(autokeel.choose_next_slice(args.slice_id, force=args.force), indent=2, sort_keys=True))
             return 0

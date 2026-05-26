@@ -245,6 +245,50 @@ Manual gates are forbidden.
             self.assertEqual(active["run_id"], "RUN_TEST")
             self.assertIn("last_seen_at", active)
 
+    def test_active_same_slice_resume_rejects_dirty_product_changes(self) -> None:
+        class ShouldNotRun:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                raise AssertionError("resume command should not run after dirty precheck")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            init_git_repo(root)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            (root / "src").mkdir(exist_ok=True)
+            (root / "src" / "unexpected.py").write_text("print('dirty')\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = ShouldNotRun()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertFalse(result.ok)
+            self.assertIn("non-AutoKeel dirty paths", result.stderr)
+            self.assertIn("src/unexpected.py", result.stderr)
+
+    def test_heartbeat_writes_ignored_runtime_file_without_tracked_state_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            state_before = (root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8")
+            events_before = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+
+            op.log_heartbeat()
+
+            self.assertEqual((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"), state_before)
+            self.assertEqual((root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8"), events_before)
+            self.assertTrue((root / "ops/autonomy/heartbeats/latest.json").exists())
+
     def test_pre_po_checkpoint_commits_only_autokeel_runtime_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

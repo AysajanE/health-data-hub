@@ -24,6 +24,15 @@ DEFAULT_ALLOW_COMMANDS = (
     "python scripts/evidence/oura_smoke.py",
 )
 
+BROAD_PREFIX_DENYLIST = (
+    ("python",),
+    ("python", "scripts/"),
+    ("python", "scripts"),
+    ("python", "-m", "scripts"),
+    ("bash",),
+    ("sh",),
+)
+
 
 def load_policy(root: Path) -> dict[str, Any]:
     policy_path = root / "ops" / "autonomy" / "policy.yaml"
@@ -37,12 +46,22 @@ def load_policy(root: Path) -> dict[str, Any]:
         return {}
 
 
+def policy_prefix_safe(prefix: str) -> bool:
+    try:
+        argv = shlex.split(prefix)
+    except ValueError:
+        return False
+    normalized = tuple(argv)
+    return normalized not in BROAD_PREFIX_DENYLIST
+
+
 def acceptance_allow_prefixes(root: Path) -> list[str]:
     policy = load_policy(root)
     prefixes = policy.get("acceptance_commands", {}).get("allow_prefixes", [])
     if not isinstance(prefixes, list) or not prefixes:
         return list(DEFAULT_ALLOW_PREFIXES)
-    return [str(prefix) for prefix in prefixes if str(prefix).strip()]
+    safe_prefixes = [str(prefix) for prefix in prefixes if str(prefix).strip() and policy_prefix_safe(str(prefix))]
+    return safe_prefixes or list(DEFAULT_ALLOW_PREFIXES)
 
 
 def acceptance_allow_commands(root: Path) -> list[str]:

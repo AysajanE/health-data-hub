@@ -112,17 +112,74 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_fixture(root)
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            for item in slices:
+                if item["id"] == "S02":
+                    item.pop("lane_decision", None)
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
             op = AutoKeel(root=root, dry_run=True)
             slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
 
             result = op.ensure_lane_decision(slice_)
 
             self.assertFalse(result.ok)
-            self.assertIn("missing reviewed lane_decision", result.stderr)
+            self.assertIn("missing lane_decision artifact", result.stderr)
             updated = next(item for item in op.load_slices() if item["id"] == "S02")
             self.assertEqual(updated["status"], "blocked_compile_inputs")
             self.assertNotIn("lane_decision", updated)
-            self.assertIn("missing reviewed lane_decision", updated["reason"])
+            self.assertIn("missing lane_decision artifact", updated["reason"])
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("lane_decision_missing", ledger)
+            self.assertNotIn("compile_failure", ledger)
+
+    def test_high_risk_swr_invalid_lane_decision_blocks_with_dedicated_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            invalid = root / "ops/autonomy/decisions/S02-invalid.json"
+            invalid.write_text(
+                json.dumps(
+                    {
+                        "created_at": "2026-05-26T00:00:00-04:00",
+                        "slice": "S02",
+                        "lane": "swr_preferred",
+                        "decision": "block",
+                        "risk": "high",
+                        "review_artifacts": ["docs/reviews/s02-autonomous-security-review.md"],
+                        "commands": [{"command": "python scripts/verify_autonomy_preflight.py --json", "exit_code": 1}],
+                        "verdict": "fail",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            for item in slices:
+                if item["id"] == "S02":
+                    item["lane_decision"] = "ops/autonomy/decisions/S02-invalid.json"
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_lane_decision(slice_)
+
+            self.assertFalse(result.ok)
+            self.assertIn("lane_decision verdict blocks execution", result.stderr)
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertEqual(updated["status"], "blocked_compile_inputs")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("lane_decision_invalid", ledger)
+
+    def test_high_risk_swr_valid_lane_decision_allows_compile_precheck(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_lane_decision(slice_)
+
+            self.assertTrue(result.ok, result.stderr)
+            self.assertIn("lane decision exists", result.stdout)
 
     def test_complete_status_clears_stale_failure_fields_and_records_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -1,0 +1,31 @@
+{
+  "captured_at": "2026-05-26T11:29:16-04:00",
+  "slice": "S01",
+  "status": "complete",
+  "run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
+  "ship_branch": "ship/s01",
+  "ship_commit": "50a58201058536b7518cd8fb4d5774a3c69df53d",
+  "po_status_evidence": "docs/evidence/s01-po-status-20260524.json",
+  "command_evidence": "docs/evidence/s01-command-evidence-20260526.json",
+  "review_artifacts": [
+    "docs/reviews/s01-autonomous-schema-review.md"
+  ],
+  "deliverables": [
+    "src/db/schema.sql",
+    "src/warehouse/warehouse.py",
+    "src/warehouse/models.py",
+    "scripts/setup_permissions.py",
+    "tests/warehouse/test_schema.py",
+    "tests/warehouse/test_mood_correction.py",
+    "tests/warehouse/test_quarantine.py",
+    "docs/reviews/s01-autonomous-schema-review.md"
+  ],
+  "completion_checks": [
+    "PO terminal state passed",
+    "ship branch created",
+    "scripts/verify_slice.py S01 --json passed during controlled S01 launch",
+    "required autonomous review artifact validated",
+    "tracked data and secret scan passed"
+  ],
+  "redaction": "This bundle contains pointers and sanitized summaries only; no raw health data, provider payloads, tokens, DuckDB files, private evidence, quarantine payloads, or secrets are included."
+}

@@ -36,6 +36,8 @@ CRITICAL_FAILURES = {
     "ship_failure",
     "tripwire_triggered",
     "compile_failure",
+    "lane_decision_missing",
+    "lane_decision_invalid",
     "provider_auth_failure",
     "autoplan_invalid",
     "review_artifact_invalid",
