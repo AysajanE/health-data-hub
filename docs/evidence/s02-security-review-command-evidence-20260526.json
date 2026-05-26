@@ -1,0 +1,33 @@
+{
+  "commands": [
+    {
+      "command": "/Users/aeziz-local/miniconda3/bin/python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "ok\n"
+    },
+    {
+      "command": "/Users/aeziz-local/miniconda3/bin/python scripts/check_autonomous_review_exists.py S02 --json",
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "{\n  \"errors\": [],\n  \"review_artifacts\": [\n    \"docs/reviews/s02-autonomous-security-review.md\",\n    \"docs/reviews/s02-autonomous-privacy-review.md\"\n  ],\n  \"status\": \"ok\"\n}\n"
+    }
+  ],
+  "created_at": "2026-05-26T12:54:50-04:00",
+  "redaction": {
+    "secret_markers": [
+      "access_token",
+      "refresh_token",
+      "authorization",
+      "x-mood-token",
+      "mood_token",
+      "client_secret",
+      "password"
+    ],
+    "strategy": "line-level redaction for secret-bearing output lines"
+  },
+  "review": "security",
+  "schema_version": "autokeel_command_evidence_v1",
+  "slice": "S02",
+  "status": "ok"
+}
