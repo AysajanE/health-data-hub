@@ -25,10 +25,12 @@ When a slice enters `replan_required`, AutoKeel archives the existing playbook
 before recompiling so the same stale artifact is not reused.
 
 High-risk `swr_preferred` slices require a schema-valid `lane_decision`
-artifact before compilation. Missing decisions are recorded as
-`lane_decision_missing`; malformed or failing decisions are recorded as
-`lane_decision_invalid`. `--readiness S02` runs the pre-launch readiness gate
-for S02, including lane-decision validation, review artifact validation, and
+artifact whose decision is `use_swr`. Missing decisions are recorded as
+`lane_decision_missing`; malformed, failing, or compiler-downgrade decisions
+are recorded as `lane_decision_invalid`. AutoKeel must route these slices to
+`keel-swr` and must not fall back to `keel-compile` unless the slice lane is
+changed by policy. `--readiness S02` runs the pre-launch readiness gate for
+S02, including lane-decision validation, review artifact validation, and
 tracked-data safety checks. It is not a slice completion gate.
 
 For PO execution, AutoKeel creates a local ignored `automation/` shim that

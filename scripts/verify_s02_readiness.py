@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that AutoKeel may start the S02 compile path.
+"""Verify that AutoKeel may start the S02 SWR playbook path.
 
 This is a pre-launch readiness check, not a completion gate. It verifies the
 reviewed lane decision and static safety prerequisites before S02 PO execution.

@@ -11,3 +11,4 @@ The first success criterion is S01 running from autonomous brief through Keel va
 - 2026-05-24T17:10:28-04:00 S01 slice_status_updated: status=complete, run_id=RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370, ship_branch=ship/s01, ship_commit=48a9319acea51bf210b669d8dde65d4b80ad6ac9
 - 2026-05-26T09:51:10-04:00 S01 slice_metadata_reconciled: status=complete, run_id=RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370, ship_branch=ship/s01, ship_commit=50a58201058536b7518cd8fb4d5774a3c69df53d
 - 2026-05-26T13:23:34-04:00 S02 slice_status_updated: status=replan_required
+- 2026-05-26T13:48:17-04:00 S02 state_divergence closed: stopped invalid compiler-lane launch; S02 remains replan_required and must relaunch only through keel-swr

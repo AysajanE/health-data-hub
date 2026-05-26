@@ -41,6 +41,8 @@ def validate_lane_decision_payload(payload: Any, slice_: dict[str, Any], rel_pat
         errors.append(f"{slice_id}: lane_decision status must be accepted: {rel_path}")
     if decision not in DECISIONS:
         errors.append(f"{slice_id}: lane_decision has unsupported decision: {decision!r}")
+    elif slice_.get("risk") == "high" and slice_.get("lane") == "swr_preferred" and decision != "use_swr":
+        errors.append(f"{slice_id}: high-risk swr_preferred lane_decision must be use_swr; got {decision!r}")
     if payload.get("risk") not in RISKS:
         errors.append(f"{slice_id}: lane_decision has unsupported risk: {payload.get('risk')!r}")
     if verdict not in VERDICTS:

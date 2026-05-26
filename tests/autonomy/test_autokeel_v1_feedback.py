@@ -169,7 +169,46 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
             self.assertIn("lane_decision_invalid", ledger)
 
-    def test_high_risk_swr_valid_lane_decision_allows_compile_precheck(self) -> None:
+    def test_high_risk_swr_compile_decision_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            decision = root / "ops/autonomy/decisions/S02-compile.json"
+            decision.write_text(
+                json.dumps(
+                    {
+                        "created_at": "2026-05-26T00:00:00-04:00",
+                        "status": "accepted",
+                        "slice": "S02",
+                        "lane": "swr_preferred",
+                        "decision": "compile_with_keel_compile",
+                        "risk": "high",
+                        "review_artifacts": [
+                            "docs/reviews/s02-autonomous-security-review.md",
+                            "docs/reviews/s02-autonomous-privacy-review.md",
+                        ],
+                        "commands": [{"command": "python scripts/verify_autonomy_preflight.py --json", "exit_code": 0}],
+                        "verdict": "pass",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            for item in slices:
+                if item["id"] == "S02":
+                    item["lane_decision"] = "ops/autonomy/decisions/S02-compile.json"
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_lane_decision(slice_)
+
+            self.assertFalse(result.ok)
+            self.assertIn("must be use_swr", result.stderr)
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertEqual(updated["status"], "blocked_compile_inputs")
+
+    def test_high_risk_swr_valid_lane_decision_allows_swr_precheck(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_fixture(root)
@@ -180,6 +219,131 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
 
             self.assertTrue(result.ok, result.stderr)
             self.assertIn("lane decision exists", result.stdout)
+
+    def test_swr_preferred_playbook_generation_routes_through_keel_swr(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            fake_keel = root / "fake-keel"
+            task_pack_source = fake_keel / "tools/staged-workflow-runner/automation/task_packs/gstack_design_to_po_playbook"
+            task_pack_source.mkdir(parents=True)
+            (fake_keel / "bin").mkdir(parents=True)
+
+            policy = (root / "ops/autonomy/policy.yaml").read_text(encoding="utf-8")
+            policy = policy.replace("keel_root: /Users/aeziz-local/keel", f"keel_root: {fake_keel}")
+            (root / "ops/autonomy/policy.yaml").write_text(policy, encoding="utf-8")
+
+            (root / "docs/gstack").mkdir(parents=True)
+            (root / "docs/briefs").mkdir(parents=True)
+            (root / "docs/playbooks").mkdir(parents=True)
+            (root / "docs/gstack/health-data-hub-office-hours.md").write_text("S02 design", encoding="utf-8")
+            (root / "docs/briefs/s02-mood-api.autonomous-brief.md").write_text("S02 brief", encoding="utf-8")
+            (root / "docs/gstack/s02-mood-api-autoplan.md").write_text(
+                "# S02 autoplan\n\n"
+                "Deliverables and verification are listed below.\n\n"
+                "Manual gates are forbidden; use autonomous_gate_review evidence instead.\n\n"
+                "## Implementation Tasks\n\n"
+                "- [ ] Implement the Mood API loop.\n"
+                "  Files: `src/api/mood.py`; `tests/test_api_security.py`\n"
+                "  Verify: `python -m pytest tests/test_api_security.py -q`\n",
+                encoding="utf-8",
+            )
+            stale_playbook = root / "docs/playbooks/s02-mood-api.playbook.md"
+            stale_playbook.write_text("compiler generated stale playbook\n", encoding="utf-8")
+
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+            result = op.ensure_playbook(slice_)
+
+            self.assertTrue(result.ok, result.stderr)
+            self.assertIn("keel-swr", result.argv[0])
+            self.assertIn("run", result.argv)
+            self.assertNotIn("keel-compile", " ".join(result.argv))
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("dry_run_non_swr_playbook_archive_skipped", events)
+            self.assertIn("swr_playbook_generation_planned", events)
+
+    def test_completed_swr_manifest_materializes_canonical_playbook(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            fake_keel = root / "fake-keel"
+            task_pack_source = fake_keel / "tools/staged-workflow-runner/automation/task_packs/gstack_design_to_po_playbook"
+            (task_pack_source / "workflows").mkdir(parents=True)
+            (task_pack_source / "workflows/gstack_design_to_po_playbook.workflow.json").write_text("{}", encoding="utf-8")
+            (fake_keel / "bin").mkdir(parents=True)
+
+            policy = (root / "ops/autonomy/policy.yaml").read_text(encoding="utf-8")
+            policy = policy.replace("keel_root: /Users/aeziz-local/keel", f"keel_root: {fake_keel}")
+            (root / "ops/autonomy/policy.yaml").write_text(policy, encoding="utf-8")
+
+            (root / "docs/gstack").mkdir(parents=True)
+            (root / "docs/briefs").mkdir(parents=True)
+            (root / "docs/gstack/health-data-hub-office-hours.md").write_text("S02 design", encoding="utf-8")
+            (root / "docs/briefs/s02-mood-api.autonomous-brief.md").write_text("S02 brief", encoding="utf-8")
+            (root / "docs/gstack/s02-mood-api-autoplan.md").write_text(
+                "# S02 autoplan\n\n"
+                "Deliverables and verification are listed below.\n\n"
+                "Manual gates are forbidden; use autonomous_gate_review evidence instead.\n\n"
+                "## Implementation Tasks\n\n"
+                "- [ ] Implement the Mood API loop.\n"
+                "  Files: `src/api/mood.py`; `tests/test_api_security.py`\n"
+                "  Verify: `python -m pytest tests/test_api_security.py -q`\n",
+                encoding="utf-8",
+            )
+
+            class SwrRunner:
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    run_dir = root / ".local/autokeel/swr/runs/test-run"
+                    stage_dir = run_dir / "stages/05_final_markdown_playbook"
+                    stage_dir.mkdir(parents=True)
+                    response_path = stage_dir / "response.final.json"
+                    response_path.write_text(
+                        json.dumps(
+                            {
+                                "output": [
+                                    {
+                                        "type": "message",
+                                        "content": [
+                                            {
+                                                "type": "output_text",
+                                                "text": "# S02 Mood API Playbook\n\nmarkdown_playbook_v1\n",
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    manifest = {
+                        "status": "completed",
+                        "stages": [
+                            {
+                                "stage_id": "final_markdown_playbook",
+                                "status": "completed",
+                                "response_json_path": str(response_path.relative_to(root)),
+                            }
+                        ],
+                    }
+                    manifest_path = run_dir / "run_manifest.json"
+                    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                    return CommandResult(list(argv), 0, str(manifest_path.relative_to(root)) + "\n", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = SwrRunner()
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+            result = op.ensure_playbook(slice_)
+
+            self.assertTrue(result.ok, result.stderr)
+            playbook = root / "docs/playbooks/s02-mood-api.playbook.md"
+            self.assertTrue(playbook.exists())
+            self.assertEqual(playbook.read_text(encoding="utf-8"), "# S02 Mood API Playbook\n\nmarkdown_playbook_v1\n")
+            evidence = json.loads((root / "docs/evidence/s02-mood-api-swr-playbook-evidence.json").read_text(encoding="utf-8"))
+            self.assertEqual(evidence["tool"], "keel-swr")
+            self.assertEqual(evidence["swr_source"]["manifest"], ".local/autokeel/swr/runs/test-run/run_manifest.json")
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("swr_playbook_materialized", events)
 
     def test_complete_status_clears_stale_failure_fields_and_records_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

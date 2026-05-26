@@ -3,9 +3,9 @@
   "status": "accepted",
   "slice": "S02",
   "lane": "swr_preferred",
-  "decision": "compile_with_keel_compile",
+  "decision": "use_swr",
   "risk": "high",
-  "reason": "S02 remains marked swr_preferred and high risk, but the current AutoKeel milestone requires an explicit reviewed lane decision before compile. This decision allows the deterministic Keel compile path for S02 while preserving the requirement for both S02 autonomous review artifacts before completion.",
+  "reason": "S02 is a high-risk swr_preferred slice. The launch path must use the staged-workflow-runner gstack_design_to_po_playbook lane to generate the markdown_playbook_v1 artifact before PO execution. A deterministic keel-compile downgrade is not accepted for this slice.",
   "review_artifacts": [
     "docs/reviews/s02-autonomous-security-review.md",
     "docs/reviews/s02-autonomous-privacy-review.md"

@@ -62,6 +62,7 @@
     "playbook": "docs/playbooks/s02-mood-api.playbook.md",
     "required": true,
     "retry_count": 1,
+    "reason": "stopped invalid compiler-lane launch; next S02 launch must materialize markdown_playbook_v1 through keel-swr",
     "review_artifacts": [
       "docs/reviews/s02-autonomous-security-review.md",
       "docs/reviews/s02-autonomous-privacy-review.md"
@@ -69,7 +70,8 @@
     "risk": "high",
     "slug": "s02-mood-api",
     "status": "replan_required",
-    "updated_at": "2026-05-26T13:23:34-04:00"
+    "stopped_run_id": "RUN_20260526T173005Z_e4b9f767c7024cc9b3741d04055ec544",
+    "updated_at": "2026-05-26T13:48:17-04:00"
   },
   {
     "acceptance": [

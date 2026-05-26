@@ -187,7 +187,7 @@ class VerifyScriptsTests(unittest.TestCase):
                     "status": "accepted",
                     "slice": "S02",
                     "lane": "swr_preferred",
-                    "decision": "compile_with_keel_compile",
+                    "decision": "use_swr",
                     "risk": "high",
                     "review_artifacts": [
                         "docs/reviews/s02-autonomous-security-review.md",

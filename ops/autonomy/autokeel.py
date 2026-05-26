@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -73,6 +75,14 @@ def now_iso() -> str:
 
 def slug_ts() -> str:
     return datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -863,6 +873,255 @@ Return only a Markdown autoplan suitable to save at:
         )
         return archive
 
+    def lane_decision_payload(self, slice_: dict[str, Any]) -> dict[str, Any]:
+        decision_rel = slice_.get("lane_decision")
+        if not decision_rel:
+            return {}
+        path = self.root / str(decision_rel)
+        payload = read_json(path, {})
+        return payload if isinstance(payload, dict) else {}
+
+    def swr_required(self, slice_: dict[str, Any]) -> bool:
+        if slice_.get("lane") != "swr_preferred":
+            return False
+        lane_mode = self.policy.get("lanes", {}).get("swr_preferred", "compile_with_decision")
+        if lane_mode == "use_swr":
+            return True
+        return self.lane_decision_payload(slice_).get("decision") == "use_swr"
+
+    def swr_evidence_path(self, slice_: dict[str, Any]) -> Path:
+        rel = slice_.get("swr_evidence") or f"docs/evidence/{slice_.get('slug', str(slice_['id']).lower())}-swr-playbook-evidence.json"
+        return self.root / str(rel)
+
+    def swr_evidence_matches_playbook(self, slice_: dict[str, Any], playbook: Path) -> bool:
+        evidence = self.swr_evidence_path(slice_)
+        if not playbook.exists() or not evidence.exists():
+            return False
+        payload = read_json(evidence, {})
+        return (
+            isinstance(payload, dict)
+            and payload.get("status") == "ok"
+            and payload.get("tool") == "keel-swr"
+            and payload.get("playbook") == str(playbook.relative_to(self.root))
+            and payload.get("playbook_sha256") == file_sha256(playbook)
+        )
+
+    def extract_swr_manifest_path(self, result: CommandResult) -> Path | None:
+        for stream in (result.stdout, result.stderr):
+            for line in reversed(stream.splitlines()):
+                value = line.strip()
+                if not value or "run_manifest.json" not in value:
+                    continue
+                candidate = Path(value)
+                if not candidate.is_absolute():
+                    candidate = self.root / candidate
+                if candidate.exists() and candidate.name == "run_manifest.json":
+                    return candidate
+        return None
+
+    def extract_response_output_text(self, response_json: dict[str, Any]) -> str:
+        texts: list[str] = []
+        output = response_json.get("output")
+        if not isinstance(output, list):
+            return ""
+        for item in output:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "output_text" and isinstance(part.get("text"), str):
+                    text = part["text"].strip()
+                    if text:
+                        texts.append(text)
+        return "\n\n".join(texts).strip()
+
+    def materialize_swr_playbook_from_manifest(self, slice_: dict[str, Any], manifest_path: Path) -> dict[str, str] | None:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict) or payload.get("status") != "completed":
+            return None
+        stages = payload.get("stages")
+        if not isinstance(stages, list):
+            return None
+        final_stage = next(
+            (
+                stage
+                for stage in stages
+                if isinstance(stage, dict)
+                and stage.get("stage_id") == "final_markdown_playbook"
+                and stage.get("status") == "completed"
+            ),
+            None,
+        )
+        if not isinstance(final_stage, dict):
+            return None
+
+        response_rel = final_stage.get("response_json_path")
+        if not isinstance(response_rel, str) or not response_rel:
+            return None
+        response_path = Path(response_rel)
+        if not response_path.is_absolute():
+            response_path = self.root / response_path
+        if not response_path.exists():
+            return None
+
+        response_json = read_json(response_path, {})
+        if not isinstance(response_json, dict):
+            return None
+        playbook_text = self.extract_response_output_text(response_json)
+        if not playbook_text:
+            return None
+
+        playbook = self.root / slice_["playbook"]
+        playbook.parent.mkdir(parents=True, exist_ok=True)
+        playbook.write_text(playbook_text.rstrip() + "\n", encoding="utf-8")
+        self.log_event(
+            "swr_playbook_materialized",
+            {
+                "manifest": str(manifest_path.relative_to(self.root)),
+                "response_json": str(response_path.relative_to(self.root)),
+                "playbook": str(playbook.relative_to(self.root)),
+                "playbook_sha256": file_sha256(playbook),
+            },
+            slice_id=slice_["id"],
+        )
+        return {
+            "manifest": str(manifest_path.relative_to(self.root)),
+            "response_json": str(response_path.relative_to(self.root)),
+        }
+
+    def materialize_swr_task_pack(self) -> CommandResult:
+        swr_policy = self.policy.get("swr", {})
+        keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
+        source_rel = str(swr_policy.get("task_pack_source") or "tools/staged-workflow-runner/automation/task_packs/gstack_design_to_po_playbook")
+        workdir_rel = str(swr_policy.get("task_pack_workdir") or ".local/autokeel/swr/task_packs/gstack_design_to_po_playbook")
+        source = keel_root / source_rel
+        target = self.root / workdir_rel
+
+        if not source.exists() or not source.is_dir():
+            return CommandResult([], 27, "", f"SWR task pack missing: {source}")
+        if self.dry_run:
+            return CommandResult(["test", "-d", str(source)], 0, "dry run SWR task-pack materialization planned", "")
+
+        if target.exists():
+            shutil.rmtree(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(
+            source,
+            target,
+            ignore=shutil.ignore_patterns(".local", ".pytest_cache", "__pycache__", "*.pyc"),
+        )
+        return CommandResult(["cp", "-R", str(source), str(target)], 0, str(target.relative_to(self.root)), "")
+
+    def build_swr_command(self, slice_: dict[str, Any]) -> list[str]:
+        swr_policy = self.policy.get("swr", {})
+        keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
+        keel_swr = keel_root / "bin" / "keel-swr"
+        workflow_rel = str(swr_policy.get("workflow_file") or ".local/autokeel/swr/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json")
+        output_root_rel = str(swr_policy.get("output_root") or ".local/autokeel/swr/runs")
+        max_wait_seconds = str(swr_policy.get("max_wait_seconds", 5))
+
+        cmd = [
+            str(keel_swr),
+            "run",
+            "--root",
+            str(self.root),
+            "--workflow-file",
+            workflow_rel,
+            "--run-name",
+            f"autokeel-{str(slice_['id']).lower()}-{slug_ts()}",
+            "--output-root",
+            output_root_rel,
+            "--wait",
+            "--max-wait-seconds",
+            max_wait_seconds,
+        ]
+        for candidate in (self.design_doc_path(slice_), self.root / str(slice_.get("autoplan", "")), self.root / str(slice_.get("brief", ""))):
+            if candidate.exists():
+                cmd.extend(["--primary-job-input", str(candidate.relative_to(self.root))])
+        return cmd
+
+    def ensure_swr_playbook(self, slice_: dict[str, Any]) -> CommandResult:
+        playbook = self.root / slice_["playbook"]
+        if self.swr_evidence_matches_playbook(slice_, playbook):
+            return CommandResult(["test", "-f", str(self.swr_evidence_path(slice_))], 0, "SWR playbook evidence exists", "")
+
+        if playbook.exists():
+            if self.dry_run:
+                self.log_event(
+                    "dry_run_non_swr_playbook_archive_skipped",
+                    {"playbook": str(playbook.relative_to(self.root))},
+                    slice_id=slice_["id"],
+                )
+            else:
+                self.archive_playbook_for_replan(slice_)
+
+        autoplan_result = self.ensure_autoplan(slice_)
+        if not autoplan_result.ok:
+            return autoplan_result
+
+        task_pack = self.materialize_swr_task_pack()
+        if not task_pack.ok:
+            failure = self.record_failure(
+                slice_["id"],
+                "compile_failure",
+                "high",
+                "SWR task pack required for swr_preferred lane is missing.",
+                "Blocked S02 before compiler fallback; do not run PO until SWR can generate the playbook.",
+                None,
+            )
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason=task_pack.stderr)
+            return task_pack
+
+        cmd = self.build_swr_command(slice_)
+        if self.dry_run:
+            self.log_event("swr_playbook_generation_planned", {"command": " ".join(shlex.quote(part) for part in cmd)}, slice_id=slice_["id"])
+            return CommandResult(cmd, 0, "dry run SWR playbook generation planned", "")
+
+        result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        self.log_event(
+            "swr_playbook_generation_passed" if result.ok else "swr_playbook_generation_failed",
+            {"exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
+            slice_id=slice_["id"],
+        )
+        if not result.ok:
+            return result
+
+        swr_source: dict[str, str] | None = None
+        manifest_path = self.extract_swr_manifest_path(result)
+        if manifest_path is not None and not playbook.exists():
+            swr_source = self.materialize_swr_playbook_from_manifest(slice_, manifest_path)
+
+        if not playbook.exists():
+            failure = self.record_failure(
+                slice_["id"],
+                "compile_failure",
+                "high",
+                "SWR run did not materialize the canonical markdown_playbook_v1 artifact.",
+                "Stopped before PO. Continue the SWR review-bundle flow and materialize the Stage 5 output as the canonical playbook.",
+                manifest_path or self.root / str(self.policy.get("swr", {}).get("output_root", ".local/autokeel/swr/runs")),
+            )
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="SWR playbook not materialized")
+            return CommandResult(cmd, 28, result.stdout, "SWR completed without materializing the canonical playbook")
+
+        evidence = self.swr_evidence_path(slice_)
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(
+            evidence,
+            {
+                "status": "ok",
+                "tool": "keel-swr",
+                "slice": slice_["id"],
+                "command": cmd,
+                "playbook": str(playbook.relative_to(self.root)),
+                "playbook_sha256": file_sha256(playbook),
+                "swr_source": swr_source or {},
+                "recorded_at": now_iso(),
+            },
+        )
+        return result
+
     def ensure_playbook(self, slice_: dict[str, Any]) -> CommandResult:
         playbook = self.root / slice_["playbook"]
 
@@ -875,6 +1134,9 @@ Return only a Markdown autoplan suitable to save at:
                 )
             else:
                 self.archive_playbook_for_replan(slice_)
+
+        if self.swr_required(slice_):
+            return self.ensure_swr_playbook(slice_)
 
         if playbook.exists():
             return CommandResult(["test", "-f", str(playbook)], 0, "playbook exists", "")
@@ -1346,7 +1608,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return CommandResult([], 0, "lane decision not required", "")
         policy = self.policy.get("lanes", {})
         mode = policy.get("swr_preferred", "compile_with_decision")
-        if mode != "compile_with_decision":
+        if mode not in {"compile_with_decision", "use_swr"}:
             return CommandResult([], 0, "lane decision mode not required", "")
         existing = slice_.get("lane_decision")
         if existing or slice_.get("risk") == "high":
@@ -1375,13 +1637,19 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 reason=description[:500],
             )
             return CommandResult([], 25, "", description)
+        decision_value = "use_swr" if mode == "use_swr" else "compile_with_keel_compile"
+        reason = (
+            "SWR-preferred lane is enforced by policy; the staged-workflow-runner must generate the playbook."
+            if decision_value == "use_swr"
+            else "SWR-preferred lane is preserved as policy metadata; current AutoKeel milestone uses compiler path with explicit downgrade decision."
+        )
         decision = self.write_decision(
-            f"{slice_['id']}-swr-downgrade",
+            f"{slice_['id']}-swr-use" if decision_value == "use_swr" else f"{slice_['id']}-swr-downgrade",
             {
                 "status": "accepted",
                 "slice": slice_["id"],
                 "lane": lane,
-                "decision": "compile_with_keel_compile",
+                "decision": decision_value,
                 "risk": slice_.get("risk", "medium"),
                 "review_artifacts": slice_.get("review_artifacts", []),
                 "commands": [
@@ -1393,7 +1661,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                     }
                 ],
                 "verdict": "pass",
-                "reason": "SWR-preferred lane is preserved as policy metadata; current AutoKeel milestone uses compiler path with explicit downgrade decision.",
+                "reason": reason,
             },
         )
         self.mark_slice_status(slice_["id"], slice_.get("status", "pending"), lane_decision=str(decision.relative_to(self.root)))
@@ -1753,7 +2021,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 {"exit_code": compiled.exit_code, "stderr": compiled.stderr[-2000:]},
                 slice_id=slice_["id"],
             )
-            if compiled.exit_code not in {20, 21, 22, 24}:
+            if compiled.exit_code not in {20, 21, 22, 24, 27, 28}:
                 failure = self.record_failure(
                     slice_["id"],
                     "compile_failure",
