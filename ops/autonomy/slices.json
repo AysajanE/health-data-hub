@@ -55,14 +55,14 @@
     ],
     "autoplan": "docs/gstack/s02-mood-api-autoplan.md",
     "brief": "docs/briefs/s02-mood-api.autonomous-brief.md",
-    "failure_path": "ops/autonomy/failures/S02-compile_failure-20260527T152508-0400-2758e5e7.md",
+    "failure_path": "ops/autonomy/failures/S02-compile_failure-20260527T152824-0400-f739e071.md",
     "id": "S02",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S02-lane-decision-20260526T112916-0400.json",
     "name": "Mood API loop",
     "playbook": "docs/playbooks/s02-mood-api.playbook.md",
     "required": true,
-    "retry_count": 0,
+    "retry_count": 1,
     "review_artifacts": [
       "docs/reviews/s02-autonomous-security-review.md",
       "docs/reviews/s02-autonomous-privacy-review.md"
@@ -71,7 +71,7 @@
     "slug": "s02-mood-api",
     "status": "replan_required",
     "stopped_run_id": "RUN_20260526T173005Z_e4b9f767c7024cc9b3741d04055ec544",
-    "updated_at": "2026-05-27T15:27:01-04:00"
+    "updated_at": "2026-05-27T15:28:24-04:00"
   },
   {
     "acceptance": [

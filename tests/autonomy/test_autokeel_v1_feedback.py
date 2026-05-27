@@ -334,6 +334,7 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertIn("keel-swr", result.argv[0])
             self.assertIn("run", result.argv)
             self.assertIn("automation/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json", result.argv)
+            self.assertIn("--skip-token-count", result.argv)
             self.assertNotIn("keel-compile", " ".join(result.argv))
             events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
             self.assertIn("dry_run_non_swr_playbook_archive_skipped", events)

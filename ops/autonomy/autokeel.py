@@ -1176,6 +1176,8 @@ Return only a Markdown autoplan suitable to save at:
             "--max-wait-seconds",
             max_wait_seconds,
         ]
+        if bool(swr_policy.get("skip_token_count", False)):
+            cmd.append("--skip-token-count")
         for candidate in (self.design_doc_path(slice_), self.root / str(slice_.get("autoplan", "")), self.root / str(slice_.get("brief", ""))):
             if candidate.exists():
                 cmd.extend(["--primary-job-input", str(candidate.relative_to(self.root))])

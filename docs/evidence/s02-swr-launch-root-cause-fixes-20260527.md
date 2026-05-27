@@ -33,6 +33,29 @@ python -m pytest tests/autonomy/test_autokeel_v1_feedback.py::AutoKeelV1Feedback
 ```
 
 Result: pass.
+
+## Issue 3: SWR Token Preflight Sends Unsupported Background Parameter
+
+Root cause:
+
+- After provider auth and task-pack materialization were fixed, `keel-swr` reached request construction.
+- The staged-workflow-runner token preflight path called `/responses/input_tokens` with a request payload that included `background`.
+- The service rejected token preflight with `400 Bad Request: Unknown parameter: 'background'`.
+- The staged-workflow-runner runbook states to use `--skip-token-count` for live runs unless the service-side token-preflight issue is known to be resolved.
+
+Fix:
+
+- AutoKeel SWR policy now sets `skip_token_count: true`.
+- AutoKeel includes `--skip-token-count` in the `keel-swr run` command.
+- This does not skip playbook validation, SWR evidence recording, PO supervision, review validation, slice verification, or tracked-data checks.
+
+Verification:
+
+```bash
+python -m pytest tests/autonomy/test_autokeel_v1_feedback.py::AutoKeelV1FeedbackTests::test_swr_preferred_playbook_generation_routes_through_keel_swr -q
+```
+
+Result: pass.
 ## Issue 2: SWR Task-Pack Manifest Root Mismatch
 
 Root cause:
