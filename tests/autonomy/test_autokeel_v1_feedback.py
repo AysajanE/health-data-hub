@@ -338,6 +338,51 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertIn("dry_run_non_swr_playbook_archive_skipped", events)
             self.assertIn("swr_playbook_generation_planned", events)
 
+    def test_swr_missing_openai_key_blocks_as_provider_auth_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp, mock.patch.dict(os.environ, {}, clear=True):
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+
+            class MissingOpenAIKeyRunner:
+                def __init__(self):
+                    self.calls: list[list[str]] = []
+
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    self.calls.append(list(argv))
+                    joined = " ".join(str(part) for part in argv)
+                    if "scripts.verify_v1" in joined:
+                        return CommandResult(list(argv), 1, '{"status":"error","errors":["incomplete"]}', "")
+                    if "scripts.evaluate_tripwires" in joined:
+                        return CommandResult(list(argv), 0, '{"status":"ok","errors":[],"warnings":[]}', "")
+                    if "keel-swr" in str(argv[0]):
+                        return CommandResult(list(argv), 1, "", "OPENAI_API_KEY is not set in the environment and was not found in .env.\n")
+                    return CommandResult(list(argv), 0, "", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            runner = MissingOpenAIKeyRunner()
+            op.runner = runner
+
+            code = op._run_once_impl(requested_slice="S02", force_slice=True)
+
+            self.assertEqual(code, 26)
+            self.assertTrue(any("keel-swr" in call[0] for call in runner.calls))
+            self.assertFalse((root / "docs/playbooks/s02-mood-api.playbook.md").exists())
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertEqual(updated["status"], "blocked_external")
+            self.assertEqual(updated["reason"], "missing OPENAI_API_KEY for keel-swr")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("provider_auth_failure", ledger)
+            self.assertNotIn("compile_failure", ledger)
+            evidence_files = list((root / "docs/evidence").glob("s02-mood-api-swr-provider-auth-failure-*.json"))
+            self.assertEqual(len(evidence_files), 1)
+            evidence = json.loads(evidence_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(evidence["status"], "blocked_external")
+            self.assertEqual(evidence["failure_class"], "provider_auth_failure")
+            self.assertFalse(evidence["environment_probe"]["OPENAI_API_KEY_set_in_process_env"])
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("swr_provider_auth_failed", events)
+
     def test_completed_swr_manifest_materializes_canonical_playbook(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -1073,6 +1073,44 @@ Return only a Markdown autoplan suitable to save at:
             slice_id=slice_["id"],
         )
 
+    def swr_provider_auth_failure(self, result: CommandResult) -> bool:
+        text = f"{result.stdout}\n{result.stderr}".lower()
+        return (
+            "openai_api_key is not set" in text
+            or ("openai_api_key" in text and "not found in .env" in text)
+            or ("api key" in text and any(marker in text for marker in ("not set", "missing", "not found")))
+        )
+
+    def write_swr_provider_auth_evidence(self, slice_: dict[str, Any], command: list[str], result: CommandResult) -> Path:
+        evidence = self.root / "docs" / "evidence" / f"{str(slice_['slug'])}-swr-provider-auth-failure-{slug_ts()}.json"
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(
+            evidence,
+            {
+                "status": "blocked_external",
+                "tool": "keel-swr",
+                "slice": slice_["id"],
+                "failure_class": "provider_auth_failure",
+                "root_cause": "SWR playbook generation requires real OpenAI API credentials, but OPENAI_API_KEY was not available to the AutoKeel process and no repo-local .env was present.",
+                "command": command,
+                "exit_code": result.exit_code,
+                "stdout_tail": result.stdout[-2000:],
+                "stderr_tail": result.stderr[-2000:],
+                "environment_probe": {
+                    "OPENAI_API_KEY_set_in_process_env": bool(os.environ.get("OPENAI_API_KEY")),
+                    "env_file_exists": (self.root / ".env").exists(),
+                },
+                "next_action": "Provide real local OpenAI API credentials via the process environment or an ignored repo-local .env, then rerun AutoKeel for S02.",
+                "recorded_at": now_iso(),
+            },
+        )
+        self.log_event(
+            "swr_provider_auth_evidence_recorded",
+            {"evidence": str(evidence.relative_to(self.root)), "exit_code": result.exit_code},
+            slice_id=slice_["id"],
+        )
+        return evidence
+
     def require_swr_evidence_before_po(self, slice_: dict[str, Any], playbook: Path) -> CommandResult:
         if not self.swr_required(slice_) or self.swr_evidence_matches_playbook(slice_, playbook):
             return CommandResult([], 0, "SWR playbook evidence verified", "")
@@ -1187,6 +1225,32 @@ Return only a Markdown autoplan suitable to save at:
             slice_id=slice_["id"],
         )
         if not result.ok:
+            if self.swr_provider_auth_failure(result):
+                evidence = self.write_swr_provider_auth_evidence(slice_, cmd, result)
+                failure = self.record_failure(
+                    slice_["id"],
+                    "provider_auth_failure",
+                    "high",
+                    "SWR playbook generation could not start because OpenAI API credentials were missing.",
+                    "Blocked the slice before PO. Do not fall back to compiler or fabricate credentials; provide real local credentials and rerun.",
+                    evidence,
+                )
+                self.mark_slice_status(
+                    slice_["id"],
+                    "blocked_external",
+                    failure_path=str(failure.relative_to(self.root)),
+                    reason="missing OPENAI_API_KEY for keel-swr",
+                )
+                self.log_event(
+                    "swr_provider_auth_failed",
+                    {
+                        "evidence": str(evidence.relative_to(self.root)),
+                        "exit_code": result.exit_code,
+                        "stderr": result.stderr[-2000:],
+                    },
+                    slice_id=slice_["id"],
+                )
+                return CommandResult(cmd, 26, result.stdout, "missing OPENAI_API_KEY for keel-swr")
             return result
 
         swr_source: dict[str, str] | None = None
@@ -2112,7 +2176,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 {"exit_code": compiled.exit_code, "stderr": compiled.stderr[-2000:]},
                 slice_id=slice_["id"],
             )
-            if compiled.exit_code not in {20, 21, 22, 24, 27, 28}:
+            if compiled.exit_code not in {20, 21, 22, 24, 26, 27, 28}:
                 failure = self.record_failure(
                     slice_["id"],
                     "compile_failure",
