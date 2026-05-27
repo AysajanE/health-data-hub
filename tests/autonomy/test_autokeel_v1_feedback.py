@@ -333,10 +333,32 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertTrue(result.ok, result.stderr)
             self.assertIn("keel-swr", result.argv[0])
             self.assertIn("run", result.argv)
+            self.assertIn("automation/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json", result.argv)
             self.assertNotIn("keel-compile", " ".join(result.argv))
             events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
             self.assertIn("dry_run_non_swr_playbook_archive_skipped", events)
             self.assertIn("swr_playbook_generation_planned", events)
+
+    def test_swr_task_pack_materializes_under_manifest_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            fake_keel = prepare_s02_swr_inputs(root)
+            source_corpus = fake_keel / "tools/staged-workflow-runner/automation/task_packs/gstack_design_to_po_playbook/corpus"
+            source_corpus.mkdir(parents=True)
+            (source_corpus / "markdown_playbook_v1_contract.md").write_text("contract\n", encoding="utf-8")
+
+            op = AutoKeel(root=root, dry_run=False)
+            result = op.materialize_swr_task_pack()
+
+            self.assertTrue(result.ok, result.stderr)
+            self.assertEqual(result.stdout, "automation/task_packs/gstack_design_to_po_playbook")
+            self.assertTrue(
+                (
+                    root
+                    / "automation/task_packs/gstack_design_to_po_playbook/corpus/markdown_playbook_v1_contract.md"
+                ).exists()
+            )
 
     def test_swr_missing_openai_key_blocks_as_provider_auth_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp, mock.patch.dict(os.environ, {}, clear=True):

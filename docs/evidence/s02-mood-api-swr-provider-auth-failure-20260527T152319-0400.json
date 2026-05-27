@@ -1,0 +1,37 @@
+{
+  "command": [
+    "/Users/aeziz-local/keel/bin/keel-swr",
+    "run",
+    "--root",
+    "/Users/aeziz-local/health-data-hub",
+    "--workflow-file",
+    ".local/autokeel/swr/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json",
+    "--run-name",
+    "autokeel-s02-20260527T152318-0400",
+    "--output-root",
+    ".local/autokeel/swr/runs",
+    "--wait",
+    "--max-wait-seconds",
+    "5",
+    "--primary-job-input",
+    "docs/gstack/health-data-hub-office-hours.md",
+    "--primary-job-input",
+    "docs/gstack/s02-mood-api-autoplan.md",
+    "--primary-job-input",
+    "docs/briefs/s02-mood-api.autonomous-brief.md"
+  ],
+  "environment_probe": {
+    "OPENAI_API_KEY_set_in_process_env": false,
+    "env_file_exists": false
+  },
+  "exit_code": 1,
+  "failure_class": "provider_auth_failure",
+  "next_action": "Provide real local OpenAI API credentials via the process environment or an ignored repo-local .env, then rerun AutoKeel for S02.",
+  "recorded_at": "2026-05-27T15:23:19-04:00",
+  "root_cause": "SWR playbook generation requires real OpenAI API credentials, but OPENAI_API_KEY was not available to the AutoKeel process and no repo-local .env was present.",
+  "slice": "S02",
+  "status": "blocked_external",
+  "stderr_tail": "OPENAI_API_KEY is not set in the environment and was not found in .env.\n",
+  "stdout_tail": "",
+  "tool": "keel-swr"
+}

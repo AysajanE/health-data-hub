@@ -21,8 +21,8 @@ lanes:
 
 swr:
   task_pack_source: tools/staged-workflow-runner/automation/task_packs/gstack_design_to_po_playbook
-  task_pack_workdir: .local/autokeel/swr/task_packs/gstack_design_to_po_playbook
-  workflow_file: .local/autokeel/swr/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json
+  task_pack_workdir: automation/task_packs/gstack_design_to_po_playbook
+  workflow_file: automation/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json
   output_root: .local/autokeel/swr/runs
   max_wait_seconds: 5
 

@@ -1134,7 +1134,7 @@ Return only a Markdown autoplan suitable to save at:
         swr_policy = self.policy.get("swr", {})
         keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
         source_rel = str(swr_policy.get("task_pack_source") or "tools/staged-workflow-runner/automation/task_packs/gstack_design_to_po_playbook")
-        workdir_rel = str(swr_policy.get("task_pack_workdir") or ".local/autokeel/swr/task_packs/gstack_design_to_po_playbook")
+        workdir_rel = str(swr_policy.get("task_pack_workdir") or "automation/task_packs/gstack_design_to_po_playbook")
         source = keel_root / source_rel
         target = self.root / workdir_rel
 
@@ -1157,7 +1157,7 @@ Return only a Markdown autoplan suitable to save at:
         swr_policy = self.policy.get("swr", {})
         keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
         keel_swr = keel_root / "bin" / "keel-swr"
-        workflow_rel = str(swr_policy.get("workflow_file") or ".local/autokeel/swr/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json")
+        workflow_rel = str(swr_policy.get("workflow_file") or "automation/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json")
         output_root_rel = str(swr_policy.get("output_root") or ".local/autokeel/swr/runs")
         max_wait_seconds = str(swr_policy.get("max_wait_seconds", 5))
 
