@@ -1,0 +1,112 @@
+# S02 SWR Validation Repair Plan
+
+Status: blocked_compile_inputs
+
+## Root Cause
+
+The SWR-generated playbook failed `scripts/validate_playbook_autonomous.py`
+before plan-orchestrator execution. AutoKeel rejected the playbook and planned
+a stage-specific SWR repair instead of marking the slice `replan_required`.
+
+## Validation Command
+
+```bash
+python -m scripts.validate_playbook_autonomous /Users/aeziz-local/health-data-hub/docs/playbooks/s02-mood-api.playbook.md --risk high --json
+```
+
+Exit code: 1
+
+## Validation Errors
+
+```json
+[
+  "forbidden autonomous playbook language: human approval",
+  "row 3: v2 scope creep matched /\\bprospective\\b/"
+]
+```
+
+## Repair Plan
+
+```json
+{
+  "created_at": "2026-05-27T19:47:11-04:00",
+  "rationale": "The source run reached Stage 5 and validation failed on the terminal artifact; rerun Stage 5 only unless the Stage 4 handoff is later shown invalid.",
+  "reason": "SWR-generated playbook failed autonomous validation before PO.",
+  "rejected_evidence_archive": null,
+  "rejected_playbook_archive": "ops/autonomy/failures/archived_playbooks/S02-20260527T194711-0400-s02-mood-api.playbook.md",
+  "repair_action": "rerun_single_stage",
+  "repair_stage_id": "final_markdown_playbook",
+  "run_dir": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook",
+  "run_id": "run_20260527_193037_b4691e05",
+  "run_manifest": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook/run_manifest.json",
+  "source_review_bundle": ".local/autokeel/swr/review_lane/S02-run_20260527_193037_b4691e05-gate_and_contract_review/gate_and_contract_review.review_bundle.json",
+  "source_review_stage_id": "gate_and_contract_review",
+  "stage4_missing_terms": [],
+  "stage5_missing_terms": [],
+  "status": "planned",
+  "swr_source": {
+    "manifest": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook/run_manifest.json",
+    "response_json": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook/stages/05_final_markdown_playbook/response.final.json",
+    "response_markdown": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook/stages/05_final_markdown_playbook/response.final.md",
+    "run_dir": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook",
+    "run_id": "run_20260527_193037_b4691e05",
+    "stage_id": "final_markdown_playbook"
+  },
+  "validation_errors": [
+    "forbidden autonomous playbook language: human approval",
+    "row 3: v2 scope creep matched /\\bprospective\\b/"
+  ],
+  "validation_exit_code": 1
+}
+```
+
+## Guardrail
+
+AutoKeel must not start a fresh full SWR workflow for this failure. A future
+operator-authorized continuation must use the recorded `run_dir` and
+`repair_stage_id` with `keel-swr run --run-dir ... --stage ...`.
+
+## Root Cause Update: Validator False Positive
+
+Follow-up inspection showed the Stage 5 playbook did not assert active human
+approval or introduce prospective v2 scope. The rejected phrases appeared only
+inside negative boundary language:
+
+- `Active human approval gates are not emitted.`
+- `No human signoff was performed.`
+- `no prospective predictions`
+- `no prospective output`
+
+The fundamental root cause was an over-broad validator check in
+`scripts/validate_playbook_autonomous.py`. The validator matched banned terms
+globally or row-wide without recognizing explicit negative, forbidden, or
+substitution context.
+
+Fixes implemented:
+
+- The validator now checks each banned-language occurrence in local context.
+- Negative and boundary forms such as `no`, `not`, `never`, `without`,
+  `must not`, `in lieu of`, `instead of`, `not emitted`, `not performed`,
+  `forbidden`, and `prohibited` are accepted when they modify the banned term.
+- v2-scope terms are still rejected when active, but accepted when explicitly
+  negated or marked out of scope.
+- AutoKeel now tries to revalidate a rejected archived SWR playbook before
+  spending a new SWR repair stage. If the archived playbook validates under the
+  corrected validator, AutoKeel restores it and continues without calling
+  `keel-swr`.
+
+Verification:
+
+```bash
+python scripts/validate_playbook_autonomous.py ops/autonomy/failures/archived_playbooks/S02-20260527T194711-0400-s02-mood-api.playbook.md --risk high --json
+python -m pytest tests/autonomy/test_validate_playbook_autonomous.py -q
+python -m pytest tests/autonomy/test_autokeel_v1_feedback.py -q
+python -m pytest tests/autonomy -q
+```
+
+Result:
+
+- Archived S02 playbook validation: `status=ok`, `row_count=7`.
+- Validator regression tests: `11 passed`.
+- AutoKeel recovery regression tests: included in `34 passed`.
+- Full autonomy suite: `107 passed`.

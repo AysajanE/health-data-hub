@@ -1,10 +1,11 @@
 {
   "active_run": null,
+  "active_swr_run": null,
   "completed_slices": [
     "S01"
   ],
   "current_slice": "S02",
-  "last_event_id": 165,
+  "last_event_id": 332,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [

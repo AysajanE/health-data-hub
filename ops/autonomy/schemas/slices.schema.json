@@ -32,7 +32,21 @@
       "depends_on": {"type": "array", "items": {"type": "string"}},
       "deliverables": {"type": "array", "items": {"type": "string"}},
       "review_artifacts": {"type": "array", "items": {"type": "string"}},
-      "acceptance": {"type": "array", "items": {"type": "string"}}
+      "acceptance": {"type": "array", "items": {"type": "string"}},
+      "swr_validation_repair": {
+        "type": "object",
+        "properties": {
+          "status": {"type": "string"},
+          "repair_action": {"type": ["string", "null"]},
+          "repair_stage_id": {"type": ["string", "null"]},
+          "source_review_stage_id": {"type": ["string", "null"]},
+          "source_review_bundle": {"type": ["string", "null"]},
+          "run_id": {"type": ["string", "null"]},
+          "run_dir": {"type": ["string", "null"]},
+          "run_manifest": {"type": ["string", "null"]},
+          "rationale": {"type": ["string", "null"]}
+        }
+      }
     }
   }
 }

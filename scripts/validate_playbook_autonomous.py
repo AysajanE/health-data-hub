@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-EMPTY_VALUES = {"", "none", "n/a", "na", "false", "no", "-", "null"}
+EMPTY_VALUES = {"", "none", "n/a", "na", "no", "-", "null"}
 BROAD_ROOTS = {".", "/", "src", "src/", "tests", "tests/", "test", "test/", "docs", "docs/"}
 FORBIDDEN_ROOT_PREFIXES = (".git", ".local", ".env", ".codex", ".claude", "data", "data/", "private", "private/")
 FORBIDDEN_COMMAND_PATTERNS = ("mark-manual-gate", "keel-run mark-manual-gate")
@@ -150,6 +150,47 @@ def contains_forbidden_executable_command(value: str, forbidden_commands: tuple[
     return None
 
 
+def term_pattern(term: str) -> str:
+    return r"\b" + re.escape(term).replace(r"\ ", r"\s+") + r"\b"
+
+
+def allowed_negative_policy_context(text: str, term: str) -> bool:
+    pattern = term_pattern(term)
+    allowed_patterns = (
+        rf"\b(?:no|not|never|without)\b[^.\n|]{{0,100}}{pattern}",
+        rf"\b(?:do not|does not|did not|must not|must never|should not|cannot)\b[^.\n|]{{0,100}}{pattern}",
+        rf"\b(?:in lieu of|instead of)\b[^.\n|]{{0,80}}{pattern}",
+        rf"{pattern}[^.\n|]{{0,100}}\b(?:not emitted|not claimed|not performed|not part|not required|forbidden|prohibited)\b",
+        rf"{pattern}[^.\n|]{{0,100}}\b(?:is|are)\s+(?:forbidden|prohibited|not emitted|not claimed|not performed)\b",
+    )
+    return any(re.search(allowed, text, re.I) for allowed in allowed_patterns)
+
+
+def forbidden_banned_language_present(text: str, term: str) -> bool:
+    pattern = re.compile(term_pattern(term), re.I)
+    for match in pattern.finditer(text):
+        start = max(0, match.start() - 120)
+        end = min(len(text), match.end() + 120)
+        if allowed_negative_policy_context(text[start:end], term):
+            continue
+        return True
+    return False
+
+
+def allowed_v2_scope_context(text: str, match: re.Match[str]) -> bool:
+    start = max(0, match.start() - 120)
+    end = min(len(text), match.end() + 120)
+    window = text[start:end]
+    matched = re.escape(match.group(0))
+    allowed_patterns = (
+        rf"\b(?:no|not|never|without)\b[^.\n|]{{0,100}}{matched}",
+        rf"\b(?:do not|does not|did not|must not|must never|should not|cannot)\b[^.\n|]{{0,100}}{matched}",
+        rf"{matched}[^.\n|]{{0,100}}\b(?:not in scope|out of scope|outside scope|deferred|forbidden|prohibited|not implemented|not returned)\b",
+        rf"\b(?:not in scope|out of scope|outside scope|deferred|forbidden|prohibited)\b[^.\n|]{{0,100}}{matched}",
+    )
+    return any(re.search(allowed, window, re.I) for allowed in allowed_patterns)
+
+
 def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | None = None) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -178,17 +219,7 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
     for term in banned_language:
         if not term:
             continue
-        # Allow explicit negation phrases used to explain policy, but do not
-        # allow positive approval language.
-        allowed_negations = {
-            f"not {term}",
-            f"no {term}",
-            f"never {term}",
-            f"without {term}",
-            f"forbidden: {term}",
-            f"{term} is forbidden",
-        }
-        if term in lowered and not any(phrase in lowered for phrase in allowed_negations):
+        if forbidden_banned_language_present(lowered, term):
             errors.append(f"forbidden autonomous playbook language: {term}")
     for term in required_gate_terms:
         if term and term not in lowered:
@@ -257,7 +288,8 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
 
         lower_row = row_text(row).lower()
         for pattern in V2_SCOPE_PATTERNS:
-            if re.search(pattern, lower_row, re.I) and "not in scope" not in lower_row and "defer" not in lower_row:
+            match = re.search(pattern, lower_row, re.I)
+            if match and not allowed_v2_scope_context(lower_row, match):
                 errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
 
     return {"status": "ok" if not errors else "error", "errors": errors, "warnings": warnings, "row_count": len(candidate_rows)}

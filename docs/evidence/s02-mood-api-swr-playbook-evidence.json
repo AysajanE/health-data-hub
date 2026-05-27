@@ -1,0 +1,27 @@
+{
+  "command": [
+    "restore-revalidated-swr-playbook",
+    "ops/autonomy/failures/archived_playbooks/S02-20260527T194711-0400-s02-mood-api.playbook.md",
+    "docs/playbooks/s02-mood-api.playbook.md"
+  ],
+  "playbook": "docs/playbooks/s02-mood-api.playbook.md",
+  "playbook_sha256": "16ff5de9170b75cb49e5fe603f8e69858bc693a95d280976c506e3e7ca87ef54",
+  "recorded_at": "2026-05-27T19:56:41-04:00",
+  "slice": "S02",
+  "status": "ok",
+  "swr_source": {
+    "manifest": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook/run_manifest.json",
+    "response_json": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook/stages/05_final_markdown_playbook/response.final.json",
+    "response_markdown": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook/stages/05_final_markdown_playbook/response.final.md",
+    "run_dir": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook",
+    "run_id": "run_20260527_193037_b4691e05",
+    "stage_id": "final_markdown_playbook"
+  },
+  "tool": "keel-swr",
+  "validation": {
+    "command": "python -m scripts.validate_playbook_autonomous /Users/aeziz-local/health-data-hub/docs/playbooks/s02-mood-api.playbook.md --risk high --json",
+    "exit_code": 0,
+    "stderr_tail": "",
+    "stdout_tail": "{\n  \"errors\": [],\n  \"row_count\": 7,\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n"
+  }
+}

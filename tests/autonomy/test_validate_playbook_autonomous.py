@@ -7,6 +7,9 @@ from pathlib import Path
 from scripts.validate_playbook_autonomous import validate_playbook
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
 VALID_PLAYBOOK = """# Playbook
 
 ## Ordered Execution Plan
@@ -23,6 +26,12 @@ class ValidatePlaybookTests(unittest.TestCase):
             path = Path(temp) / "playbook.md"
             path.write_text(text, encoding="utf-8")
             return validate_playbook(path)
+
+    def validate_high_risk_text(self, text: str):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "playbook.md"
+            path.write_text(text, encoding="utf-8")
+            return validate_playbook(path, policy_path=ROOT / "ops/autonomy/policy.yaml", risk="high")
 
     def test_valid_autonomous_row_passes(self) -> None:
         report = self.validate_text(VALID_PLAYBOOK)
@@ -64,6 +73,67 @@ class ValidatePlaybookTests(unittest.TestCase):
         report = self.validate_text(text)
         self.assertEqual(report["status"], "error")
         self.assertTrue(any("v2 scope creep" in error for error in report["errors"]))
+
+    def test_v2_scope_boundary_language_passes_when_negated(self) -> None:
+        text = """# Playbook
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Keep protected retrospective placeholders with no prospective output and no recommendations. | src/api/app.py; tests/test_api_security.py | src/api/app.py; tests/test_api_security.py | true | python -m pytest tests/test_api_security.py -q | tests pass | none | none |
+"""
+        report = self.validate_text(text)
+        self.assertEqual(report["status"], "ok", report)
+
+    def test_human_approval_claim_fails(self) -> None:
+        text = """# Playbook
+
+Human approval is granted for this autonomous run.
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|
+| 01 | Record autonomous review evidence | docs/reviews/s02.md | docs/reviews/s02.md | false | test -s docs/reviews/s02.md | none | docs/evidence/s02-review.json |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("human approval" in error for error in report["errors"]))
+
+    def test_human_approval_boundary_language_passes_when_negated(self) -> None:
+        text = """# Playbook
+
+autonomous_gate_review evidence is required.
+Active human approval gates are not emitted, and review artifacts are used in lieu of human approval.
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Record autonomous review evidence | docs/reviews/s02.md | docs/reviews/s02.md | false | test -s docs/reviews/s02.md | review artifact validates | none | docs/evidence/s02-review.json |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "ok", report)
+
+    def test_high_risk_old_swr_stage5_shape_fails(self) -> None:
+        text = """# S02 Mood API Playbook
+
+autonomous_gate_review evidence is required.
+
+| step_id | phase | action | why_now | owner_type | prerequisites | repo_surfaces | deliverable | exit_criteria | allowed_write_roots | requires_red_green |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 01 | Mood API | Implement API | now | ai | none | src/api/mood.py | src/api/mood.py | tests pass | src/api | true |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("required_verification_commands" in error for error in report["errors"]))
+
+    def test_high_risk_docs_false_row_with_verification_passes(self) -> None:
+        text = """# S02 Mood API Playbook
+
+autonomous_gate_review evidence is required before PO.
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Record autonomous review evidence | docs/reviews/s02.md | docs/reviews | false | python scripts/check_autonomous_review_exists.py S02 | review artifact validates | none | docs/evidence/s02-review.json |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "ok", report)
 
 
 if __name__ == "__main__":

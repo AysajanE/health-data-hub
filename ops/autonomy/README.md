@@ -46,6 +46,43 @@ The dry-run event log must include `swr_playbook_generation_planned`. It must
 not include `playbook_compile_passed` or a `keel-compile compile` command for
 S02. A real S02 iteration may start PO only after the SWR-generated playbook
 has matching SWR evidence and passes autonomous playbook validation.
+When AutoKeel materializes the SWR task pack, it appends this repo's
+autonomous validation overlay to the task-pack contract and Stage 3 through
+Stage 5 prompts so `required_verification_commands` and
+`autonomous_gate_review` are generated before the playbook reaches
+`scripts/validate_playbook_autonomous.py`.
+
+`keel-swr` uses background Responses API work and the first stage can remain
+queued or in progress for minutes to hours. A short local wait timeout with a
+remote `last_status=in_progress` is not a compile failure. AutoKeel records the
+run in `autonomy_state.json` as `active_swr_run`, marks S02
+`waiting_for_playbook`, and refuses to launch another SWR run while the active
+manifest remains non-terminal. The S02 readiness gate also scans local SWR run
+manifests so it blocks duplicate starts even before state adoption. Do not poll
+the live response at minute cadence; resume or inspect it only on the configured
+operator-approved low-cadence interval. The current S02 SWR monitor interval is
+300 seconds.
+
+When AutoKeel later observes a non-terminal SWR stage at `waiting_for_review`,
+it must use the SWR supervisor lane before continuing the run: classify the
+stage, invoke the operator/reviewer/consolidation/acceptance cycle, create the
+approved review bundle, and continue the same SWR run with `--review-bundle`.
+AutoKeel must not launch the next SWR stage from an unreviewed stage output.
+If an approved review bundle already exists for the same run, stage, response
+artifacts, and hashes, AutoKeel reuses that bundle on retry instead of running a
+duplicate supervisor review cycle.
+
+If the terminal SWR playbook materializes but fails
+`scripts/validate_playbook_autonomous.py`, AutoKeel must not convert that into
+`replan_required` or start a fresh five-stage SWR workflow. It archives the
+rejected playbook, records a `swr_validation_repair` plan on the slice, and
+blocks with `blocked_compile_inputs`. The repair plan preserves the source
+`run_manifest`, `run_dir`, validator errors, and the smallest rerunnable stage.
+For Stage 4 contract drift, AutoKeel resets only Stage 4 and downstream Stage 5
+before any authorized repair. For Stage 5-only drift, it resets only Stage 5.
+A future repair command must use `keel-swr run --run-dir ... --stage ...` plus
+the required approved review bundle; it must not use `--run-name` or
+`--output-root`.
 
 For PO execution, AutoKeel creates a local ignored `automation/` shim that
 points at the installed Keel plan-orchestrator runtime. This lets the
