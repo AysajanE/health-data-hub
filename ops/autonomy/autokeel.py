@@ -319,6 +319,7 @@ class AutoKeel:
         statuses = self.policy.get("slice_statuses", {})
         self.actionable_statuses = set(statuses.get("actionable", self.ACTIONABLE_STATUSES))
         self.blocked_statuses = set(statuses.get("blocked", self.BLOCKED_STATUSES))
+        self._swr_materializations: dict[str, dict[str, Any]] = {}
 
     def snapshot_dry_run_state(self) -> dict[Path, bytes | None]:
         snapshots: dict[Path, bytes | None] = {}
@@ -906,6 +907,36 @@ Return only a Markdown autoplan suitable to save at:
             and payload.get("playbook_sha256") == file_sha256(playbook)
         )
 
+    def archive_swr_evidence_for_replan(self, slice_: dict[str, Any], archive_dir: Path | None = None) -> Path | None:
+        evidence = self.swr_evidence_path(slice_)
+        if not evidence.exists():
+            return None
+        target_dir = archive_dir or self.root / "ops" / "autonomy" / "failures" / "archived_playbooks"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        archive = target_dir / f"{slice_['id']}-{slug_ts()}-{evidence.name}"
+        os.replace(evidence, archive)
+        self.log_event(
+            "swr_evidence_archived_for_replan",
+            {"from": str(evidence.relative_to(self.root)), "to": str(archive.relative_to(self.root))},
+            slice_id=slice_["id"],
+        )
+        return archive
+
+    def archive_swr_playbook_and_evidence(self, slice_: dict[str, Any], reason: str) -> tuple[Path | None, Path | None]:
+        playbook_archive = self.archive_playbook_for_replan(slice_)
+        archive_dir = playbook_archive.parent if playbook_archive is not None else None
+        evidence_archive = self.archive_swr_evidence_for_replan(slice_, archive_dir=archive_dir)
+        self.log_event(
+            "swr_artifacts_archived_for_replan",
+            {
+                "reason": reason,
+                "playbook_archive": str(playbook_archive.relative_to(self.root)) if playbook_archive else None,
+                "evidence_archive": str(evidence_archive.relative_to(self.root)) if evidence_archive else None,
+            },
+            slice_id=slice_["id"],
+        )
+        return playbook_archive, evidence_archive
+
     def extract_swr_manifest_path(self, result: CommandResult) -> Path | None:
         for stream in (result.stdout, result.stderr):
             for line in reversed(stream.splitlines()):
@@ -991,6 +1022,76 @@ Return only a Markdown autoplan suitable to save at:
             "response_json": str(response_path.relative_to(self.root)),
         }
 
+    def record_swr_materialization(self, slice_: dict[str, Any], command: list[str], source: dict[str, str] | None = None) -> None:
+        self._swr_materializations[slice_["id"]] = {
+            "command": list(command),
+            "swr_source": source or {},
+        }
+
+    def write_swr_playbook_evidence(self, slice_: dict[str, Any], validation: CommandResult) -> None:
+        playbook = self.root / slice_["playbook"]
+        if not playbook.exists():
+            return
+        materialization = self._swr_materializations.get(slice_["id"], {})
+        evidence = self.swr_evidence_path(slice_)
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        validation_command = validation.argv or [
+            "python",
+            "-m",
+            "scripts.validate_playbook_autonomous",
+            str(playbook),
+            "--risk",
+            str(slice_.get("risk", "")),
+            "--json",
+        ]
+        write_json_atomic(
+            evidence,
+            {
+                "status": "ok",
+                "tool": "keel-swr",
+                "slice": slice_["id"],
+                "command": materialization.get("command", []),
+                "playbook": str(playbook.relative_to(self.root)),
+                "playbook_sha256": file_sha256(playbook),
+                "swr_source": materialization.get("swr_source", {}),
+                "validation": {
+                    "command": " ".join(shlex.quote(part) for part in validation_command),
+                    "exit_code": validation.exit_code,
+                    "stdout_tail": validation.stdout[-2000:],
+                    "stderr_tail": validation.stderr[-2000:],
+                },
+                "recorded_at": now_iso(),
+            },
+        )
+        self.log_event(
+            "swr_playbook_evidence_recorded",
+            {
+                "evidence": str(evidence.relative_to(self.root)),
+                "playbook": str(playbook.relative_to(self.root)),
+                "playbook_sha256": file_sha256(playbook),
+            },
+            slice_id=slice_["id"],
+        )
+
+    def require_swr_evidence_before_po(self, slice_: dict[str, Any], playbook: Path) -> CommandResult:
+        if not self.swr_required(slice_) or self.swr_evidence_matches_playbook(slice_, playbook):
+            return CommandResult([], 0, "SWR playbook evidence verified", "")
+        failure = self.record_failure(
+            slice_["id"],
+            "swr_evidence_missing",
+            "high",
+            "SWR-required slice attempted PO start without matching SWR playbook evidence.",
+            "Blocked PO start before execution.",
+            playbook if playbook.exists() else None,
+        )
+        self.mark_slice_status(
+            slice_["id"],
+            "blocked_compile_inputs",
+            failure_path=str(failure.relative_to(self.root)),
+            reason="missing matching SWR playbook evidence",
+        )
+        return CommandResult([], 29, "", "missing matching SWR playbook evidence")
+
     def materialize_swr_task_pack(self) -> CommandResult:
         swr_policy = self.policy.get("swr", {})
         keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
@@ -1055,7 +1156,7 @@ Return only a Markdown autoplan suitable to save at:
                     slice_id=slice_["id"],
                 )
             else:
-                self.archive_playbook_for_replan(slice_)
+                self.archive_swr_playbook_and_evidence(slice_, "existing playbook lacks matching SWR evidence")
 
         autoplan_result = self.ensure_autoplan(slice_)
         if not autoplan_result.ok:
@@ -1105,21 +1206,7 @@ Return only a Markdown autoplan suitable to save at:
             self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="SWR playbook not materialized")
             return CommandResult(cmd, 28, result.stdout, "SWR completed without materializing the canonical playbook")
 
-        evidence = self.swr_evidence_path(slice_)
-        evidence.parent.mkdir(parents=True, exist_ok=True)
-        write_json_atomic(
-            evidence,
-            {
-                "status": "ok",
-                "tool": "keel-swr",
-                "slice": slice_["id"],
-                "command": cmd,
-                "playbook": str(playbook.relative_to(self.root)),
-                "playbook_sha256": file_sha256(playbook),
-                "swr_source": swr_source or {},
-                "recorded_at": now_iso(),
-            },
-        )
+        self.record_swr_materialization(slice_, cmd, swr_source)
         return result
 
     def ensure_playbook(self, slice_: dict[str, Any]) -> CommandResult:
@@ -1573,6 +1660,10 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if not playbook.exists():
             self.log_event("playbook_missing", {"playbook": str(playbook.relative_to(self.root))}, slice_id=slice_["id"])
             return CommandResult([], 3, "", f"missing playbook: {playbook}")
+        swr_guard = self.require_swr_evidence_before_po(slice_, playbook)
+        if not swr_guard.ok:
+            return swr_guard
+
         checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
         if not checkpoint.ok:
             return checkpoint
@@ -2039,7 +2130,11 @@ Use local files and commands only. If evidence is missing, write a failing revie
 
         validation = self.validate_playbook(slice_)
         if not validation.ok:
-            evidence_path = self.archive_playbook_for_replan(slice_) or (self.root / slice_["playbook"])
+            if self.swr_required(slice_):
+                playbook_archive, evidence_archive = self.archive_swr_playbook_and_evidence(slice_, "SWR playbook validation failed")
+                evidence_path = playbook_archive or evidence_archive or (self.root / slice_["playbook"])
+            else:
+                evidence_path = self.archive_playbook_for_replan(slice_) or (self.root / slice_["playbook"])
             self.record_failure(
                 slice_["id"],
                 "unsafe_write_root",
@@ -2050,6 +2145,15 @@ Use local files and commands only. If evidence is missing, write a failing revie
             )
             self.mark_slice_status(slice_["id"], "replan_required")
             return 3
+
+        if (
+            self.swr_required(slice_)
+            and (
+                slice_["id"] in self._swr_materializations
+                or not self.swr_evidence_matches_playbook(slice_, self.root / slice_["playbook"])
+            )
+        ):
+            self.write_swr_playbook_evidence(slice_, validation)
 
         if self.dry_run:
             self.log_event("dry_run_po_start_skipped", {"playbook": slice_.get("playbook")}, slice_id=slice_["id"])

@@ -35,8 +35,11 @@ The issue was not the PO runner or the generated playbook content. The fundament
 - `scripts/lane_decision_policy.py` now rejects high-risk `swr_preferred` decisions unless `decision` is exactly `use_swr`.
 - The S02 lane decision artifact now records `decision: use_swr`.
 - AutoKeel now routes SWR-required slices through `keel-swr run` and refuses to accept an existing playbook unless a matching `docs/evidence/<slice>-swr-playbook-evidence.json` file proves it came from `keel-swr`.
+- AutoKeel now refuses direct PO start for SWR-required slices unless the canonical playbook has matching SWR evidence.
+- AutoKeel now records final SWR evidence only after the materialized playbook passes autonomous playbook validation.
+- S02 readiness now rejects non-null `active_run` state and rejects a canonical S02 playbook that lacks matching SWR evidence.
 - The stale compiler-generated S02 playbook artifacts were moved out of `docs/playbooks/` to `ops/autonomy/failures/archived_playbooks/S02-20260526T133005-0400-invalid-compiler-lane/`.
-- Regression tests now cover high-risk compiler downgrade rejection and SWR dry-run routing.
+- Regression tests now cover high-risk compiler downgrade rejection, exact lane-review artifact matching, SWR dry-run routing, stale playbook archiving, SWR evidence hash mismatch regeneration, direct PO-start blocking, readiness active-run rejection, readiness stale-playbook rejection, policy pinning, and validation-before-evidence behavior.
 
 ## Current Posture
 

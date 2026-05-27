@@ -32,6 +32,7 @@ def load_json(path: Path, default: Any) -> Any:
 
 
 def verify_s02_readiness(root: Path) -> dict[str, Any]:
+    root = root.resolve()
     errors: list[str] = []
     warnings: list[str] = []
     checks: dict[str, Any] = {}
@@ -67,6 +68,28 @@ def verify_s02_readiness(root: Path) -> dict[str, Any]:
         review_report = check_review(root, "S02") if s02 else {"status": "error", "errors": ["S02 missing"]}
         if review_report["status"] != "ok":
             errors.extend(review_report["errors"])
+
+        state = load_json(root / "ops" / "autonomy" / "autonomy_state.json", {})
+        active_run = state.get("active_run") if isinstance(state, dict) else None
+        checks["active_run"] = active_run
+        if active_run:
+            errors.append(f"active_run must be null before S02 readiness: {active_run}")
+
+        playbook_rel = s02.get("playbook")
+        if isinstance(playbook_rel, str) and playbook_rel:
+            playbook = root / playbook_rel
+            checks["canonical_playbook_exists"] = playbook.exists()
+            if playbook.exists():
+                from ops.autonomy.autokeel import AutoKeel
+
+                op = AutoKeel(root)
+                swr_evidence = op.swr_evidence_path(s02)
+                checks["swr_evidence"] = str(swr_evidence.relative_to(root))
+                checks["swr_evidence_exists"] = swr_evidence.exists()
+                if op.swr_required(s02) and not op.swr_evidence_matches_playbook(s02, playbook):
+                    errors.append(
+                        f"S02 canonical playbook exists without matching SWR evidence: {s02.get('playbook')}"
+                    )
 
     tracked = check_no_tracked_data(root)
     if tracked["status"] != "ok":

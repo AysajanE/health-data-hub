@@ -41,6 +41,81 @@ def copy_fixture(dst: Path) -> None:
     (dst / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
 
 
+def prepare_s02_swr_inputs(root: Path) -> Path:
+    fake_keel = root / "fake-keel"
+    task_pack_source = fake_keel / "tools/staged-workflow-runner/automation/task_packs/gstack_design_to_po_playbook"
+    (task_pack_source / "workflows").mkdir(parents=True)
+    (task_pack_source / "workflows/gstack_design_to_po_playbook.workflow.json").write_text("{}", encoding="utf-8")
+    (fake_keel / "bin").mkdir(parents=True)
+
+    policy = (root / "ops/autonomy/policy.yaml").read_text(encoding="utf-8")
+    policy = policy.replace("keel_root: /Users/aeziz-local/keel", f"keel_root: {fake_keel}")
+    (root / "ops/autonomy/policy.yaml").write_text(policy, encoding="utf-8")
+
+    (root / "docs/gstack").mkdir(parents=True, exist_ok=True)
+    (root / "docs/briefs").mkdir(parents=True, exist_ok=True)
+    (root / "docs/playbooks").mkdir(parents=True, exist_ok=True)
+    (root / "docs/evidence").mkdir(parents=True, exist_ok=True)
+    (root / "docs/gstack/health-data-hub-office-hours.md").write_text("S02 design", encoding="utf-8")
+    (root / "docs/briefs/s02-mood-api.autonomous-brief.md").write_text("S02 brief", encoding="utf-8")
+    (root / "docs/gstack/s02-mood-api-autoplan.md").write_text(
+        "# S02 autoplan\n\n"
+        "Deliverables and verification are listed below.\n\n"
+        "Manual gates are forbidden; use autonomous_gate_review evidence instead.\n\n"
+        "## Implementation Tasks\n\n"
+        "- [ ] Implement the Mood API loop.\n"
+        "  Files: `src/api/mood.py`; `tests/test_api_security.py`\n"
+        "  Verify: `python -m pytest tests/test_api_security.py -q`\n",
+        encoding="utf-8",
+    )
+    return fake_keel
+
+
+def write_completed_swr_manifest(root: Path, text: str) -> Path:
+    run_dir = root / ".local/autokeel/swr/runs/test-run"
+    stage_dir = run_dir / "stages/05_final_markdown_playbook"
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    response_path = stage_dir / "response.final.json"
+    response_path.write_text(
+        json.dumps(
+            {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": text}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "status": "completed",
+        "stages": [
+            {
+                "stage_id": "final_markdown_playbook",
+                "status": "completed",
+                "response_json_path": str(response_path.relative_to(root)),
+            }
+        ],
+    }
+    manifest_path = run_dir / "run_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest_path
+
+
+class CompletedSwrRunner:
+    def __init__(self, root: Path, text: str = "# S02 Mood API Playbook\n\nmarkdown_playbook_v1\n"):
+        self.root = root
+        self.text = text
+        self.calls: list[list[str]] = []
+
+    def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+        self.calls.append(list(argv))
+        manifest_path = write_completed_swr_manifest(self.root, self.text)
+        return CommandResult(list(argv), 0, str(manifest_path.relative_to(self.root)) + "\n", "")
+
+
 class AutoKeelV1FeedbackTests(unittest.TestCase):
     def test_command_runner_timeout_returns_124(self) -> None:
         runner = CommandRunner(ROOT, {"manual_gates": {"forbidden_commands": []}}, timeout=0.01)
@@ -339,11 +414,162 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             playbook = root / "docs/playbooks/s02-mood-api.playbook.md"
             self.assertTrue(playbook.exists())
             self.assertEqual(playbook.read_text(encoding="utf-8"), "# S02 Mood API Playbook\n\nmarkdown_playbook_v1\n")
-            evidence = json.loads((root / "docs/evidence/s02-mood-api-swr-playbook-evidence.json").read_text(encoding="utf-8"))
-            self.assertEqual(evidence["tool"], "keel-swr")
-            self.assertEqual(evidence["swr_source"]["manifest"], ".local/autokeel/swr/runs/test-run/run_manifest.json")
+            self.assertFalse((root / "docs/evidence/s02-mood-api-swr-playbook-evidence.json").exists())
+            self.assertEqual(
+                op._swr_materializations["S02"]["swr_source"]["manifest"],
+                ".local/autokeel/swr/runs/test-run/run_manifest.json",
+            )
             events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
             self.assertIn("swr_playbook_materialized", events)
+
+    def test_s02_po_start_blocks_without_matching_swr_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            playbook = root / "docs/playbooks/s02-mood-api.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("# stale S02 playbook\n", encoding="utf-8")
+
+            op = AutoKeel(root=root, dry_run=False)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+            result = op.start_or_resume_po(slice_)
+
+            self.assertEqual(result.exit_code, 29)
+            self.assertIn("missing matching SWR playbook evidence", result.stderr)
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertEqual(updated["status"], "blocked_compile_inputs")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("swr_evidence_missing", ledger)
+
+    def test_s02_stale_compiler_playbook_is_archived_before_swr(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            stale = root / "docs/playbooks/s02-mood-api.playbook.md"
+            stale.write_text("compiler stale playbook\n", encoding="utf-8")
+            runner = CompletedSwrRunner(root)
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = runner
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertTrue(result.ok, result.stderr)
+            self.assertTrue(any("keel-swr" in call[0] for call in runner.calls))
+            archived = list((root / "ops/autonomy/failures/archived_playbooks").glob("S02-*-s02-mood-api.playbook.md"))
+            self.assertEqual(len(archived), 1)
+            self.assertEqual(stale.read_text(encoding="utf-8"), "# S02 Mood API Playbook\n\nmarkdown_playbook_v1\n")
+
+    def test_s02_swr_evidence_hash_mismatch_forces_regeneration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            playbook = root / "docs/playbooks/s02-mood-api.playbook.md"
+            playbook.write_text("old swr playbook\n", encoding="utf-8")
+            evidence = root / "docs/evidence/s02-mood-api-swr-playbook-evidence.json"
+            write_json_atomic(
+                evidence,
+                {
+                    "status": "ok",
+                    "tool": "keel-swr",
+                    "slice": "S02",
+                    "playbook": "docs/playbooks/s02-mood-api.playbook.md",
+                    "playbook_sha256": "not-the-current-hash",
+                },
+            )
+            runner = CompletedSwrRunner(root, text="# regenerated\n\nmarkdown_playbook_v1\n")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = runner
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertTrue(result.ok, result.stderr)
+            self.assertTrue(any("keel-swr" in call[0] for call in runner.calls))
+            self.assertEqual(playbook.read_text(encoding="utf-8"), "# regenerated\n\nmarkdown_playbook_v1\n")
+            self.assertFalse(evidence.exists())
+            archived_evidence = list((root / "ops/autonomy/failures/archived_playbooks").glob("S02-*-s02-mood-api-swr-playbook-evidence.json"))
+            self.assertEqual(len(archived_evidence), 1)
+
+    def test_s02_swr_output_must_validate_before_po_start(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+
+            class InvalidValidationRunner:
+                def __init__(self):
+                    self.calls: list[list[str]] = []
+
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    self.calls.append(list(argv))
+                    joined = " ".join(str(part) for part in argv)
+                    if "scripts.verify_v1" in joined:
+                        return CommandResult(list(argv), 1, '{"status":"error","errors":["incomplete"]}', "")
+                    if "scripts.evaluate_tripwires" in joined:
+                        return CommandResult(list(argv), 0, '{"status":"ok","errors":[],"warnings":[]}', "")
+                    if "keel-swr" in str(argv[0]):
+                        manifest_path = write_completed_swr_manifest(root, "# invalid SWR playbook\n")
+                        return CommandResult(list(argv), 0, str(manifest_path.relative_to(root)) + "\n", "")
+                    if "scripts.validate_playbook_autonomous" in joined:
+                        return CommandResult(list(argv), 1, '{"status":"error","errors":["invalid"]}', "")
+                    if "supervise" in joined and "run" in joined:
+                        return CommandResult(list(argv), 99, "", "PO should not start")
+                    return CommandResult(list(argv), 0, "", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = InvalidValidationRunner()
+            code = op._run_once_impl(requested_slice="S02", force_slice=True)
+
+            self.assertEqual(code, 3)
+            self.assertFalse((root / "docs/evidence/s02-mood-api-swr-playbook-evidence.json").exists())
+            self.assertFalse((root / "docs/playbooks/s02-mood-api.playbook.md").exists())
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("playbook_rejected", events)
+            self.assertNotIn("po_started", events)
+
+    def test_lane_decision_review_artifacts_must_match_slice_review_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            decision = root / "ops/autonomy/decisions/S02-mismatched-reviews.json"
+            decision.write_text(
+                json.dumps(
+                    {
+                        "created_at": "2026-05-27T00:00:00-04:00",
+                        "status": "accepted",
+                        "slice": "S02",
+                        "lane": "swr_preferred",
+                        "decision": "use_swr",
+                        "risk": "high",
+                        "review_artifacts": [
+                            "docs/reviews/s02-autonomous-security-review.md",
+                            "docs/reviews/unrelated-review.md",
+                        ],
+                        "commands": [{"command": "python scripts/verify_autonomy_preflight.py --json", "exit_code": 0}],
+                        "verdict": "pass",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            for item in slices:
+                if item["id"] == "S02":
+                    item["lane_decision"] = "ops/autonomy/decisions/S02-mismatched-reviews.json"
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_lane_decision(slice_)
+
+            self.assertFalse(result.ok)
+            self.assertIn("review_artifacts must match slice review_artifacts", result.stderr)
+
+    def test_policy_swr_preferred_is_pinned_to_use_swr(self) -> None:
+        op = AutoKeel(root=ROOT, dry_run=True)
+        self.assertEqual(op.policy.get("lanes", {}).get("swr_preferred"), "use_swr")
 
     def test_complete_status_clears_stale_failure_fields_and_records_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -33,6 +33,20 @@ changed by policy. `--readiness S02` runs the pre-launch readiness gate for
 S02, including lane-decision validation, review artifact validation, and
 tracked-data safety checks. It is not a slice completion gate.
 
+## S02 SWR Pre-Launch Runbook
+
+Before any S02 PO execution, run:
+
+```bash
+python -m ops.autonomy.autokeel --readiness S02
+python -m ops.autonomy.autokeel --once --dry-run --slice S02
+```
+
+The dry-run event log must include `swr_playbook_generation_planned`. It must
+not include `playbook_compile_passed` or a `keel-compile compile` command for
+S02. A real S02 iteration may start PO only after the SWR-generated playbook
+has matching SWR evidence and passes autonomous playbook validation.
+
 For PO execution, AutoKeel creates a local ignored `automation/` shim that
 points at the installed Keel plan-orchestrator runtime. This lets the
 plan-orchestrator resolve this product checkout as the repo under execution,

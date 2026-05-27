@@ -55,8 +55,13 @@ def validate_lane_decision_payload(payload: Any, slice_: dict[str, Any], rel_pat
     reviews = payload.get("review_artifacts")
     if not isinstance(reviews, list) or not all(isinstance(item, str) and item for item in reviews):
         errors.append(f"{slice_id}: lane_decision review_artifacts must be a non-empty string list: {rel_path}")
-    elif slice_.get("risk") == "high" and len(reviews) < 2:
-        errors.append(f"{slice_id}: high-risk lane_decision requires at least two review artifact paths: {rel_path}")
+    else:
+        if slice_.get("risk") == "high" and len(reviews) < 2:
+            errors.append(f"{slice_id}: high-risk lane_decision requires at least two review artifact paths: {rel_path}")
+        slice_reviews = set(slice_.get("review_artifacts", []))
+        decision_reviews = set(reviews)
+        if slice_reviews and decision_reviews != slice_reviews:
+            errors.append(f"{slice_id}: lane_decision review_artifacts must match slice review_artifacts")
 
     commands = payload.get("commands")
     if not isinstance(commands, list) or not commands:

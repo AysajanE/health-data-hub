@@ -109,13 +109,18 @@ The implementation must include or preserve tests that prove:
 - `mood_date` derivation is deterministic and timezone-aware.
 - No raw health data, tokens, DuckDB files, snapshots, quarantine payloads, or private evidence are tracked by git.
 
-## Required implementation-time commands before S02 completion
+## Base S02 acceptance commands
 
 These commands must pass after S02 implementation and before S02 is marked complete:
 
 - `python -m pytest tests/test_api_security.py tests/test_mood_date.py tests/test_mood_correction.py -q`
 - `python scripts/check_no_tracked_data.py`
 - `python scripts/check_autonomous_review_exists.py S02`
+
+## Outer completion gate
+
+This command is the outer completion gate and must not be added to the S02 acceptance list because it runs the slice acceptance commands internally:
+
 - `python scripts/verify_slice.py S02 --json`
 
 ## Non-blocking observations
