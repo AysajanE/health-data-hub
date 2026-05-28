@@ -89,10 +89,13 @@ points at the installed Keel plan-orchestrator runtime. This lets the
 plan-orchestrator resolve this product checkout as the repo under execution,
 while still using the Keel runtime as the execution kernel.
 
-AutoKeel passes `--max-auto-resume-attempts 0` to supervised PO runs and
-resumes. Deterministic escalations must park for root-cause diagnosis rather
-than silently consuming repeated PO attempts. Fix the playbook, toolchain, or
-local evidence contract first, then relaunch through AutoKeel.
+AutoKeel passes `--max-auto-resume-attempts 0` to new supervised PO runs and
+normal resumes. Deterministic escalations must park for root-cause diagnosis
+rather than silently consuming repeated PO attempts. After the matching
+`audit_failure` has been closed with local root-cause evidence, AutoKeel permits
+one bounded supervised resume of the escalated item. If that repaired attempt
+parks again, the next root cause must be diagnosed before another resume is
+allowed.
 
 ## Safety Rules
 

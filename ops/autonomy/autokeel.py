@@ -597,6 +597,22 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
     def po_max_auto_resume_attempts(self) -> int:
         return int(self.policy.get("loop", {}).get("po_max_auto_resume_attempts", 0))
 
+    def po_repaired_escalation_resume_attempts(self) -> int:
+        return int(self.policy.get("loop", {}).get("po_repaired_escalation_resume_attempts", 1))
+
+    def open_failures(self, slice_id: str, failure_class: str | None = None, run_id: str | None = None) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for row in iter_jsonl(self.failure_path):
+            if row.get("slice") != slice_id:
+                continue
+            if failure_class and row.get("failure_class") != failure_class:
+                continue
+            if run_id and row.get("run_id") != run_id:
+                continue
+            if row.get("open", True):
+                rows.append(row)
+        return rows
+
     def checkpoint_allowed_pre_po_changes(self, slice_id: str) -> CommandResult:
         status = self._git_status_paths()
         if status is None or not status:
@@ -3092,6 +3108,48 @@ Use local files and commands only. If evidence is missing, write a failing revie
             )
             return checkpoint
 
+        max_auto_resume_attempts = self.po_max_auto_resume_attempts()
+        status = self.inspect_po_status(str(run_id))
+        terminal = str(status.get("terminal_state") or status.get("state") or "unknown")
+        if terminal == "escalated":
+            open_audit_failures = self.open_failures(slice_["id"], "audit_failure", str(run_id))
+            if open_audit_failures:
+                self.log_event(
+                    "po_escalated_resume_blocked_open_failure",
+                    {
+                        "run_id": run_id,
+                        "open_failures": len(open_audit_failures),
+                        "required_action": "close audit_failure with local root-cause evidence before one bounded resume",
+                    },
+                    slice_id=slice_["id"],
+                )
+                return CommandResult(
+                    [],
+                    54,
+                    "",
+                    "cannot resume escalated PO while audit_failure remains open; close it with local evidence after root-cause repair",
+                )
+            max_auto_resume_attempts = self.po_repaired_escalation_resume_attempts()
+            self.log_event(
+                "po_escalated_resume_after_repair_authorized",
+                {"run_id": run_id, "max_auto_resume_attempts": max_auto_resume_attempts},
+                slice_id=slice_["id"],
+            )
+
+        checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
+        if not checkpoint.ok:
+            self.log_event(
+                "po_resume_precheck_failed",
+                {
+                    "run_id": run_id,
+                    "exit_code": checkpoint.exit_code,
+                    "stdout": checkpoint.stdout[-2000:],
+                    "stderr": checkpoint.stderr[-2000:],
+                },
+                slice_id=slice_["id"],
+            )
+            return checkpoint
+
         result = self.runner.run(
             self.plan_orchestrator_command(
                 "supervise",
@@ -3101,7 +3159,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 "--max-wait-seconds",
                 str(self.po_supervisor_wait_seconds()),
                 "--max-auto-resume-attempts",
-                str(self.po_max_auto_resume_attempts()),
+                str(max_auto_resume_attempts),
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},

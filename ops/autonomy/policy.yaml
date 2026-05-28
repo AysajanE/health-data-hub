@@ -158,6 +158,7 @@ loop:
   po_timeout_seconds: 7200
   po_supervisor_wait_seconds: 5
   po_max_auto_resume_attempts: 0
+  po_repaired_escalation_resume_attempts: 1
   heartbeat_path: ops/autonomy/heartbeats/latest.json
 
 commands:

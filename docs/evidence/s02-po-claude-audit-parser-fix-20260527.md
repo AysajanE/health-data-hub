@@ -121,3 +121,31 @@ validate_playbook_autonomous: status ok, row_count 7, errors []
 autokeel --doctor: status ok, git_clean warning only from this recovery change set
 git diff --check: clean
 ```
+
+## Repaired PO Resume Guard
+
+The first relaunch after the route fix confirmed that AutoKeel no longer entered SWR, but it also exposed a second recovery gap. AutoKeel invoked supervised PO resume with:
+
+```text
+--max-auto-resume-attempts 0
+```
+
+Because the existing PO run was already parked in `escalated`, the supervisor correctly refused to reset item 02 and immediately parked the run again. That preserved bounded retry behavior, but it meant AutoKeel had no safe path for an operator-approved repaired retry after the root cause was fixed.
+
+AutoKeel now keeps the default PO retry posture at zero for new runs and normal resumes. For an active PO run that is already `escalated`, it requires the matching `audit_failure` to be closed with local evidence first. Only then does it allow one repaired supervised resume by passing:
+
+```text
+--max-auto-resume-attempts 1
+```
+
+Regression tests added:
+
+```bash
+python -m pytest tests/autonomy/test_autokeel.py::AutoKeelTests::test_escalated_active_run_requires_closed_audit_failure tests/autonomy/test_autokeel.py::AutoKeelTests::test_closed_escalated_audit_failure_allows_one_repaired_resume tests/autonomy/test_autokeel.py::AutoKeelTests::test_active_same_slice_run_invokes_supervise_resume -q
+```
+
+Observed result:
+
+```text
+3 passed in 0.22s
+```

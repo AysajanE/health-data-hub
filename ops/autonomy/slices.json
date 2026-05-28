@@ -55,13 +55,12 @@
     ],
     "autoplan": "docs/gstack/s02-mood-api-autoplan.md",
     "brief": "docs/briefs/s02-mood-api.autonomous-brief.md",
-    "failure_path": "ops/autonomy/failures/S02-state_divergence-20260527T214934-0400-1adac342.md",
+    "failure_path": "ops/autonomy/failures/S02-audit_failure-20260527T215335-0400-3e7520fd.md",
     "id": "S02",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S02-lane-decision-20260526T112916-0400.json",
     "name": "Mood API loop",
     "playbook": "docs/playbooks/s02-mood-api.playbook.md",
-    "reason": "restored PO recovery path after unintended SWR launch",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -74,7 +73,7 @@
     "status": "pending",
     "stopped_swr_response_id": "resp_0f966e52b0a03b8c006a179e46624881948f5eb3b97766731e",
     "stopped_swr_run_id": "run_20260528_014537_dc4c7a0d",
-    "updated_at": "2026-05-27T21:49:34-04:00"
+    "updated_at": "2026-05-27T21:53:35-04:00"
   },
   {
     "acceptance": [

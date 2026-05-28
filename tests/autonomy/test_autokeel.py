@@ -266,6 +266,105 @@ Manual gates are forbidden.
             self.assertEqual(active["run_id"], "RUN_TEST")
             self.assertIn("last_seen_at", active)
 
+    def test_escalated_active_run_requires_closed_audit_failure(self) -> None:
+        calls: list[list[str]] = []
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                calls.append(list(argv))
+                if list(argv)[:3] == ["python", "-m", "scripts.keel_status_digest"]:
+                    return CommandResult(list(argv), 0, '{"terminal_state": "escalated"}', "")
+                raise AssertionError("resume command should not run while audit_failure is open")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            failure = {
+                "ts": now,
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "failure_class": "audit_failure",
+                "severity": "high",
+                "description": "PO escalated the slice.",
+                "action_taken": "Recorded escalation for root-cause diagnosis.",
+                "evidence_path": "ops/autonomy/failures/S01-audit_failure.md",
+                "open": True,
+            }
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(json.dumps(failure) + "\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertEqual(result.exit_code, 54)
+            self.assertIn("audit_failure remains open", result.stderr)
+            self.assertEqual(len(calls), 1)
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("po_escalated_resume_blocked_open_failure", events)
+
+    def test_closed_escalated_audit_failure_allows_one_repaired_resume(self) -> None:
+        seen: dict[str, object] = {}
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                if list(argv)[:3] == ["python", "-m", "scripts.keel_status_digest"]:
+                    return CommandResult(list(argv), 0, '{"terminal_state": "escalated"}', "")
+                seen["argv"] = list(argv)
+                seen["cwd"] = cwd
+                seen["env"] = dict(env or {})
+                seen["timeout"] = timeout
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_TEST"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            failure = {
+                "ts": now,
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "failure_class": "audit_failure",
+                "severity": "high",
+                "description": "PO escalated the slice.",
+                "action_taken": "Recorded escalation for root-cause diagnosis.",
+                "evidence_path": "ops/autonomy/failures/S01-audit_failure.md",
+                "open": False,
+                "closure_evidence": "docs/evidence/root-cause.md",
+                "closure_note": "Root cause fixed.",
+            }
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(json.dumps(failure) + "\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(result.ok)
+            argv = seen["argv"]
+            self.assertEqual(argv[2:4], ["supervise", "resume"])
+            self.assertIn("--max-auto-resume-attempts", argv)
+            self.assertEqual(argv[argv.index("--max-auto-resume-attempts") + 1], "1")
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("po_escalated_resume_after_repair_authorized", events)
+
     def test_superseded_active_run_snapshot_starts_new_po_run(self) -> None:
         seen: dict[str, object] = {}
 
