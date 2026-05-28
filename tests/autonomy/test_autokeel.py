@@ -84,6 +84,23 @@ class AutoKeelTests(unittest.TestCase):
             self.assertNotIn(access_value, content)
             self.assertIn("[REDACTED]", content)
 
+    def test_log_event_uses_event_log_high_water_mark(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            state_path = root / "ops/autonomy/autonomy_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["last_event_id"] = 3
+            write_json_atomic(state_path, state)
+            events_path = root / "ops/autonomy/events.jsonl"
+            events_path.write_text(json.dumps({"event_id": 9, "event": "prior"}) + "\n", encoding="utf-8")
+
+            op = AutoKeel(root=root, dry_run=True)
+            event = op.log_event("after_prior", {"ok": True}, slice_id="S01")
+
+            self.assertEqual(event["event_id"], 10)
+            self.assertEqual(op.load_state()["last_event_id"], 10)
+
     def test_choose_next_slice_skips_complete_required_slices(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

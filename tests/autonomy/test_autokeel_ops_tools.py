@@ -57,6 +57,32 @@ class AutoKeelOpsToolTests(unittest.TestCase):
             self.assertFalse(rows[0]["open"])
             self.assertEqual(rows[0]["closure_evidence"], "docs/reviews/closure.md")
 
+    def test_close_failure_uses_event_log_high_water_mark(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence = root / "docs/reviews/closure.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Verdict: pass\n", encoding="utf-8")
+            state_path = root / "ops/autonomy/autonomy_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["last_event_id"] = 4
+            write_json_atomic(state_path, state)
+            events_path = root / "ops/autonomy/events.jsonl"
+            events_path.write_text(json.dumps({"event_id": 11, "event": "prior"}) + "\n", encoding="utf-8")
+            ledger = root / "ops/autonomy/failure_ledger.jsonl"
+            ledger.write_text(
+                json.dumps({"slice": "S01", "failure_class": "manual_gate_leak", "severity": "high", "open": True}) + "\n",
+                encoding="utf-8",
+            )
+
+            report = close_failure(root, "S01", "manual_gate_leak", "docs/reviews/closure.md", "closed in test")
+
+            self.assertEqual(report["status"], "ok")
+            events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(events[-1]["event_id"], 12)
+            self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["last_event_id"], 12)
+
     def test_close_failure_requeues_blocked_slice_when_failures_are_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

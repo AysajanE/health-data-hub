@@ -164,3 +164,33 @@ Fixes implemented:
 - The status digest now reports a supervisor `park` intervention as escalated,
   and AutoKeel clears active PO runs whose playbook snapshot hash no longer
   matches the canonical playbook.
+
+## Root Cause Update: Event ID High-Water Drift
+
+After AutoKeel cleared the superseded parked PO run and launched the corrected
+playbook, the new active-run save reused a stale in-memory state snapshot. That
+snapshot had an older `last_event_id`, so the following `po_started` and
+`po_status` rows reused event IDs that were already present in
+`ops/autonomy/events.jsonl`.
+
+Fixes implemented:
+
+- AutoKeel now chooses the next event ID from the maximum of
+  `autonomy_state.json:last_event_id` and the event-log high-water mark.
+- `scripts/close_failure.py` uses the same high-water rule for closure events.
+- `start_or_resume_po` reloads state after clearing a superseded active run
+  before saving a new active run.
+- Regression tests cover both AutoKeel event logging and failure-closure event
+  logging when state is behind the event log.
+
+Verification:
+
+```bash
+python -m pytest tests/autonomy/test_autokeel.py::AutoKeelTests::test_log_event_uses_event_log_high_water_mark tests/autonomy/test_autokeel.py::AutoKeelTests::test_superseded_active_run_snapshot_starts_new_po_run tests/autonomy/test_autokeel_ops_tools.py::AutoKeelOpsToolTests::test_close_failure_uses_event_log_high_water_mark -q
+python -m pytest tests/autonomy -q
+```
+
+Result:
+
+- Targeted high-water regression tests: `3 passed`.
+- Full autonomy suite: `116 passed`.

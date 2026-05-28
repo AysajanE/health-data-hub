@@ -345,6 +345,16 @@ class AutoKeel:
     def save_state(self, state: dict[str, Any]) -> None:
         write_json_atomic(self.state_path, state)
 
+    def last_event_id_from_log(self) -> int:
+        last_event_id = 0
+        for event in iter_jsonl(self.events_path):
+            try:
+                event_id = int(event.get("event_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            last_event_id = max(last_event_id, event_id)
+        return last_event_id
+
     def load_slices(self) -> list[dict[str, Any]]:
         payload = read_json(self.slices_path, [])
         if not isinstance(payload, list):
@@ -356,7 +366,7 @@ class AutoKeel:
 
     def log_event(self, event_type: str, details: dict[str, Any] | None = None, slice_id: str | None = None) -> dict[str, Any]:
         state = self.load_state()
-        event_id = int(state.get("last_event_id") or 0) + 1
+        event_id = max(int(state.get("last_event_id") or 0), self.last_event_id_from_log()) + 1
         payload = {
             "event_id": event_id,
             "ts": now_iso(),
@@ -3128,6 +3138,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                     failure_path=str(failure.relative_to(self.root)),
                     reason=f"active run playbook snapshot superseded: {mismatch_detail}",
                 )
+                state = self.load_state()
                 active = {}
             else:
                 if self.active_run_is_stale(active):
