@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, date, datetime
 import os
 import unittest
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import httpx
@@ -20,6 +21,14 @@ from src.api.dependencies import (
 )
 from src.api.schemas import MoodLogRequest, MoodLogResponse
 from src.api.security import InMemoryRateLimiter
+
+
+FAKE_MOOD_TOKEN = "test-only-mood-token"
+SIMULATED_SAME_HOST_IP = "198.51.100.10"
+SIMULATED_LAN_CLIENT_IP = "198.51.100.77"
+SIMULATED_REMOTE_IP = "203.0.113.77"
+LOOPBACK_IP = "127.0.0.1"
+VALID_TOKEN_HEADERS = {"X-Mood-Token": FAKE_MOOD_TOKEN}
 
 
 class MoodApiContractTest(unittest.TestCase):
@@ -97,31 +106,31 @@ class MoodApiContractTest(unittest.TestCase):
 
     def test_settings_can_be_injected_from_fake_mapping(self) -> None:
         fake_env = {
-            "MOOD_TOKEN": "fake-token",
-            "LAN_BIND_IP": "192.168.1.55",
+            "MOOD_TOKEN": FAKE_MOOD_TOKEN,
+            "LAN_BIND_IP": SIMULATED_SAME_HOST_IP,
             "HOME_TIMEZONE": "America/Toronto",
         }
-        original_values = dict(os.environ)
-        os.environ["MOOD_TOKEN"] = "real-token-should-not-be-used"
-        os.environ["LAN_BIND_IP"] = "10.0.0.9"
-        os.environ["HOME_TIMEZONE"] = "UTC"
-
-        try:
+        with patch.dict(
+            os.environ,
+            {
+                "MOOD_TOKEN": "real-token-should-not-be-used",
+                "LAN_BIND_IP": "not-an-ip",
+                "HOME_TIMEZONE": "Not/AZone",
+            },
+            clear=False,
+        ):
             settings = load_api_settings(fake_env)
-        finally:
-            os.environ.clear()
-            os.environ.update(original_values)
 
-        self.assertEqual(get_mood_token(settings), "fake-token")
-        self.assertEqual(get_lan_bind_ip(settings), "192.168.1.55")
+        self.assertEqual(get_mood_token(settings), FAKE_MOOD_TOKEN)
+        self.assertEqual(get_lan_bind_ip(settings), SIMULATED_SAME_HOST_IP)
         self.assertEqual(get_home_timezone(settings).key, "America/Toronto")
 
     def test_settings_reject_invalid_home_timezone(self) -> None:
         with self.assertRaises(ValidationError):
             load_api_settings(
                 {
-                    "MOOD_TOKEN": "fake-token",
-                    "LAN_BIND_IP": "192.168.1.55",
+                    "MOOD_TOKEN": FAKE_MOOD_TOKEN,
+                    "LAN_BIND_IP": SIMULATED_SAME_HOST_IP,
                     "HOME_TIMEZONE": "Not/AZone",
                 }
             )
@@ -129,8 +138,8 @@ class MoodApiContractTest(unittest.TestCase):
     def test_settings_default_home_timezone_fallback(self) -> None:
         settings = load_api_settings(
             {
-                "MOOD_TOKEN": "fake-token",
-                "LAN_BIND_IP": "192.168.1.55",
+                "MOOD_TOKEN": FAKE_MOOD_TOKEN,
+                "LAN_BIND_IP": SIMULATED_SAME_HOST_IP,
             }
         )
 
@@ -148,8 +157,8 @@ class _FrozenClock:
 class MoodApiSecurityRouteTest(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = build_api_settings(
-            mood_token="fake-token",
-            lan_bind_ip="192.168.1.55",
+            mood_token=FAKE_MOOD_TOKEN,
+            lan_bind_ip=SIMULATED_SAME_HOST_IP,
             home_timezone="America/Toronto",
         )
         self.clock = _FrozenClock(datetime(2026, 5, 24, 1, 0, tzinfo=UTC))
@@ -201,7 +210,7 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
         )
 
     def test_missing_token_returns_401(self) -> None:
-        response = self.request("POST", "/api/mood", client_host="192.168.1.77", json={"feeling": 6})
+        response = self.request("POST", "/api/mood", client_host=SIMULATED_LAN_CLIENT_IP, json={"feeling": 6})
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(self.persisted_calls, [])
@@ -210,7 +219,7 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
         response = self.request(
             "GET",
             "/api/health",
-            client_host="127.0.0.1",
+            client_host=LOOPBACK_IP,
             headers={"X-Mood-Token": "bad-token"},
         )
 
@@ -221,8 +230,8 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
         response = self.request(
             "GET",
             "/api/health",
-            client_host="192.168.1.77",
-            headers={"X-Mood-Token": "fake-token"},
+            client_host=SIMULATED_REMOTE_IP,
+            headers=VALID_TOKEN_HEADERS,
         )
 
         self.assertEqual(response.status_code, 403)
@@ -233,8 +242,8 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
         response = self.request(
             "GET",
             "/api/health",
-            client_host="127.0.0.1",
-            headers={"X-Mood-Token": "fake-token"},
+            client_host=LOOPBACK_IP,
+            headers=VALID_TOKEN_HEADERS,
         )
 
         self.assertEqual(response.status_code, 200)
@@ -246,8 +255,8 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
         response = self.request(
             "GET",
             "/api/health",
-            client_host=self.settings.lan_bind_ip,
-            headers={"X-Mood-Token": "fake-token"},
+            client_host=SIMULATED_SAME_HOST_IP,
+            headers=VALID_TOKEN_HEADERS,
         )
 
         self.assertEqual(response.status_code, 200)
@@ -258,8 +267,8 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
         response = self.request(
             "POST",
             "/api/mood",
-            client_host="192.168.1.77",
-            headers={"X-Mood-Token": "fake-token"},
+            client_host=SIMULATED_LAN_CLIENT_IP,
+            headers=VALID_TOKEN_HEADERS,
             json={
                 "feeling": 7,
                 "energy": 5,
@@ -274,6 +283,11 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
         self.assertEqual(response.json()["mood_date"], "2026-05-23")
         self.assertEqual(len(self.persisted_calls), 1)
         self.assertEqual(self.persisted_calls[0][1], date(2026, 5, 23))
+        self.assertEqual(
+            self.persisted_calls[0][0].logged_at_utc,
+            datetime(2026, 5, 24, 7, 30, tzinfo=UTC),
+        )
+        self.assertEqual(self.persisted_calls[0][0].context_chips, ("late_meal",))
 
     def test_app_does_not_enable_cors_middleware(self) -> None:
         middleware_names = [middleware.cls.__name__ for middleware in self.app.user_middleware]
@@ -286,7 +300,7 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
                 response = self.request(
                     "GET",
                     path,
-                    client_host="192.168.1.77",
+                    client_host=SIMULATED_REMOTE_IP,
                 )
 
                 self.assertEqual(response.status_code, 404)
@@ -295,14 +309,14 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
         insights_response = self.request(
             "GET",
             "/api/insights/latest_logged_day",
-            client_host="127.0.0.1",
-            headers={"X-Mood-Token": "fake-token"},
+            client_host=LOOPBACK_IP,
+            headers=VALID_TOKEN_HEADERS,
         )
         counterfactual_response = self.request(
             "GET",
             "/api/counterfactuals/latest_logged_day",
-            client_host="127.0.0.1",
-            headers={"X-Mood-Token": "fake-token"},
+            client_host=LOOPBACK_IP,
+            headers=VALID_TOKEN_HEADERS,
         )
 
         self.assertEqual(insights_response.status_code, 200)
@@ -315,14 +329,13 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
         self.assertNotIn("recommend", counterfactual_response.text.lower())
 
     def test_post_rate_limit_uses_local_in_memory_limiter(self) -> None:
-        headers = {"X-Mood-Token": "fake-token"}
         payload = {"feeling": 6}
         responses = [
             self.request(
                 "POST",
                 "/api/mood",
-                client_host="192.168.1.77",
-                headers=headers,
+                client_host=SIMULATED_LAN_CLIENT_IP,
+                headers=VALID_TOKEN_HEADERS,
                 json=payload,
             )
             for _ in range(11)

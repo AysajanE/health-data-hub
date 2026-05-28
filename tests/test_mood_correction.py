@@ -16,13 +16,19 @@ from src.api.dependencies import build_api_settings
 from src.warehouse.warehouse import connect_duckdb, select_current_mood_entries
 
 
+FAKE_MOOD_TOKEN = "test-only-mood-token"
+SIMULATED_SAME_HOST_IP = "198.51.100.10"
+SIMULATED_LAN_CLIENT_IP = "198.51.100.77"
+VALID_TOKEN_HEADERS = {"X-Mood-Token": FAKE_MOOD_TOKEN}
+
+
 class MoodPersistenceIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = TemporaryDirectory()
-        self.database_path = Path(self.tempdir.name) / "warehouse.duckdb"
+        self.database_path = Path(self.tempdir.name) / "test-only-warehouse.duckdb"
         self.settings = build_api_settings(
-            mood_token="fake-token",
-            lan_bind_ip="192.168.1.55",
+            mood_token=FAKE_MOOD_TOKEN,
+            lan_bind_ip=SIMULATED_SAME_HOST_IP,
             home_timezone="America/Toronto",
         )
         self.database_patch = patch.object(
@@ -71,12 +77,11 @@ class MoodPersistenceIntegrationTest(unittest.TestCase):
         )
 
     def test_second_post_appends_and_promotes_current_mood_entry(self) -> None:
-        headers = {"X-Mood-Token": "fake-token"}
         first_response = self.request(
             "POST",
             "/api/mood",
-            client_host="192.168.1.77",
-            headers=headers,
+            client_host=SIMULATED_LAN_CLIENT_IP,
+            headers=VALID_TOKEN_HEADERS,
             json={
                 "feeling": 4,
                 "energy": 4,
@@ -88,8 +93,8 @@ class MoodPersistenceIntegrationTest(unittest.TestCase):
         second_response = self.request(
             "POST",
             "/api/mood",
-            client_host="192.168.1.77",
-            headers=headers,
+            client_host=SIMULATED_LAN_CLIENT_IP,
+            headers=VALID_TOKEN_HEADERS,
             json={
                 "feeling": 6,
                 "energy": 5,
@@ -103,6 +108,8 @@ class MoodPersistenceIntegrationTest(unittest.TestCase):
         self.assertEqual(second_response.status_code, 200)
         self.assertEqual(first_response.json()["mood_date"], "2026-05-23")
         self.assertEqual(second_response.json()["mood_date"], "2026-05-23")
+        self.assertEqual(self.database_path.parent, Path(self.tempdir.name))
+        self.assertTrue(self.database_path.exists())
 
         conn = connect_duckdb(self.database_path, read_only=True)
         try:

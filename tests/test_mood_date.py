@@ -7,8 +7,11 @@ from zoneinfo import ZoneInfo
 from src.api.mood_date import resolve_mood_date
 
 
+HOME_TIMEZONE = "America/Toronto"
+
+
 class ResolveMoodDateTest(unittest.TestCase):
-    home_tz = ZoneInfo("America/Toronto")
+    home_tz = ZoneInfo(HOME_TIMEZONE)
 
     def test_cutoff_examples(self) -> None:
         cases = (
@@ -28,9 +31,13 @@ class ResolveMoodDateTest(unittest.TestCase):
         logged_at_utc = logged_at_local.astimezone(UTC)
 
         self.assertEqual(
-            resolve_mood_date(logged_at_utc, "America/Toronto"),
+            resolve_mood_date(logged_at_utc, HOME_TIMEZONE),
             date(2024, 3, 9),
         )
+
+    def test_rejects_naive_datetime_to_avoid_ambient_local_time(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_mood_date(datetime(2026, 5, 24, 7, 30), HOME_TIMEZONE)
 
 
 if __name__ == "__main__":
