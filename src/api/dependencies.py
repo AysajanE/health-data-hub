@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from datetime import date
 from functools import lru_cache
 from ipaddress import ip_address
 import os
-from typing import Mapping
+from typing import Mapping, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from src.api.schemas import MoodLogRequest, MoodLogResponse
 
 
 ENV_MOOD_TOKEN = "MOOD_TOKEN"
@@ -90,3 +93,11 @@ def get_lan_bind_ip(settings: ApiSettings | None = None) -> str:
 
 def get_home_timezone(settings: ApiSettings | None = None) -> ZoneInfo:
     return ZoneInfo(_current_settings(settings).home_timezone)
+
+
+class MoodEntryPersister(Protocol):
+    def __call__(self, payload: MoodLogRequest, mood_date: date) -> MoodLogResponse: ...
+
+
+def default_persist_mood_entry(payload: MoodLogRequest, mood_date: date) -> MoodLogResponse:
+    raise NotImplementedError("mood persistence is not configured")

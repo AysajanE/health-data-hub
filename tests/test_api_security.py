@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime
 import os
 import unittest
-from uuid import UUID
+from uuid import UUID, uuid4
+
+import httpx
 
 from pydantic import ValidationError
 
-from src.api.dependencies import get_home_timezone, get_lan_bind_ip, get_mood_token, load_api_settings
+from src.api.app import create_app
+from src.api.dependencies import (
+    build_api_settings,
+    get_home_timezone,
+    get_lan_bind_ip,
+    get_mood_token,
+    load_api_settings,
+)
 from src.api.schemas import MoodLogRequest, MoodLogResponse
+from src.api.security import InMemoryRateLimiter
 
 
 class MoodApiContractTest(unittest.TestCase):
@@ -124,6 +135,192 @@ class MoodApiContractTest(unittest.TestCase):
         )
 
         self.assertEqual(get_home_timezone(settings).key, "America/Toronto")
+
+
+class _FrozenClock:
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+
+    def now(self) -> datetime:
+        return self._now
+
+
+class MoodApiSecurityRouteTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.settings = build_api_settings(
+            mood_token="fake-token",
+            lan_bind_ip="192.168.1.55",
+            home_timezone="America/Toronto",
+        )
+        self.clock = _FrozenClock(datetime(2026, 5, 24, 1, 0, tzinfo=UTC))
+        self.persisted_calls: list[tuple[MoodLogRequest, date]] = []
+        self.app = create_app(
+            settings=self.settings,
+            persist_mood_entry=self._persist_mood_entry,
+            rate_limiter=InMemoryRateLimiter(
+                limit=10,
+                window_seconds=60,
+                now_provider=self.clock.now,
+            ),
+        )
+
+    def _persist_mood_entry(self, payload: MoodLogRequest, mood_date: date) -> MoodLogResponse:
+        self.persisted_calls.append((payload, mood_date))
+        return MoodLogResponse(log_id=uuid4(), mood_date=mood_date, status="ok")
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        client_host: str,
+        headers: dict[str, str] | None = None,
+        json: dict[str, object] | None = None,
+    ) -> httpx.Response:
+        transport = httpx.ASGITransport(app=self.app, client=(client_host, 8787))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.request(method, path, headers=headers, json=json)
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        client_host: str,
+        headers: dict[str, str] | None = None,
+        json: dict[str, object] | None = None,
+    ) -> httpx.Response:
+        return asyncio.run(
+            self._request(
+                method,
+                path,
+                client_host=client_host,
+                headers=headers,
+                json=json,
+            )
+        )
+
+    def test_missing_token_returns_401(self) -> None:
+        response = self.request("POST", "/api/mood", client_host="192.168.1.77", json={"feeling": 6})
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.persisted_calls, [])
+
+    def test_bad_token_returns_401(self) -> None:
+        response = self.request(
+            "GET",
+            "/api/health",
+            client_host="127.0.0.1",
+            headers={"X-Mood-Token": "bad-token"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.app.state.health_checks, 0)
+
+    def test_remote_get_is_rejected_before_handler_logic(self) -> None:
+        response = self.request(
+            "GET",
+            "/api/health",
+            client_host="192.168.1.77",
+            headers={"X-Mood-Token": "fake-token"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {"detail": "Reads same-host only"})
+        self.assertEqual(self.app.state.health_checks, 0)
+
+    def test_loopback_get_is_accepted_with_valid_token(self) -> None:
+        response = self.request(
+            "GET",
+            "/api/health",
+            client_host="127.0.0.1",
+            headers={"X-Mood-Token": "fake-token"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(response.json()["scope"], "retrospective_only")
+        self.assertEqual(self.app.state.health_checks, 1)
+
+    def test_same_host_lan_bind_ip_get_is_accepted(self) -> None:
+        response = self.request(
+            "GET",
+            "/api/health",
+            client_host=self.settings.lan_bind_ip,
+            headers={"X-Mood-Token": "fake-token"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(self.app.state.health_checks, 1)
+
+    def test_lan_post_uses_test_persistence_override(self) -> None:
+        response = self.request(
+            "POST",
+            "/api/mood",
+            client_host="192.168.1.77",
+            headers={"X-Mood-Token": "fake-token"},
+            json={
+                "feeling": 7,
+                "energy": 5,
+                "notes": "Late dinner.",
+                "context_chips": ["late_meal"],
+                "logged_at_utc": "2026-05-24T03:30:00-04:00",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(response.json()["mood_date"], "2026-05-23")
+        self.assertEqual(len(self.persisted_calls), 1)
+        self.assertEqual(self.persisted_calls[0][1], date(2026, 5, 23))
+
+    def test_app_does_not_enable_cors_middleware(self) -> None:
+        middleware_names = [middleware.cls.__name__ for middleware in self.app.user_middleware]
+
+        self.assertNotIn("CORSMiddleware", middleware_names)
+
+    def test_placeholder_routes_stay_retrospective_only(self) -> None:
+        insights_response = self.request(
+            "GET",
+            "/api/insights/latest_logged_day",
+            client_host="127.0.0.1",
+            headers={"X-Mood-Token": "fake-token"},
+        )
+        counterfactual_response = self.request(
+            "GET",
+            "/api/counterfactuals/latest_logged_day",
+            client_host="127.0.0.1",
+            headers={"X-Mood-Token": "fake-token"},
+        )
+
+        self.assertEqual(insights_response.status_code, 200)
+        self.assertEqual(counterfactual_response.status_code, 200)
+        self.assertEqual(insights_response.json()["detail"], "collecting model-ready days")
+        self.assertEqual(counterfactual_response.json()["detail"], "insufficient stable signal")
+        self.assertEqual(insights_response.json()["scope"], "retrospective_only")
+        self.assertEqual(counterfactual_response.json()["scope"], "retrospective_only")
+        self.assertNotIn("tomorrow", counterfactual_response.text.lower())
+        self.assertNotIn("recommend", counterfactual_response.text.lower())
+
+    def test_post_rate_limit_uses_local_in_memory_limiter(self) -> None:
+        headers = {"X-Mood-Token": "fake-token"}
+        payload = {"feeling": 6}
+        responses = [
+            self.request(
+                "POST",
+                "/api/mood",
+                client_host="192.168.1.77",
+                headers=headers,
+                json=payload,
+            )
+            for _ in range(11)
+        ]
+
+        self.assertTrue(all(response.status_code == 200 for response in responses[:10]))
+        self.assertEqual(responses[10].status_code, 429)
+        self.assertEqual(responses[10].json(), {"detail": "Rate limit exceeded"})
+        self.assertEqual(len(self.persisted_calls), 10)
 
 
 if __name__ == "__main__":
