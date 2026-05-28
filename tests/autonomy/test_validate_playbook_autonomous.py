@@ -47,6 +47,11 @@ class ValidatePlaybookTests(unittest.TestCase):
         self.assertEqual(report["status"], "error")
         self.assertTrue(any("broad allowed_write_root" in error for error in report["errors"]))
 
+    def test_allowed_write_roots_requires_semicolon_separator(self) -> None:
+        report = self.validate_text(VALID_PLAYBOOK.replace("src/db; tests/warehouse", "src/db, tests/warehouse"))
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("allowed_write_roots must use semicolon" in error for error in report["errors"]))
+
     def test_missing_verification_for_code_fails(self) -> None:
         report = self.validate_text(VALID_PLAYBOOK.replace("python -m pytest tests/warehouse -q", "none"))
         self.assertEqual(report["status"], "error")
@@ -106,6 +111,51 @@ Active human approval gates are not emitted, and review artifacts are used in li
 | item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
 |---|---|---|---|---|---|---|---|---|
 | 01 | Record autonomous review evidence | docs/reviews/s02.md | docs/reviews/s02.md | false | test -s docs/reviews/s02.md | review artifact validates | none | docs/evidence/s02-review.json |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "ok", report)
+
+    def test_po_normalization_rejects_natural_language_prerequisites(self) -> None:
+        text = """# S02 Mood API Playbook
+
+Format: markdown_playbook_v1
+
+autonomous_gate_review evidence is required.
+
+## 1. Phase Overview
+
+S02 scope.
+
+## 2. Execution Items
+
+| step_id | phase | action | why_now | owner_type | prerequisites | repo_surfaces | deliverable | exit_criteria | allowed_write_roots | requires_red_green | required_verification_commands | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 01 | Foundation | Write review scaffold | now | autonomous_executor | none | docs/reviews/s02-a.md | docs/reviews/s02-a.md | file exists | docs/reviews/s02-a.md | false | test -s docs/reviews/s02-a.md | none | none |
+| 02 | Security | Write security scaffold | now | autonomous_executor | none | docs/reviews/s02-b.md | docs/reviews/s02-b.md | file exists | docs/reviews/s02-b.md | false | test -s docs/reviews/s02-b.md | none | none |
+| 03 | Closure | Write closure scaffold | now | autonomous_executor | 01 and 02 | docs/reviews/s02-c.md | docs/reviews/s02-c.md | file exists | docs/reviews/s02-c.md | false | test -s docs/reviews/s02-c.md | none | none |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("plan-orchestrator normalization failed" in error for error in report["errors"]))
+
+    def test_po_normalization_accepts_comma_prerequisites(self) -> None:
+        text = """# S02 Mood API Playbook
+
+Format: markdown_playbook_v1
+
+autonomous_gate_review evidence is required.
+
+## 1. Phase Overview
+
+S02 scope.
+
+## 2. Execution Items
+
+| step_id | phase | action | why_now | owner_type | prerequisites | repo_surfaces | deliverable | exit_criteria | allowed_write_roots | requires_red_green | required_verification_commands | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 01 | Foundation | Write review scaffold | now | autonomous_executor | none | docs/reviews/s02-a.md | docs/reviews/s02-a.md | file exists | docs/reviews/s02-a.md | false | test -s docs/reviews/s02-a.md | none | none |
+| 02 | Security | Write security scaffold | now | autonomous_executor | none | docs/reviews/s02-b.md | docs/reviews/s02-b.md | file exists | docs/reviews/s02-b.md | false | test -s docs/reviews/s02-b.md | none | none |
+| 03 | Closure | Write closure scaffold | now | autonomous_executor | 01,02 | docs/reviews/s02-c.md | docs/reviews/s02-c.md | file exists | docs/reviews/s02-c.md | false | test -s docs/reviews/s02-c.md | none | none |
 """
         report = self.validate_high_risk_text(text)
         self.assertEqual(report["status"], "ok", report)

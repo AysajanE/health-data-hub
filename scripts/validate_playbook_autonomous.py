@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 EMPTY_VALUES = {"", "none", "n/a", "na", "no", "-", "null"}
 BROAD_ROOTS = {".", "/", "src", "src/", "tests", "tests/", "test", "test/", "docs", "docs/"}
 FORBIDDEN_ROOT_PREFIXES = (".git", ".local", ".env", ".codex", ".claude", "data", "data/", "private", "private/")
@@ -109,6 +113,10 @@ def split_list_cell(value: str) -> list[str]:
     return [part.strip().strip("`") for part in re.split(r"[,;\n]+", value or "") if part.strip()]
 
 
+def split_allowed_write_roots(value: str) -> list[str]:
+    return [part.strip().strip("`") for part in re.split(r"[;\n]+", value or "") if part.strip()]
+
+
 def is_empty(value: str) -> bool:
     return value.strip().lower() in EMPTY_VALUES
 
@@ -191,6 +199,33 @@ def allowed_v2_scope_context(text: str, match: re.Match[str]) -> bool:
     return any(re.search(allowed, window, re.I) for allowed in allowed_patterns)
 
 
+def should_validate_po_normalization(text: str) -> bool:
+    lowered = text.lower()
+    if "format: markdown_playbook_v1" in lowered:
+        return True
+    return bool(
+        re.search(
+            r"\|\s*step_id\s*\|[^\n]*\bwhy_now\b[^\n]*\brequires_red_green\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def plan_orchestrator_normalization_errors(path: Path, text: str) -> list[str]:
+    if not should_validate_po_normalization(text):
+        return []
+    try:
+        from automation.plan_orchestrator.adapters.markdown_playbook import MarkdownPlaybookAdapter
+        from automation.plan_orchestrator.playbook_parser import parse_playbook
+
+        parsed = parse_playbook(path)
+        MarkdownPlaybookAdapter(path.parent).normalize(parsed, path)
+    except Exception as exc:
+        return [f"plan-orchestrator normalization failed: {exc}"]
+    return []
+
+
 def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | None = None) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -244,7 +279,10 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
         if manual_gate_value and not is_empty(manual_gate_value):
             errors.append(f"row {idx}: active manual_gate is forbidden in autonomous mode")
 
-        roots = split_list_cell(row.get("allowed_write_roots", ""))
+        raw_roots = row.get("allowed_write_roots", "")
+        if "," in raw_roots:
+            errors.append(f"row {idx}: allowed_write_roots must use semicolon separators, not commas")
+        roots = split_allowed_write_roots(raw_roots)
         if not roots:
             errors.append(f"row {idx}: allowed_write_roots is required")
         for root in roots:
@@ -291,6 +329,8 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
             match = re.search(pattern, lower_row, re.I)
             if match and not allowed_v2_scope_context(lower_row, match):
                 errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
+
+    errors.extend(plan_orchestrator_normalization_errors(path, text))
 
     return {"status": "ok" if not errors else "error", "errors": errors, "warnings": warnings, "row_count": len(candidate_rows)}
 

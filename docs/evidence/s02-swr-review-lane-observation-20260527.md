@@ -582,3 +582,52 @@ Conclusion:
 - The latest Stage 5 rejection was a validator false positive.
 - The next AutoKeel launch should recover the archived Stage 5 playbook without
   any SWR rerun, then continue through the normal S02 PO path.
+
+## PO Normalization Failure And Prerequisite Grammar Repair
+
+After the recovered SWR playbook passed autonomous validation, AutoKeel started
+plan-orchestrator supervision. The PO kernel failed before writing
+`run_state.json` because markdown normalization rejected row 06:
+
+```text
+$.items[5].prerequisite_item_ids[0]: string does not match required pattern
+```
+
+Root cause:
+
+- The Stage 5 playbook used the prerequisite cell `03 and 05`.
+- The PO markdown adapter accepts `none`, comma-separated ids such as `03,05`,
+  and numeric ranges such as `01-04`.
+- The autonomous validator did not run PO markdown normalization, so this
+  escaped validation and failed only after PO supervision launched.
+
+Fix:
+
+- The canonical S02 playbook row 06 prerequisite cell was normalized from
+  `03 and 05` to `03,05`.
+- `docs/evidence/s02-mood-api-swr-playbook-evidence.json` now records this
+  deterministic post-materialization repair and the updated playbook hash.
+- `scripts/validate_playbook_autonomous.py` now runs PO markdown normalization
+  for `markdown_playbook_v1` artifacts, so this class of failure is caught
+  before PO.
+- The AutoKeel SWR task-pack overlay now states the exact prerequisite grammar
+  and forbids natural-language forms such as `03 and 05`.
+- A follow-on PO normalization inspection found comma-separated
+  `allowed_write_roots` cells. PO treats semicolons, not commas, as root
+  separators, so the canonical playbook was normalized to semicolon-separated
+  write roots and the validator now rejects comma-separated write-root cells.
+
+Verification:
+
+```bash
+python scripts/validate_playbook_autonomous.py docs/playbooks/s02-mood-api.playbook.md --risk high --json
+python automation/run_plan_orchestrator.py list-items --playbook docs/playbooks/s02-mood-api.playbook.md --format json
+python -m pytest tests/autonomy/test_validate_playbook_autonomous.py -q
+```
+
+Result:
+
+- S02 playbook validation: `status=ok`, `row_count=7`.
+- PO list-items normalization succeeds, and `allowed_write_roots` normalizes to
+  discrete repo-relative paths rather than one comma-containing string.
+- Validator regression tests: `14 passed`.

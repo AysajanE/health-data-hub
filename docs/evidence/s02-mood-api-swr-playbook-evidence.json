@@ -5,7 +5,19 @@
     "docs/playbooks/s02-mood-api.playbook.md"
   ],
   "playbook": "docs/playbooks/s02-mood-api.playbook.md",
-  "playbook_sha256": "16ff5de9170b75cb49e5fe603f8e69858bc693a95d280976c506e3e7ca87ef54",
+  "playbook_sha256": "101a1cf0939c2fffa94fa99362068e8be258d73521f8c96d345846cbafc3bc75",
+  "post_materialization_repairs": [
+    {
+      "reason": "plan-orchestrator normalization requires comma-separated prerequisite ids or numeric ranges",
+      "change": "normalized row 06 prerequisites from '03 and 05' to '03,05'",
+      "validation": "python scripts/validate_playbook_autonomous.py docs/playbooks/s02-mood-api.playbook.md --risk high --json"
+    },
+    {
+      "reason": "plan-orchestrator allowed_write_roots normalization uses semicolon separators",
+      "change": "normalized S02 code/test allowed_write_roots from comma-separated cells to semicolon-separated cells",
+      "validation": "python automation/run_plan_orchestrator.py list-items --playbook docs/playbooks/s02-mood-api.playbook.md --format json"
+    }
+  ],
   "recorded_at": "2026-05-27T19:56:41-04:00",
   "slice": "S02",
   "status": "ok",

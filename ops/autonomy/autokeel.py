@@ -1636,6 +1636,13 @@ Additional validator requirements:
 
 - Include the literal term `autonomous_gate_review` in the playbook when the
   slice is high risk or uses autonomous gate substitution.
+- `prerequisites` must be `none`, a comma-separated list of exact step ids
+  such as `03,05`, or a numeric range such as `01-04`. Do not use natural
+  language forms such as `03 and 05`; plan-orchestrator normalization rejects
+  those strings before execution.
+- `allowed_write_roots` must use semicolon-separated repo-relative roots such
+  as `src/api/app.py; tests/test_api_security.py`. Do not use comma-separated
+  roots; plan-orchestrator treats comma text as one root.
 - Every executable code, script, or test deliverable must have a non-empty
   `required_verification_commands` cell.
 - Rows with `requires_red_green=true` must have a non-empty

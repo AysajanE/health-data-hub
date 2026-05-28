@@ -110,3 +110,31 @@ Result:
 - Validator regression tests: `11 passed`.
 - AutoKeel recovery regression tests: included in `34 passed`.
 - Full autonomy suite: `107 passed`.
+
+## Root Cause Update: PO Normalization Prerequisite Grammar
+
+The next PO launch found a second Stage 5 syntax issue before any item
+execution:
+
+```text
+$.items[5].prerequisite_item_ids[0]: string does not match required pattern
+```
+
+The canonical Stage 5 playbook used `03 and 05` as row 06 prerequisites. PO
+requires `none`, comma-separated ids such as `03,05`, or numeric ranges such as
+`01-04`.
+
+Fixes implemented:
+
+- Canonical row 06 prerequisites were normalized to `03,05`.
+- Canonical code/test `allowed_write_roots` cells were normalized to
+  semicolon-separated roots so PO treats each write root as a discrete
+  repo-relative path.
+- The SWR playbook evidence was updated with the new playbook hash and a
+  deterministic post-materialization repair note.
+- The autonomous validator now invokes PO markdown normalization for
+  `markdown_playbook_v1` artifacts.
+- Regression tests now cover natural-language prerequisite rejection and
+  comma-separated prerequisite acceptance.
+- Regression tests now also reject comma-separated `allowed_write_roots`
+  because PO uses semicolons for that column.
