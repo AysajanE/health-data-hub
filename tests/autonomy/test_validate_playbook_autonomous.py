@@ -3,8 +3,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.validate_playbook_autonomous import validate_playbook
+from scripts.validate_playbook_autonomous import plan_orchestrator_roots, validate_playbook
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +39,25 @@ class ValidatePlaybookTests(unittest.TestCase):
             path = Path(temp) / "playbook.md"
             path.write_text(text, encoding="utf-8")
             return validate_playbook(path, policy_path=ROOT / "ops/autonomy/policy.yaml", risk="high")
+
+    def test_plan_orchestrator_roots_include_env_and_policy_fallbacks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "ops/autonomy").mkdir(parents=True)
+            policy_po = root / "configured-po"
+            (root / "ops/autonomy/policy.yaml").write_text(
+                f"plan_orchestrator_root: {policy_po}\n",
+                encoding="utf-8",
+            )
+            playbook = root / "docs/playbooks/s02.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("# playbook\n", encoding="utf-8")
+
+            with patch.dict("os.environ", {"KEEL_PO_ROOT": str(root / "env-po")}):
+                roots = plan_orchestrator_roots(playbook)
+
+            self.assertEqual(roots[0], root / "env-po")
+            self.assertIn(policy_po, roots)
 
     def test_valid_autonomous_row_passes(self) -> None:
         report = self.validate_text(VALID_PLAYBOOK)
