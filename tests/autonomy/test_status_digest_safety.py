@@ -99,6 +99,32 @@ class StatusDigestSafetyTests(unittest.TestCase):
 
         self.assertEqual(digest["terminal_state"], "running")
 
+    def test_live_resume_escalated_intervention_does_not_dominate_active_attempt(self) -> None:
+        payload = {
+            "run_id": "run_1",
+            "kernel_status": {
+                "current_state": "ST60_AUDITING_CODEX",
+                "current_item": {"item_id": "03", "attempt_number": 2, "terminal_state": "none"},
+                "terminal_counts": {"none": 5, "passed": 2, "escalated": 0},
+            },
+            "supervision_status": {
+                "claim_class": "live_attached",
+                "exit_code": 0,
+                "active_stage": {"stage_name": "audit_codex", "item_id": "03", "attempt_number": 2},
+                "latest_intervention": {
+                    "action_kind": "resume_escalated",
+                    "result_status": "applied",
+                    "recoverability_class": "recoverable",
+                    "terminal_state": "escalated",
+                    "reason": "The current escalated fingerprint is inside the bounded automatic resume budget.",
+                },
+            },
+        }
+
+        digest = digest_status(payload)
+
+        self.assertEqual(digest["terminal_state"], "running")
+
     def test_supervision_park_is_escalated_not_unknown(self) -> None:
         payload = {
             "run_id": "run_1",

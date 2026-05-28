@@ -29,6 +29,7 @@ STATE_KEYS = (
     "supervisor_state",
     "current_state",
 )
+STATE_SCAN_SKIP_KEYS = {"latest_intervention"}
 
 
 def normalize_state(raw: str | None) -> str | None:
@@ -170,7 +171,9 @@ def collect_states(value: Any) -> list[str]:
             state = normalize_state(value.get(key))
             if state:
                 states.append(state)
-        for item in value.values():
+        for key, item in value.items():
+            if key in STATE_SCAN_SKIP_KEYS:
+                continue
             states.extend(collect_states(item))
     elif isinstance(value, list):
         for item in value:
