@@ -3453,11 +3453,11 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 "audit_failure",
                 "high",
                 "PO escalated the slice.",
-                "Recorded escalation for diagnosis and bounded replan.",
+                "Recorded escalation for root-cause diagnosis; keep the active PO run for supervised resume after the fix.",
                 None,
                 run_id=run_id,
             )
-            self.mark_slice_status(slice_id, "replan_required", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
+            self.mark_slice_status(slice_id, "pending", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
             return "escalated"
 
         return "live"

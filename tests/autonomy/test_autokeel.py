@@ -583,6 +583,26 @@ Manual gates are forbidden.
             slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
             self.assertEqual(slices[0]["status"], "replan_required")
 
+    def test_escalated_po_keeps_active_run_for_supervised_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            state_path = root / "ops/autonomy/autonomy_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["active_run"] = {"slice": "S01", "run_id": "run_escalated", "started_at": "2026-05-27T00:00:00-04:00"}
+            write_json_atomic(state_path, state)
+
+            op = AutoKeel(root=root, dry_run=True)
+            result = op.handle_po_status("S01", "run_escalated", {"terminal_state": "escalated"})
+
+            self.assertEqual(result, "escalated")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("audit_failure", ledger)
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            self.assertEqual(slices[0]["status"], "pending")
+            updated_state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(updated_state["active_run"]["run_id"], "run_escalated")
+
     def test_blocked_external_creates_local_evidence_request(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
