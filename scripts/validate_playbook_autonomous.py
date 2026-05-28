@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -212,18 +213,50 @@ def should_validate_po_normalization(text: str) -> bool:
     )
 
 
-def plan_orchestrator_normalization_errors(path: Path, text: str) -> list[str]:
+def normalize_plan_orchestrator(path: Path, text: str) -> tuple[list[str], Any | None]:
     if not should_validate_po_normalization(text):
-        return []
+        return [], None
     try:
         from automation.plan_orchestrator.adapters.markdown_playbook import MarkdownPlaybookAdapter
         from automation.plan_orchestrator.playbook_parser import parse_playbook
 
         parsed = parse_playbook(path)
-        MarkdownPlaybookAdapter(path.parent).normalize(parsed, path)
+        plan = MarkdownPlaybookAdapter(path.parent).normalize(parsed, path)
     except Exception as exc:
-        return [f"plan-orchestrator normalization failed: {exc}"]
-    return []
+        return [f"plan-orchestrator normalization failed: {exc}"], None
+    return [], plan
+
+
+def repo_path_tracked_at_head(rel_path: str) -> bool:
+    if Path(rel_path).is_absolute() or ".." in Path(rel_path).parts:
+        return False
+    if not (REPO_ROOT / ".git").exists():
+        return (REPO_ROOT / rel_path).exists()
+    proc = subprocess.run(
+        ["git", "cat-file", "-e", f"HEAD:{rel_path}"],
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def repo_surface_availability_errors(plan: Any | None) -> list[str]:
+    if plan is None:
+        return []
+    errors: list[str] = []
+    prior_deliverables: set[str] = set()
+    for idx, item in enumerate(getattr(plan, "items", []), start=1):
+        for rel_path in getattr(item, "consult_paths", []):
+            if rel_path in prior_deliverables or repo_path_tracked_at_head(rel_path):
+                continue
+            errors.append(
+                f"row {idx}: repo_surfaces references path unavailable before row execution: {rel_path}"
+            )
+        prior_deliverables.update(str(path) for path in getattr(item, "deliverable_paths", []))
+    return errors
 
 
 def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | None = None) -> dict[str, Any]:
@@ -330,7 +363,9 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
             if match and not allowed_v2_scope_context(lower_row, match):
                 errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
 
-    errors.extend(plan_orchestrator_normalization_errors(path, text))
+    po_errors, po_plan = normalize_plan_orchestrator(path, text)
+    errors.extend(po_errors)
+    errors.extend(repo_surface_availability_errors(po_plan))
 
     return {"status": "ok" if not errors else "error", "errors": errors, "warnings": warnings, "row_count": len(candidate_rows)}
 

@@ -33,6 +33,12 @@ class ValidatePlaybookTests(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
             return validate_playbook(path, policy_path=ROOT / "ops/autonomy/policy.yaml", risk="high")
 
+    def validate_repo_high_risk_text(self, text: str):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp:
+            path = Path(temp) / "playbook.md"
+            path.write_text(text, encoding="utf-8")
+            return validate_playbook(path, policy_path=ROOT / "ops/autonomy/policy.yaml", risk="high")
+
     def test_valid_autonomous_row_passes(self) -> None:
         report = self.validate_text(VALID_PLAYBOOK)
         self.assertEqual(report["status"], "ok", report)
@@ -153,11 +159,53 @@ S02 scope.
 
 | step_id | phase | action | why_now | owner_type | prerequisites | repo_surfaces | deliverable | exit_criteria | allowed_write_roots | requires_red_green | required_verification_commands | manual_gate | external_check |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 01 | Foundation | Write review scaffold | now | autonomous_executor | none | docs/reviews/s02-a.md | docs/reviews/s02-a.md | file exists | docs/reviews/s02-a.md | false | test -s docs/reviews/s02-a.md | none | none |
-| 02 | Security | Write security scaffold | now | autonomous_executor | none | docs/reviews/s02-b.md | docs/reviews/s02-b.md | file exists | docs/reviews/s02-b.md | false | test -s docs/reviews/s02-b.md | none | none |
-| 03 | Closure | Write closure scaffold | now | autonomous_executor | 01,02 | docs/reviews/s02-c.md | docs/reviews/s02-c.md | file exists | docs/reviews/s02-c.md | false | test -s docs/reviews/s02-c.md | none | none |
+| 01 | Foundation | Write review scaffold | now | autonomous_executor | none | docs/gstack/s02-mood-api-autoplan.md | docs/reviews/s02-a.md | file exists | docs/reviews/s02-a.md | false | test -s docs/reviews/s02-a.md | none | none |
+| 02 | Security | Write security scaffold | now | autonomous_executor | none | docs/gstack/s02-mood-api-autoplan.md | docs/reviews/s02-b.md | file exists | docs/reviews/s02-b.md | false | test -s docs/reviews/s02-b.md | none | none |
+| 03 | Closure | Write closure scaffold | now | autonomous_executor | 01,02 | docs/gstack/s02-mood-api-autoplan.md | docs/reviews/s02-c.md | file exists | docs/reviews/s02-c.md | false | test -s docs/reviews/s02-c.md | none | none |
 """
         report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "ok", report)
+
+    def test_repo_surfaces_rejects_same_row_future_deliverable(self) -> None:
+        text = """# S02 Mood API Playbook
+
+Format: markdown_playbook_v1
+
+autonomous_gate_review evidence is required.
+
+## 1. Phase Overview
+
+S02 scope.
+
+## 2. Execution Items
+
+| step_id | phase | action | why_now | owner_type | prerequisites | repo_surfaces | deliverable | exit_criteria | allowed_write_roots | requires_red_green | required_verification_commands | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 01 | Foundation | Write new API file | now | autonomous_executor | none | src/api/new_future_input.py | src/api/new_future_input.py | file exists | src/api/new_future_input.py | true | test -s src/api/new_future_input.py | none | none |
+"""
+        report = self.validate_repo_high_risk_text(text)
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("repo_surfaces references path unavailable" in error for error in report["errors"]))
+
+    def test_repo_surfaces_accepts_prior_row_deliverable(self) -> None:
+        text = """# S02 Mood API Playbook
+
+Format: markdown_playbook_v1
+
+autonomous_gate_review evidence is required.
+
+## 1. Phase Overview
+
+S02 scope.
+
+## 2. Execution Items
+
+| step_id | phase | action | why_now | owner_type | prerequisites | repo_surfaces | deliverable | exit_criteria | allowed_write_roots | requires_red_green | required_verification_commands | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 01 | Foundation | Write new API file | now | autonomous_executor | none | docs/gstack/s02-mood-api-autoplan.md | src/api/new_prior_output.py | file exists | src/api/new_prior_output.py | true | test -s src/api/new_prior_output.py | none | none |
+| 02 | Follow up | Use prior API file | now | autonomous_executor | 01 | src/api/new_prior_output.py | tests/new_prior_output_test.py | file exists | tests/new_prior_output_test.py | true | test -s tests/new_prior_output_test.py | none | none |
+"""
+        report = self.validate_repo_high_risk_text(text)
         self.assertEqual(report["status"], "ok", report)
 
     def test_high_risk_old_swr_stage5_shape_fails(self) -> None:

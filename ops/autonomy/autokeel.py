@@ -1643,6 +1643,10 @@ Additional validator requirements:
 - `allowed_write_roots` must use semicolon-separated repo-relative roots such
   as `src/api/app.py; tests/test_api_security.py`. Do not use comma-separated
   roots; plan-orchestrator treats comma text as one root.
+- `repo_surfaces` are inputs, not outputs. They must name tracked repo paths
+  that already exist before the row runs, or exact deliverable paths from
+  earlier rows. Do not list same-row or future deliverables as repo surfaces;
+  plan-orchestrator refuses to materialize missing inputs into its worktree.
 - Every executable code, script, or test deliverable must have a non-empty
   `required_verification_commands` cell.
 - Rows with `requires_red_green=true` must have a non-empty
@@ -2978,6 +2982,21 @@ Use local files and commands only. If evidence is missing, write a failing revie
         age_seconds = (datetime.now().astimezone() - started.astimezone()).total_seconds()
         return age_seconds > stale_minutes * 60
 
+    def active_run_playbook_mismatch(self, slice_: dict[str, Any], run_id: str) -> tuple[bool, Path | None, str]:
+        run_state_path = self.root / ".local/automation/plan_orchestrator/runs" / run_id / "run_state.json"
+        playbook_path = self.root / str(slice_.get("playbook", ""))
+        if not run_state_path.exists() or not playbook_path.exists():
+            return False, run_state_path if run_state_path.exists() else None, ""
+        try:
+            run_state = json.loads(run_state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return False, run_state_path, ""
+        snapshot_sha = str(run_state.get("playbook_source_sha256") or "")
+        current_sha = file_sha256(playbook_path)
+        if snapshot_sha and snapshot_sha != current_sha:
+            return True, run_state_path, f"{snapshot_sha} != {current_sha}"
+        return False, run_state_path, ""
+
     def clear_active_run(self) -> None:
         state = self.load_state()
         state["active_run"] = None
@@ -3090,20 +3109,41 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if active.get("slice") == slice_["id"] and active.get("run_id") and slice_.get("status") == "evidence_ready":
             return self.resume_po_with_evidence(slice_, active)
         if active.get("slice") == slice_["id"] and active.get("run_id"):
-            if self.active_run_is_stale(active):
-                self.record_failure(
+            mismatch, run_state_path, mismatch_detail = self.active_run_playbook_mismatch(slice_, str(active.get("run_id")))
+            if mismatch:
+                failure = self.record_failure(
                     slice_["id"],
-                    "stale_run",
+                    "state_divergence",
                     "medium",
-                    "PO run exceeded the configured stale_run_minutes threshold.",
-                    "Cleared active_run and moved the slice to replan_required.",
-                    None,
+                    "Active PO run was based on a superseded playbook snapshot.",
+                    "Cleared active_run so the next launch starts from the current canonical playbook.",
+                    run_state_path,
                     run_id=active.get("run_id"),
                 )
                 self.clear_active_run()
-                self.mark_slice_status(slice_["id"], "replan_required", run_id=active.get("run_id"), reason="stale run")
-                return CommandResult([], 40, "", "active PO run is stale")
-            return self.resume_active_po(slice_, active)
+                self.mark_slice_status(
+                    slice_["id"],
+                    "pending",
+                    run_id=active.get("run_id"),
+                    failure_path=str(failure.relative_to(self.root)),
+                    reason=f"active run playbook snapshot superseded: {mismatch_detail}",
+                )
+                active = {}
+            else:
+                if self.active_run_is_stale(active):
+                    self.record_failure(
+                        slice_["id"],
+                        "stale_run",
+                        "medium",
+                        "PO run exceeded the configured stale_run_minutes threshold.",
+                        "Cleared active_run and moved the slice to replan_required.",
+                        None,
+                        run_id=active.get("run_id"),
+                    )
+                    self.clear_active_run()
+                    self.mark_slice_status(slice_["id"], "replan_required", run_id=active.get("run_id"), reason="stale run")
+                    return CommandResult([], 40, "", "active PO run is stale")
+                return self.resume_active_po(slice_, active)
 
         playbook = self.root / slice_["playbook"]
         if not playbook.exists():

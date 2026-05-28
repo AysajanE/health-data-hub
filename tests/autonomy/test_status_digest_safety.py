@@ -73,6 +73,28 @@ class StatusDigestSafetyTests(unittest.TestCase):
         digest = digest_status(payload)
         self.assertEqual(digest["terminal_state"], "blocked_external")
 
+    def test_supervision_park_is_escalated_not_unknown(self) -> None:
+        payload = {
+            "run_id": "run_1",
+            "kernel_status": {
+                "current_state": "ST05_PLAN_NORMALIZED",
+                "terminal_counts": {"none": 7, "passed": 0},
+            },
+            "supervision_status": {
+                "claim_class": "terminal_observed",
+                "exit_code": 12,
+                "latest_intervention": {
+                    "action_kind": "park",
+                    "result_status": "parked",
+                    "recoverability_class": "non_recoverable",
+                    "reason": "The current state does not match a truthful automatic recovery path.",
+                },
+            },
+        }
+        digest = digest_status(payload)
+        self.assertEqual(digest["terminal_state"], "escalated")
+        self.assertEqual(digest["supervision"]["latest_action"], "park")
+
 
 if __name__ == "__main__":
     unittest.main()

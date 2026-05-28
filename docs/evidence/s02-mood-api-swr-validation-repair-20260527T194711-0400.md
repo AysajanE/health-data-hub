@@ -138,3 +138,29 @@ Fixes implemented:
   comma-separated prerequisite acceptance.
 - Regression tests now also reject comma-separated `allowed_write_roots`
   because PO uses semicolons for that column.
+
+## Root Cause Update: Repo Surface Input Materialization
+
+The next PO launch created `run_state.json` successfully but parked before item
+execution. The kernel stderr showed:
+
+```text
+Item 01 references repo inputs that cannot be materialized into an orchestrator worktree.
+- src/api/mood_date.py (missing)
+- tests/test_mood_date.py (missing)
+```
+
+The Stage 5 playbook treated same-row future deliverables as `repo_surfaces`.
+PO treats `repo_surfaces` as input paths to copy or consult before the row runs,
+so missing future files are invalid.
+
+Fixes implemented:
+
+- Canonical S02 `repo_surfaces` now name tracked repo inputs or exact
+  prior-row deliverables only.
+- The autonomous validator now rejects `repo_surfaces` paths that are neither
+  tracked at `HEAD` nor produced by an earlier row.
+- The SWR overlay now states that `repo_surfaces` are inputs, not outputs.
+- The status digest now reports a supervisor `park` intervention as escalated,
+  and AutoKeel clears active PO runs whose playbook snapshot hash no longer
+  matches the canonical playbook.

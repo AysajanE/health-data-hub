@@ -245,6 +245,45 @@ Manual gates are forbidden.
             self.assertEqual(active["run_id"], "RUN_TEST")
             self.assertIn("last_seen_at", active)
 
+    def test_superseded_active_run_snapshot_starts_new_po_run(self) -> None:
+        seen: dict[str, object] = {}
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                seen["argv"] = list(argv)
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_NEW"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("current playbook", encoding="utf-8")
+            run_root = root / ".local/automation/plan_orchestrator/runs/RUN_OLD"
+            run_root.mkdir(parents=True)
+            write_json_atomic(run_root / "run_state.json", {"playbook_source_sha256": "old-sha"})
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_OLD",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(result.ok)
+            self.assertEqual(seen["argv"][2:4], ["supervise", "run"])
+            self.assertEqual(op.load_state()["active_run"]["run_id"], "RUN_NEW")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("state_divergence", ledger)
+            self.assertIn("superseded playbook snapshot", ledger)
+
     def test_active_same_slice_resume_rejects_dirty_product_changes(self) -> None:
         class ShouldNotRun:
             def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):

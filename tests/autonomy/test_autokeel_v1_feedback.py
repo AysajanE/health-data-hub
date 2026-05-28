@@ -54,6 +54,7 @@ def copy_fixture(dst: Path) -> None:
         },
     )
     (dst / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
+    (dst / "ops/autonomy/events.jsonl").write_text("", encoding="utf-8")
 
 
 def prepare_s02_swr_inputs(root: Path) -> Path:

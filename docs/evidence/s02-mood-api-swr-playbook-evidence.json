@@ -5,7 +5,7 @@
     "docs/playbooks/s02-mood-api.playbook.md"
   ],
   "playbook": "docs/playbooks/s02-mood-api.playbook.md",
-  "playbook_sha256": "101a1cf0939c2fffa94fa99362068e8be258d73521f8c96d345846cbafc3bc75",
+  "playbook_sha256": "b9d9a554f8b9dc86b61ef4c1a722aa7199361cb67237cb79a85c7fb89d620f6d",
   "post_materialization_repairs": [
     {
       "reason": "plan-orchestrator normalization requires comma-separated prerequisite ids or numeric ranges",
@@ -16,6 +16,11 @@
       "reason": "plan-orchestrator allowed_write_roots normalization uses semicolon separators",
       "change": "normalized S02 code/test allowed_write_roots from comma-separated cells to semicolon-separated cells",
       "validation": "python automation/run_plan_orchestrator.py list-items --playbook docs/playbooks/s02-mood-api.playbook.md --format json"
+    },
+    {
+      "reason": "plan-orchestrator repo_surfaces are materialized inputs and must exist before the row runs",
+      "change": "normalized repo_surfaces so row inputs are tracked paths or exact prior-row deliverables, not same-row future files",
+      "validation": "python scripts/validate_playbook_autonomous.py docs/playbooks/s02-mood-api.playbook.md --risk high --json"
     }
   ],
   "recorded_at": "2026-05-27T19:56:41-04:00",

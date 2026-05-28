@@ -616,13 +616,24 @@ Fix:
   `allowed_write_roots` cells. PO treats semicolons, not commas, as root
   separators, so the canonical playbook was normalized to semicolon-separated
   write roots and the validator now rejects comma-separated write-root cells.
+- The next PO launch parked at `ST05_PLAN_NORMALIZED` because row 01 listed
+  same-row future files (`src/api/mood_date.py`, `tests/test_mood_date.py`) as
+  `repo_surfaces`. PO treats `repo_surfaces` as materialized input paths and
+  refuses missing inputs. The canonical playbook now limits `repo_surfaces` to
+  tracked paths or exact prior-row deliverables, and the validator checks that
+  contract before launch.
+- AutoKeel status handling now treats a PO supervisor `park` intervention as an
+  escalated terminal state instead of silently leaving the run as `unknown`, and
+  AutoKeel clears superseded active PO runs when the canonical playbook hash has
+  changed.
 
 Verification:
 
 ```bash
 python scripts/validate_playbook_autonomous.py docs/playbooks/s02-mood-api.playbook.md --risk high --json
 python automation/run_plan_orchestrator.py list-items --playbook docs/playbooks/s02-mood-api.playbook.md --format json
-python -m pytest tests/autonomy/test_validate_playbook_autonomous.py -q
+python -m scripts.keel_status_digest --from-file <supervise-status-json-for-parked-run>
+python -m pytest tests/autonomy/test_validate_playbook_autonomous.py tests/autonomy/test_status_digest_safety.py tests/autonomy/test_autokeel.py -q
 ```
 
 Result:
@@ -630,4 +641,6 @@ Result:
 - S02 playbook validation: `status=ok`, `row_count=7`.
 - PO list-items normalization succeeds, and `allowed_write_roots` normalizes to
   discrete repo-relative paths rather than one comma-containing string.
-- Validator regression tests: `14 passed`.
+- The parked PO run digest now returns `terminal_state=escalated` with
+  supervision details (`latest_action=park`, `latest_result=parked`).
+- Focused validator/status/AutoKeel regression tests: `48 passed`.
