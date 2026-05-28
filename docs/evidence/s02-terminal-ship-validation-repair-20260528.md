@@ -30,6 +30,14 @@ AutoKeel now:
 - validates review artifacts and `scripts.verify_slice` inside a detached temporary worktree for the shipped branch;
 - records the shipped branch commit from `ship/<slice>^{commit}`;
 - recovers an already-passed run recorded on the slice without launching a new PO run, after open failures for that run are closed with local evidence.
+- performs passed-run recovery immediately after slice selection, before lane/playbook compilation, so a `replan_required` slice with a passed PO run cannot archive the playbook or relaunch SWR before terminal recovery.
+
+## Follow-up False Failure
+
+After the first repair, one AutoKeel one-shot still returned exit code `26` because passed-run recovery was inside `start_or_resume_po`.
+For a `replan_required` slice, `_run_once_impl` called `ensure_playbook` first, archived `docs/playbooks/s02-mood-api.playbook.md`, attempted SWR, and recorded `provider_auth_failure` because the operator process had no `OPENAI_API_KEY`.
+
+That was another wrapper-ordering artifact. The S02 PO run was already passed, so AutoKeel should not have reached SWR. The fix moved terminal recovery before `ensure_lane_decision` and `ensure_playbook`.
 
 ## Verification
 
@@ -48,7 +56,8 @@ Results:
 
 - targeted regression tests: `4 passed`
 - full autonomy suite: `126 passed`
+- post-ordering regression suite: `tests/autonomy` must pass before relaunch
 
 ## Relaunch Rule
 
-Do not relaunch SWR or replay PO items 01-07 for this issue. Close the false `review_artifact_invalid` with this evidence, then let AutoKeel recover the existing passed PO run and complete terminal validation from the refreshed shipped branch.
+Do not relaunch SWR or replay PO items 01-07 for this issue. Close the false `review_artifact_invalid` and false `provider_auth_failure` with this evidence, restore the archived S02 playbook, then let AutoKeel recover the existing passed PO run and complete terminal validation from the refreshed shipped branch.

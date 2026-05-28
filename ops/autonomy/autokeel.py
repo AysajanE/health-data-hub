@@ -3831,6 +3831,16 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return 1
 
         self.ensure_slice_brief(slice_)
+        recovered = self.recover_passed_slice_run(slice_)
+        if recovered:
+            run_id = self._extract_run_id(recovered.stdout)
+            if not run_id:
+                self.log_event("po_run_id_missing", {"stdout": recovered.stdout, "stderr": recovered.stderr}, slice_id=slice_["id"])
+                return 5
+            status = self.inspect_po_status(run_id)
+            self.handle_po_status(slice_["id"], run_id, status)
+            return 0
+
         lane_decision = self.ensure_lane_decision(slice_)
         if not lane_decision.ok:
             self.log_event(

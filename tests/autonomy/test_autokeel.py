@@ -606,6 +606,51 @@ Manual gates are forbidden.
             branch = subprocess.run(["git", "branch", "--show-current"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
             self.assertEqual(branch, base_branch)
 
+    def test_run_once_recovers_passed_run_before_recompile(self) -> None:
+        class PreflightRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                if list(argv)[:3] == ["python", "-m", "scripts.verify_v1"]:
+                    return CommandResult(list(argv), 1, '{"status": "error"}', "")
+                if list(argv)[:3] == ["python", "-m", "scripts.evaluate_tripwires"]:
+                    return CommandResult(list(argv), 0, '{"status": "ok"}', "")
+                raise AssertionError(f"unexpected command before terminal recovery: {argv}")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slices_path = root / "ops/autonomy/slices.json"
+            slices = json.loads(slices_path.read_text(encoding="utf-8"))
+            slices[0]["status"] = "replan_required"
+            slices[0]["run_id"] = "RUN_TEST"
+            write_json_atomic(slices_path, slices)
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = PreflightRunner()
+            handled: list[tuple[str, str, dict[str, str]]] = []
+
+            def recover(slice_):
+                return CommandResult([], 0, '{"run_id": "RUN_TEST", "terminal_state": "passed"}', "")
+
+            def inspect(run_id):
+                return {"terminal_state": "passed"}
+
+            def handle(slice_id, run_id, status):
+                handled.append((slice_id, run_id, status))
+                return "complete"
+
+            def should_not_compile(slice_):
+                raise AssertionError("terminal recovery must run before lane/playbook compilation")
+
+            op.recover_passed_slice_run = recover
+            op.inspect_po_status = inspect
+            op.handle_po_status = handle
+            op.ensure_lane_decision = should_not_compile
+            op.ensure_playbook = should_not_compile
+
+            result = op.run_once(requested_slice="S01")
+
+            self.assertEqual(result, 0)
+            self.assertEqual(handled, [("S01", "RUN_TEST", {"terminal_state": "passed"})])
+
     def test_row_author_keeps_verification_for_artifact_tasks(self) -> None:
         row = row_for_card(
             {
