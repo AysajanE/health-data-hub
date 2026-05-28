@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def copy_autonomy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "ops", dst / "ops")
     shutil.copytree(ROOT / "scripts", dst / "scripts")
-    (dst / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+    (dst / ".gitignore").write_text("data/\nprivate/\n.env\n.local/\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
     for rel in ("ops/autonomy/failures/archived_playbooks", "ops/autonomy/failures/archived_autoplans", "ops/autonomy/heartbeats"):
         shutil.rmtree(dst / rel, ignore_errors=True)
     slices_path = dst / "ops/autonomy/slices.json"
@@ -266,6 +266,105 @@ Manual gates are forbidden.
             self.assertEqual(active["run_id"], "RUN_TEST")
             self.assertIn("last_seen_at", active)
 
+    def test_escalated_active_run_requires_closed_audit_failure(self) -> None:
+        calls: list[list[str]] = []
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                calls.append(list(argv))
+                if list(argv)[:3] == ["python", "-m", "scripts.keel_status_digest"]:
+                    return CommandResult(list(argv), 0, '{"terminal_state": "escalated"}', "")
+                raise AssertionError("resume command should not run while audit_failure is open")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            failure = {
+                "ts": now,
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "failure_class": "audit_failure",
+                "severity": "high",
+                "description": "PO escalated the slice.",
+                "action_taken": "Recorded escalation for root-cause diagnosis.",
+                "evidence_path": "ops/autonomy/failures/S01-audit_failure.md",
+                "open": True,
+            }
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(json.dumps(failure) + "\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertEqual(result.exit_code, 54)
+            self.assertIn("audit_failure remains open", result.stderr)
+            self.assertEqual(len(calls), 1)
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("po_escalated_resume_blocked_open_failure", events)
+
+    def test_closed_escalated_audit_failure_allows_one_repaired_resume(self) -> None:
+        seen: dict[str, object] = {}
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                if list(argv)[:3] == ["python", "-m", "scripts.keel_status_digest"]:
+                    return CommandResult(list(argv), 0, '{"terminal_state": "escalated"}', "")
+                seen["argv"] = list(argv)
+                seen["cwd"] = cwd
+                seen["env"] = dict(env or {})
+                seen["timeout"] = timeout
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_TEST"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            failure = {
+                "ts": now,
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "failure_class": "audit_failure",
+                "severity": "high",
+                "description": "PO escalated the slice.",
+                "action_taken": "Recorded escalation for root-cause diagnosis.",
+                "evidence_path": "ops/autonomy/failures/S01-audit_failure.md",
+                "open": False,
+                "closure_evidence": "docs/evidence/root-cause.md",
+                "closure_note": "Root cause fixed.",
+            }
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(json.dumps(failure) + "\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(result.ok)
+            argv = seen["argv"]
+            self.assertEqual(argv[2:4], ["supervise", "resume"])
+            self.assertIn("--max-auto-resume-attempts", argv)
+            self.assertEqual(argv[argv.index("--max-auto-resume-attempts") + 1], "1")
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("po_escalated_resume_after_repair_authorized", events)
+
     def test_superseded_active_run_snapshot_starts_new_po_run(self) -> None:
         seen: dict[str, object] = {}
 
@@ -426,6 +525,132 @@ Manual gates are forbidden.
             ).stdout.strip()
             self.assertEqual(branch, base_branch)
 
+    def test_ship_slice_uses_run_state_branch_without_switching_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            init_git_repo(root)
+            base_branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "checkout", "-b", "orchestrator/run/RUN_TEST"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "run.txt").write_text("stale run branch\n", encoding="utf-8")
+            subprocess.run(["git", "add", "run.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "stale run branch"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            stale_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+
+            subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "checkout", "-b", "orchestrator/run-refresh/RUN_TEST/1"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "run.txt").write_text("refreshed run branch\n", encoding="utf-8")
+            subprocess.run(["git", "add", "run.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "refreshed run branch"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            refreshed_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+
+            run_state_dir = root / ".local/automation/plan_orchestrator/runs/RUN_TEST"
+            run_state_dir.mkdir(parents=True)
+            write_json_atomic(run_state_dir / "run_state.json", {"run_branch_name": "orchestrator/run-refresh/RUN_TEST/1"})
+            subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            op = AutoKeel(root=root, dry_run=False)
+
+            result = op.ship_slice("S01", "RUN_TEST")
+
+            self.assertTrue(result.ok, result.stderr)
+            ship_head = subprocess.run(["git", "rev-parse", "ship/s01"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            branch = subprocess.run(["git", "branch", "--show-current"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            self.assertEqual(ship_head, refreshed_head)
+            self.assertNotEqual(ship_head, stale_head)
+            self.assertEqual(branch, base_branch)
+
+    def test_passed_po_validates_shipped_branch_not_operator_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            (root / "scripts" / "check_autonomous_review_exists.py").write_text(
+                "from pathlib import Path\nimport sys\nsys.exit(0 if Path('ship_only_review').exists() else 9)\n",
+                encoding="utf-8",
+            )
+            (root / "scripts" / "verify_slice.py").write_text(
+                "from pathlib import Path\nimport sys\nsys.exit(0 if Path('ship_only_verify').exists() else 8)\n",
+                encoding="utf-8",
+            )
+            init_git_repo(root)
+            base_branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "checkout", "-b", "orchestrator/run/RUN_TEST"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "ship_only_review").write_text("review exists only on ship branch\n", encoding="utf-8")
+            (root / "ship_only_verify").write_text("acceptance exists only on ship branch\n", encoding="utf-8")
+            subprocess.run(["git", "add", "ship_only_review", "ship_only_verify"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "ship-only gates"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            run_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            op = AutoKeel(root=root, dry_run=False)
+
+            result = op.handle_po_status("S01", "RUN_TEST", {"terminal_state": "passed"})
+
+            self.assertEqual(result, "complete")
+            self.assertFalse((root / "ship_only_review").exists())
+            self.assertFalse((root / "ship_only_verify").exists())
+            state = op.load_state()
+            self.assertIn("S01", state["completed_slices"])
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            self.assertEqual(slices[0]["ship_commit"], run_head)
+            branch = subprocess.run(["git", "branch", "--show-current"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            self.assertEqual(branch, base_branch)
+
+    def test_run_once_recovers_passed_run_before_recompile(self) -> None:
+        class PreflightRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                if list(argv)[:3] == ["python", "-m", "scripts.verify_v1"]:
+                    return CommandResult(list(argv), 1, '{"status": "error"}', "")
+                if list(argv)[:3] == ["python", "-m", "scripts.evaluate_tripwires"]:
+                    return CommandResult(list(argv), 0, '{"status": "ok"}', "")
+                raise AssertionError(f"unexpected command before terminal recovery: {argv}")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slices_path = root / "ops/autonomy/slices.json"
+            slices = json.loads(slices_path.read_text(encoding="utf-8"))
+            slices[0]["status"] = "replan_required"
+            slices[0]["run_id"] = "RUN_TEST"
+            write_json_atomic(slices_path, slices)
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = PreflightRunner()
+            handled: list[tuple[str, str, dict[str, str]]] = []
+
+            def recover(slice_):
+                return CommandResult([], 0, '{"run_id": "RUN_TEST", "terminal_state": "passed"}', "")
+
+            def inspect(run_id):
+                return {"terminal_state": "passed"}
+
+            def handle(slice_id, run_id, status):
+                handled.append((slice_id, run_id, status))
+                return "complete"
+
+            def should_not_compile(slice_):
+                raise AssertionError("terminal recovery must run before lane/playbook compilation")
+
+            op.recover_passed_slice_run = recover
+            op.inspect_po_status = inspect
+            op.handle_po_status = handle
+            op.ensure_lane_decision = should_not_compile
+            op.ensure_playbook = should_not_compile
+
+            result = op.run_once(requested_slice="S01")
+
+            self.assertEqual(result, 0)
+            self.assertEqual(handled, [("S01", "RUN_TEST", {"terminal_state": "passed"})])
+
     def test_row_author_keeps_verification_for_artifact_tasks(self) -> None:
         row = row_for_card(
             {
@@ -582,6 +807,26 @@ Manual gates are forbidden.
             self.assertIn("manual_gate_leak", ledger)
             slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
             self.assertEqual(slices[0]["status"], "replan_required")
+
+    def test_escalated_po_keeps_active_run_for_supervised_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            state_path = root / "ops/autonomy/autonomy_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["active_run"] = {"slice": "S01", "run_id": "run_escalated", "started_at": "2026-05-27T00:00:00-04:00"}
+            write_json_atomic(state_path, state)
+
+            op = AutoKeel(root=root, dry_run=True)
+            result = op.handle_po_status("S01", "run_escalated", {"terminal_state": "escalated"})
+
+            self.assertEqual(result, "escalated")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("audit_failure", ledger)
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            self.assertEqual(slices[0]["status"], "pending")
+            updated_state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(updated_state["active_run"]["run_id"], "run_escalated")
 
     def test_blocked_external_creates_local_evidence_request(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

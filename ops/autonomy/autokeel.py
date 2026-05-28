@@ -20,11 +20,12 @@ import signal
 import subprocess
 import sys
 import time
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 
 class AutoKeelError(RuntimeError):
@@ -596,6 +597,22 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
 
     def po_max_auto_resume_attempts(self) -> int:
         return int(self.policy.get("loop", {}).get("po_max_auto_resume_attempts", 0))
+
+    def po_repaired_escalation_resume_attempts(self) -> int:
+        return int(self.policy.get("loop", {}).get("po_repaired_escalation_resume_attempts", 1))
+
+    def open_failures(self, slice_id: str, failure_class: str | None = None, run_id: str | None = None) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for row in iter_jsonl(self.failure_path):
+            if row.get("slice") != slice_id:
+                continue
+            if failure_class and row.get("failure_class") != failure_class:
+                continue
+            if run_id and row.get("run_id") != run_id:
+                continue
+            if row.get("open", True):
+                rows.append(row)
+        return rows
 
     def checkpoint_allowed_pre_po_changes(self, slice_id: str) -> CommandResult:
         status = self._git_status_paths()
@@ -2870,15 +2887,17 @@ Additional validator requirements:
             for item in fired
         )
 
-    def verify_slice_acceptance(self, slice_id: str) -> CommandResult:
+    def verify_slice_acceptance(self, slice_id: str, cwd: Path | None = None) -> CommandResult:
+        run_cwd = cwd or self.root
         result = self.runner.run(
             ["python", "-m", "scripts.verify_slice", slice_id, "--json"],
-            cwd=self.root,
+            cwd=run_cwd,
             execute_in_dry_run=True,
         )
         self.log_event(
             "slice_acceptance_passed" if result.ok else "slice_acceptance_failed",
             {
+                "cwd": str(run_cwd),
                 "exit_code": result.exit_code,
                 "stdout": result.stdout[-4000:],
                 "stderr": result.stderr[-4000:],
@@ -2944,7 +2963,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
         )
         return result
 
-    def ensure_review_artifacts(self, slice_id: str, run_id: str) -> CommandResult:
+    def ensure_review_artifacts(self, slice_id: str, run_id: str, cwd: Path | None = None) -> CommandResult:
         slice_ = self.find_slice(slice_id)
         if not slice_:
             return CommandResult([], 60, "", f"unknown slice: {slice_id}")
@@ -2953,12 +2972,31 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if not artifacts:
             return CommandResult([], 0, "no review artifacts required", "")
 
-        missing = [artifact for artifact in artifacts if not (self.root / artifact).exists()]
+        run_cwd = cwd or self.root
+        if run_cwd != self.root:
+            check = self.runner.run(
+                ["python", "-m", "scripts.check_autonomous_review_exists", slice_id, "--json"],
+                cwd=run_cwd,
+                execute_in_dry_run=True,
+            )
+            self.log_event(
+                "review_artifacts_validated" if check.ok else "review_artifacts_rejected",
+                {
+                    "cwd": str(run_cwd),
+                    "exit_code": check.exit_code,
+                    "stdout": check.stdout[-4000:],
+                    "stderr": check.stderr[-4000:],
+                },
+                slice_id=slice_id,
+            )
+            return check
+
+        missing = [artifact for artifact in artifacts if not (run_cwd / artifact).exists()]
         reviews_policy = self.policy.get("reviews", {})
         if missing and not bool(reviews_policy.get("auto_generate_missing", True)):
             return self.runner.run(
                 ["python", "-m", "scripts.check_autonomous_review_exists", slice_id, "--json"],
-                cwd=self.root,
+                cwd=run_cwd,
                 execute_in_dry_run=True,
             )
         if self.dry_run and missing:
@@ -2973,15 +3011,97 @@ Use local files and commands only. If evidence is missing, write a failing revie
 
         check = self.runner.run(
             ["python", "-m", "scripts.check_autonomous_review_exists", slice_id, "--json"],
-            cwd=self.root,
+            cwd=run_cwd,
             execute_in_dry_run=True,
         )
         self.log_event(
             "review_artifacts_validated" if check.ok else "review_artifacts_rejected",
-            {"exit_code": check.exit_code, "stdout": check.stdout[-4000:], "stderr": check.stderr[-4000:]},
+            {
+                "cwd": str(run_cwd),
+                "exit_code": check.exit_code,
+                "stdout": check.stdout[-4000:],
+                "stderr": check.stderr[-4000:],
+            },
             slice_id=slice_id,
         )
         return check
+
+    def load_po_run_state(self, run_id: str) -> dict[str, Any]:
+        run_state_path = self.root / ".local/automation/plan_orchestrator/runs" / run_id / "run_state.json"
+        if not run_state_path.exists():
+            return {}
+        try:
+            payload = json.loads(run_state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def resolve_po_run_branch(self, run_id: str) -> tuple[str, CommandResult]:
+        run_state = self.load_po_run_state(run_id)
+        candidates = [
+            str(run_state.get("run_branch_name") or ""),
+            f"orchestrator/run/{run_id}",
+        ]
+        seen: set[str] = set()
+        failures: list[str] = []
+        for candidate in candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            verify = self.runner.run(
+                ["git", "rev-parse", "--verify", f"{candidate}^{{commit}}"],
+                cwd=self.root,
+            )
+            if verify.ok:
+                return candidate, verify
+            failures.append(f"{candidate}: {verify.stderr.strip() or verify.stdout.strip()}")
+        return "", CommandResult(
+            ["git", "rev-parse", "--verify", f"orchestrator/run/{run_id}^{{commit}}"],
+            30,
+            "",
+            "could not resolve PO run branch; " + "; ".join(failures),
+        )
+
+    @staticmethod
+    def ship_branch_name(slice_id: str) -> str:
+        return f"ship/{slice_id.lower()}"
+
+    def with_detached_worktree(self, ref: str, prefix: str, fn: Callable[[Path], CommandResult]) -> CommandResult:
+        worktree_root = self.root / ".local" / "autokeel" / "ship-checkouts"
+        worktree_root.mkdir(parents=True, exist_ok=True)
+        worktree_path = Path(tempfile.mkdtemp(prefix=prefix, dir=worktree_root))
+        add = self.runner.run(["git", "worktree", "add", "--detach", str(worktree_path), ref], cwd=self.root)
+        if not add.ok:
+            shutil.rmtree(worktree_path, ignore_errors=True)
+            return add
+        try:
+            return fn(worktree_path)
+        finally:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree_path)],
+                cwd=self.root,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if worktree_path.exists():
+                shutil.rmtree(worktree_path, ignore_errors=True)
+
+    def validate_shipped_slice(self, slice_id: str, run_id: str, ship_branch: str) -> tuple[str, CommandResult]:
+        safe_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{slice_id.lower()}-{run_id}-")
+        failed_phase = "worktree"
+
+        def validate(worktree: Path) -> CommandResult:
+            nonlocal failed_phase
+            failed_phase = "review_artifacts"
+            reviews = self.ensure_review_artifacts(slice_id, run_id, cwd=worktree)
+            if not reviews.ok:
+                return reviews
+            failed_phase = "slice_acceptance"
+            return self.verify_slice_acceptance(slice_id, cwd=worktree)
+
+        result = self.with_detached_worktree(ship_branch, safe_prefix, validate)
+        return failed_phase, result
 
     def active_run_is_stale(self, active: dict[str, Any]) -> bool:
         observed_at = active.get("last_seen_at") or active.get("started_at")
@@ -3073,10 +3193,60 @@ Use local files and commands only. If evidence is missing, write a failing revie
         state["active_run"] = active
         self.save_state(state)
 
-    def resume_active_po(self, slice_: dict[str, Any], active: dict[str, Any]) -> CommandResult:
+    def resume_active_po(
+        self,
+        slice_: dict[str, Any],
+        active: dict[str, Any],
+        *,
+        prechecked_status: dict[str, Any] | None = None,
+        skip_checkpoint: bool = False,
+    ) -> CommandResult:
         run_id = active.get("run_id")
         if not run_id:
             return CommandResult([], 50, "", "cannot resume active PO: missing run_id")
+
+        if not skip_checkpoint:
+            checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
+            if not checkpoint.ok:
+                self.log_event(
+                    "po_resume_precheck_failed",
+                    {
+                        "run_id": run_id,
+                        "exit_code": checkpoint.exit_code,
+                        "stdout": checkpoint.stdout[-2000:],
+                        "stderr": checkpoint.stderr[-2000:],
+                    },
+                    slice_id=slice_["id"],
+                )
+                return checkpoint
+
+        max_auto_resume_attempts = self.po_max_auto_resume_attempts()
+        status = prechecked_status or self.inspect_po_status(str(run_id))
+        terminal = str(status.get("terminal_state") or status.get("state") or "unknown")
+        if terminal == "escalated":
+            open_audit_failures = self.open_failures(slice_["id"], "audit_failure", str(run_id))
+            if open_audit_failures:
+                self.log_event(
+                    "po_escalated_resume_blocked_open_failure",
+                    {
+                        "run_id": run_id,
+                        "open_failures": len(open_audit_failures),
+                        "required_action": "close audit_failure with local root-cause evidence before one bounded resume",
+                    },
+                    slice_id=slice_["id"],
+                )
+                return CommandResult(
+                    [],
+                    54,
+                    "",
+                    "cannot resume escalated PO while audit_failure remains open; close it with local evidence after root-cause repair",
+                )
+            max_auto_resume_attempts = self.po_repaired_escalation_resume_attempts()
+            self.log_event(
+                "po_escalated_resume_after_repair_authorized",
+                {"run_id": run_id, "max_auto_resume_attempts": max_auto_resume_attempts},
+                slice_id=slice_["id"],
+            )
 
         checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
         if not checkpoint.ok:
@@ -3101,7 +3271,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 "--max-wait-seconds",
                 str(self.po_supervisor_wait_seconds()),
                 "--max-auto-resume-attempts",
-                str(self.po_max_auto_resume_attempts()),
+                str(max_auto_resume_attempts),
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
@@ -3120,12 +3290,69 @@ Use local files and commands only. If evidence is missing, write a failing revie
         )
         return result
 
+    def recover_passed_slice_run(self, slice_: dict[str, Any]) -> CommandResult | None:
+        run_id = str(slice_.get("run_id") or "")
+        if not run_id:
+            return None
+        if self.open_failures(slice_["id"], run_id=run_id):
+            self.log_event(
+                "po_terminal_recovery_blocked_open_failure",
+                {"run_id": run_id, "required_action": "close open failures with local evidence before terminal recovery"},
+                slice_id=slice_["id"],
+            )
+            return None
+
+        status = self.inspect_po_status(run_id)
+        terminal = str(status.get("terminal_state") or status.get("state") or "unknown")
+        if terminal != "passed":
+            return None
+
+        state = self.load_state()
+        state["active_run"] = {
+            "slice": slice_["id"],
+            "run_id": run_id,
+            "started_at": now_iso(),
+            "recovered_terminal_state": terminal,
+        }
+        state["current_slice"] = slice_["id"]
+        self.save_state(state)
+        self.log_event(
+            "po_passed_run_recovered",
+            {"run_id": run_id, "terminal_state": terminal},
+            slice_id=slice_["id"],
+        )
+        return CommandResult([], 0, json.dumps({"run_id": run_id, "terminal_state": terminal}), "")
+
     def start_or_resume_po(self, slice_: dict[str, Any]) -> CommandResult:
         state = self.load_state()
         active = state.get("active_run") or {}
         if active.get("slice") == slice_["id"] and active.get("run_id") and slice_.get("status") == "evidence_ready":
             return self.resume_po_with_evidence(slice_, active)
         if active.get("slice") == slice_["id"] and active.get("run_id"):
+            checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
+            if not checkpoint.ok:
+                self.log_event(
+                    "po_resume_precheck_failed",
+                    {
+                        "run_id": active.get("run_id"),
+                        "exit_code": checkpoint.exit_code,
+                        "stdout": checkpoint.stdout[-2000:],
+                        "stderr": checkpoint.stderr[-2000:],
+                    },
+                    slice_id=slice_["id"],
+                )
+                return checkpoint
+
+            status = self.inspect_po_status(str(active.get("run_id")))
+            terminal = str(status.get("terminal_state") or status.get("state") or "unknown")
+            if terminal == "passed":
+                self.log_event(
+                    "po_active_passed_run_detected",
+                    {"run_id": active.get("run_id"), "terminal_state": terminal},
+                    slice_id=slice_["id"],
+                )
+                return CommandResult([], 0, json.dumps({"run_id": active.get("run_id"), "terminal_state": terminal}), "")
+
             mismatch, run_state_path, mismatch_detail = self.active_run_playbook_mismatch(slice_, str(active.get("run_id")))
             if mismatch:
                 failure = self.record_failure(
@@ -3161,7 +3388,11 @@ Use local files and commands only. If evidence is missing, write a failing revie
                     self.clear_active_run()
                     self.mark_slice_status(slice_["id"], "replan_required", run_id=active.get("run_id"), reason="stale run")
                     return CommandResult([], 40, "", "active PO run is stale")
-                return self.resume_active_po(slice_, active)
+                return self.resume_active_po(slice_, active, prechecked_status=status, skip_checkpoint=True)
+
+        recovered = self.recover_passed_slice_run(slice_)
+        if recovered:
+            return recovered
 
         playbook = self.root / slice_["playbook"]
         if not playbook.exists():
@@ -3370,41 +3601,42 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 self.mark_slice_status(slice_id, "replan_required", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
                 return "ship_failed"
 
-            reviews = self.ensure_review_artifacts(slice_id, run_id)
-            if not reviews.ok:
+            ship_branch = self.ship_branch_name(slice_id)
+            failed_phase, shipped_validation = self.validate_shipped_slice(slice_id, run_id, ship_branch)
+            if not shipped_validation.ok:
+                failure_class = "review_artifact_invalid" if failed_phase != "slice_acceptance" else "agent_false_done"
+                description = (
+                    "PO passed but required autonomous review artifacts were missing or invalid on the shipped branch."
+                    if failure_class == "review_artifact_invalid"
+                    else "PO passed but shipped branch slice acceptance verification failed."
+                )
+                action_taken = (
+                    "Rejected completion; shipped branch reviewer artifacts must pass validation before slice acceptance."
+                    if failure_class == "review_artifact_invalid"
+                    else "Rejected completion; shipped branch requires remediation."
+                )
                 failure = self.record_failure(
                     slice_id,
-                    "review_artifact_invalid",
+                    failure_class,
                     "high",
-                    "PO passed but required autonomous review artifacts were missing or invalid.",
-                    "Rejected completion; reviewer artifacts must be generated and pass validation before slice acceptance.",
+                    description,
+                    action_taken,
                     None,
                     run_id=run_id,
                 )
                 self.mark_slice_status(slice_id, "replan_required", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
-                return "review_failed"
+                return "review_failed" if failure_class == "review_artifact_invalid" else "acceptance_failed"
 
-            acceptance = self.verify_slice_acceptance(slice_id)
-            if not acceptance.ok:
-                failure = self.record_failure(
-                    slice_id,
-                    "agent_false_done",
-                    "high",
-                    "PO passed but slice acceptance verification failed.",
-                    "Rejected completion; slice requires remediation.",
-                    None,
-                    run_id=run_id,
-                )
-                self.mark_slice_status(slice_id, "replan_required", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
-                return "acceptance_failed"
+            ship_commit_result = self.runner.run(["git", "rev-parse", f"{ship_branch}^{{commit}}"], cwd=self.root)
+            ship_commit = ship_commit_result.stdout.strip() if ship_commit_result.ok else ""
 
             self.mark_slice_status(
                 slice_id,
                 "complete",
                 run_id=run_id,
                 completed_at=now_iso(),
-                ship_branch=f"ship/{slice_id.lower()}",
-                ship_commit=self.runner.run(["git", "rev-parse", "HEAD"], cwd=self.root).stdout.strip(),
+                ship_branch=ship_branch,
+                ship_commit=ship_commit,
             )
             return "complete"
 
@@ -3453,11 +3685,11 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 "audit_failure",
                 "high",
                 "PO escalated the slice.",
-                "Recorded escalation for diagnosis and bounded replan.",
+                "Recorded escalation for root-cause diagnosis; keep the active PO run for supervised resume after the fix.",
                 None,
                 run_id=run_id,
             )
-            self.mark_slice_status(slice_id, "replan_required", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
+            self.mark_slice_status(slice_id, "pending", run_id=run_id, failure_path=str(failure.relative_to(self.root)))
             return "escalated"
 
         return "live"
@@ -3510,17 +3742,16 @@ Use local files and commands only. If evidence is missing, write a failing revie
         return failure_file
 
     def ship_slice(self, slice_id: str, run_id: str) -> CommandResult:
-        branch = f"ship/{slice_id.lower()}"
-        run_branch = f"orchestrator/run/{run_id}"
+        branch = self.ship_branch_name(slice_id)
+        run_branch, verify = self.resolve_po_run_branch(run_id)
 
-        verify = self.runner.run(["git", "rev-parse", "--verify", run_branch], cwd=self.root)
         if not verify.ok:
             self.log_event(
                 "slice_ship_failed",
                 {"run_id": run_id, "run_branch": run_branch, "stderr": verify.stderr[-2000:]},
                 slice_id=slice_id,
             )
-            return CommandResult(["git", "rev-parse", "--verify", run_branch], 30, verify.stdout, verify.stderr)
+            return verify
 
         checkpoint = self.checkpoint_allowed_pre_po_changes(slice_id)
         if not checkpoint.ok:
@@ -3539,10 +3770,10 @@ Use local files and commands only. If evidence is missing, write a failing revie
             )
             return checkpoint
 
-        checkout = self.runner.run(["git", "checkout", "-B", branch, run_branch], cwd=self.root)
+        checkout = self.runner.run(["git", "branch", "-f", branch, run_branch], cwd=self.root)
         ship_commit = ""
         if checkout.ok:
-            head = self.runner.run(["git", "rev-parse", "HEAD"], cwd=self.root)
+            head = self.runner.run(["git", "rev-parse", f"{branch}^{{commit}}"], cwd=self.root)
             ship_commit = head.stdout.strip() if head.ok else ""
         self.log_event(
             "slice_ship_branch_created" if checkout.ok else "slice_ship_failed",
@@ -3600,6 +3831,16 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return 1
 
         self.ensure_slice_brief(slice_)
+        recovered = self.recover_passed_slice_run(slice_)
+        if recovered:
+            run_id = self._extract_run_id(recovered.stdout)
+            if not run_id:
+                self.log_event("po_run_id_missing", {"stdout": recovered.stdout, "stderr": recovered.stderr}, slice_id=slice_["id"])
+                return 5
+            status = self.inspect_po_status(run_id)
+            self.handle_po_status(slice_["id"], run_id, status)
+            return 0
+
         lane_decision = self.ensure_lane_decision(slice_)
         if not lane_decision.ok:
             self.log_event(
