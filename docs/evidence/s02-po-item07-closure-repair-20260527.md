@@ -16,8 +16,12 @@ AutoKeel resumed the original S02 PO run `RUN_20260528T012206Z_d1a034d3e30d4b26a
 
 - Tightened tracked-data scanning to allow only obvious fake token fixture values under `tests/`, while continuing to reject real-looking tracked token values.
 - Added plan-orchestrator import-path fallback resolution from `KEEL_PO_ROOT`, `ops/autonomy/policy.yaml`, and the canonical Keel tool checkout.
-- Planned active-run repair from the minimal drift point: retarget the saved PO run branch to a descendant of item 07's checkpoint with the deterministic checker fixes and refreshed S02 review command evidence, then resume item 07 only.
+- Retargeted the saved PO run branch to repair commit `9b9a72b`, a descendant of item 07's checkpoint, with the deterministic checker fixes and refreshed S02 review command evidence. This preserves items 01-06 and resumes item 07 only.
 
 ## Verification
 
 - `python -m pytest tests/autonomy/test_verify_scripts.py::VerifyScriptsTests::test_check_no_tracked_data_allows_documented_fake_test_tokens_only tests/autonomy/test_validate_playbook_autonomous.py::ValidatePlaybookTests::test_plan_orchestrator_roots_include_env_and_policy_fallbacks tests/autonomy/test_validate_playbook_autonomous.py::ValidatePlaybookTests::test_po_normalization_accepts_comma_prerequisites -q`
+- In repair worktree `.local/repair/s02-item07-repair`: `python scripts/check_no_tracked_data.py --json`
+- In repair worktree `.local/repair/s02-item07-repair`: `python scripts/check_autonomous_review_exists.py S02 --json`
+- In repair worktree `.local/repair/s02-item07-repair`: `python scripts/verify_slice.py S02 --json`
+- `PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED=1 python automation/run_plan_orchestrator.py refresh-run --run-id RUN_20260528T012206Z_d1a034d3e30d4b26a26273e07597d115 --retarget-run-branch-to 9b9a72b`
