@@ -1,16 +1,12 @@
 {
-  "active_run": {
-    "recovered_terminal_state": "passed",
-    "run_id": "RUN_20260528T012206Z_d1a034d3e30d4b26a26273e07597d115",
-    "slice": "S02",
-    "started_at": "2026-05-28T00:18:36-04:00"
-  },
+  "active_run": null,
   "active_swr_run": null,
   "completed_slices": [
-    "S01"
+    "S01",
+    "S02"
   ],
-  "current_slice": "S02",
-  "last_event_id": 451,
+  "current_slice": null,
+  "last_event_id": 455,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [
