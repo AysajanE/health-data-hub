@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from functools import lru_cache
 from ipaddress import ip_address
 import os
+from pathlib import Path
 from typing import Mapping, Protocol
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.schemas import MoodLogRequest, MoodLogResponse
+from src.warehouse.warehouse import DEFAULT_DATABASE_PATH, connect_duckdb, insert_mood_entry
 
 
 ENV_MOOD_TOKEN = "MOOD_TOKEN"
@@ -99,5 +102,34 @@ class MoodEntryPersister(Protocol):
     def __call__(self, payload: MoodLogRequest, mood_date: date) -> MoodLogResponse: ...
 
 
+def persist_mood_entry_to_warehouse(
+    payload: MoodLogRequest,
+    mood_date: date,
+    *,
+    database: str | Path = DEFAULT_DATABASE_PATH,
+) -> MoodLogResponse:
+    logged_at_utc = payload.logged_at_utc or datetime.now(UTC)
+    conn = connect_duckdb(database, apply_schema=True)
+    try:
+        entry = insert_mood_entry(
+            conn,
+            {
+                "log_id": uuid4(),
+                "logged_at_utc": logged_at_utc,
+                "mood_date": mood_date,
+                "feeling": payload.feeling,
+                "energy": payload.energy,
+                "notes": payload.notes,
+                "context_chips": payload.context_chips,
+                "source": "ios_shortcut",
+                "supersedes_log_id": None,
+            },
+        )
+    finally:
+        conn.close()
+
+    return MoodLogResponse(log_id=entry.log_id, mood_date=entry.mood_date, status="ok")
+
+
 def default_persist_mood_entry(payload: MoodLogRequest, mood_date: date) -> MoodLogResponse:
-    raise NotImplementedError("mood persistence is not configured")
+    return persist_mood_entry_to_warehouse(payload, mood_date, database=DEFAULT_DATABASE_PATH)
