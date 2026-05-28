@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def copy_autonomy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "ops", dst / "ops")
     shutil.copytree(ROOT / "scripts", dst / "scripts")
-    (dst / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+    (dst / ".gitignore").write_text("data/\nprivate/\n.env\n.local/\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
     for rel in ("ops/autonomy/failures/archived_playbooks", "ops/autonomy/failures/archived_autoplans", "ops/autonomy/heartbeats"):
         shutil.rmtree(dst / rel, ignore_errors=True)
     slices_path = dst / "ops/autonomy/slices.json"
@@ -523,6 +523,87 @@ Manual gates are forbidden.
                 capture_output=True,
                 check=True,
             ).stdout.strip()
+            self.assertEqual(branch, base_branch)
+
+    def test_ship_slice_uses_run_state_branch_without_switching_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            init_git_repo(root)
+            base_branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "checkout", "-b", "orchestrator/run/RUN_TEST"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "run.txt").write_text("stale run branch\n", encoding="utf-8")
+            subprocess.run(["git", "add", "run.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "stale run branch"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            stale_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+
+            subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "checkout", "-b", "orchestrator/run-refresh/RUN_TEST/1"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "run.txt").write_text("refreshed run branch\n", encoding="utf-8")
+            subprocess.run(["git", "add", "run.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "refreshed run branch"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            refreshed_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+
+            run_state_dir = root / ".local/automation/plan_orchestrator/runs/RUN_TEST"
+            run_state_dir.mkdir(parents=True)
+            write_json_atomic(run_state_dir / "run_state.json", {"run_branch_name": "orchestrator/run-refresh/RUN_TEST/1"})
+            subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            op = AutoKeel(root=root, dry_run=False)
+
+            result = op.ship_slice("S01", "RUN_TEST")
+
+            self.assertTrue(result.ok, result.stderr)
+            ship_head = subprocess.run(["git", "rev-parse", "ship/s01"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            branch = subprocess.run(["git", "branch", "--show-current"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            self.assertEqual(ship_head, refreshed_head)
+            self.assertNotEqual(ship_head, stale_head)
+            self.assertEqual(branch, base_branch)
+
+    def test_passed_po_validates_shipped_branch_not_operator_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            (root / "scripts" / "check_autonomous_review_exists.py").write_text(
+                "from pathlib import Path\nimport sys\nsys.exit(0 if Path('ship_only_review').exists() else 9)\n",
+                encoding="utf-8",
+            )
+            (root / "scripts" / "verify_slice.py").write_text(
+                "from pathlib import Path\nimport sys\nsys.exit(0 if Path('ship_only_verify').exists() else 8)\n",
+                encoding="utf-8",
+            )
+            init_git_repo(root)
+            base_branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "checkout", "-b", "orchestrator/run/RUN_TEST"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "ship_only_review").write_text("review exists only on ship branch\n", encoding="utf-8")
+            (root / "ship_only_verify").write_text("acceptance exists only on ship branch\n", encoding="utf-8")
+            subprocess.run(["git", "add", "ship_only_review", "ship_only_verify"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "ship-only gates"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            run_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            op = AutoKeel(root=root, dry_run=False)
+
+            result = op.handle_po_status("S01", "RUN_TEST", {"terminal_state": "passed"})
+
+            self.assertEqual(result, "complete")
+            self.assertFalse((root / "ship_only_review").exists())
+            self.assertFalse((root / "ship_only_verify").exists())
+            state = op.load_state()
+            self.assertIn("S01", state["completed_slices"])
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            self.assertEqual(slices[0]["ship_commit"], run_head)
+            branch = subprocess.run(["git", "branch", "--show-current"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
             self.assertEqual(branch, base_branch)
 
     def test_row_author_keeps_verification_for_artifact_tasks(self) -> None:
