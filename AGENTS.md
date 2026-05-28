@@ -10,6 +10,7 @@ Important paths:
 
 - `ops/autonomy/autokeel.py` — AutoKeel supervisor.
 - `ops/autonomy/policy.yaml` — autonomous operating policy.
+- `ops/autonomy/authorization_policy.yaml` — deterministic zero-human authorization criteria for SWR repair, PO repair, and terminal recovery.
 - `ops/autonomy/slices.json` — durable slice/task state.
 - `ops/autonomy/autonomy_state.json` — runtime state.
 - `ops/autonomy/events.jsonl` — append-only event log.
@@ -124,15 +125,16 @@ Expected loop:
 7. Ensure autoplan exists or generate/record missing autoplan evidence.
 8. Compile playbook with Keel or SWR according to lane.
 9. Validate playbook with `scripts/validate_playbook_autonomous.py`.
-10. Run PO under supervision.
-11. Inspect PO status with `scripts/keel_status_digest.py`.
-12. Handle terminal states:
+10. Run real PO `list-items` and `doctor` contract validation before PO.
+11. Run PO under supervision.
+12. Inspect PO status with `scripts/keel_status_digest.py`.
+13. Handle terminal states:
     - `passed` → create ship branch → run `scripts/verify_slice.py` → mark complete only if verification passes.
     - `blocked_external` → collect/request local evidence; do not fabricate evidence.
     - `awaiting_human_gate` → record `manual_gate_leak`; replan under autonomous gate policy.
     - `escalated` → record failure; diagnose; replan.
-13. Append `events.jsonl`, `failure_ledger.jsonl`, and `progress.md`.
-14. Continue until `scripts/verify_v1.py` passes.
+14. Append `events.jsonl`, `failure_ledger.jsonl`, and `progress.md`.
+15. Continue until `scripts/verify_v1.py` passes.
 
 ## Commands
 
@@ -142,7 +144,12 @@ Preflight:
 
 ```bash
 python -m ops.autonomy.autokeel --doctor
+python -m ops.autonomy.autokeel --doctor --strict
+python -m ops.autonomy.autokeel --doctor --strict-swr S05
 python scripts/verify_autonomy_preflight.py --json
+python scripts/verify_failure_ledger.py --json
+python scripts/verify_autokeel_invariants.py --json
+python scripts/verify_s03_readiness.py --json
 ```
 
 One dry-run iteration:
@@ -175,6 +182,8 @@ Project safety checks:
 
 ```bash
 python scripts/check_no_tracked_data.py
+python scripts/verify_failure_ledger.py --json
+python scripts/verify_autokeel_invariants.py --json
 python scripts/verify_v1.py --json
 ```
 
@@ -182,12 +191,17 @@ Playbook validation:
 
 ```bash
 python scripts/validate_playbook_autonomous.py docs/playbooks/s01-warehouse.playbook.md --json
+python automation/run_plan_orchestrator.py list-items --playbook docs/playbooks/s01-warehouse.playbook.md --format json
+python automation/run_plan_orchestrator.py doctor --playbook docs/playbooks/s01-warehouse.playbook.md --format json
+python scripts/validate_swr_review_bundle.py <bundle>.json --json
+python scripts/verify_run_retarget_evidence.py docs/evidence/<slice>-run-retarget-<timestamp>.json --json
 ```
 
 Slice verification:
 
 ```bash
 python scripts/verify_slice.py S01 --json
+python scripts/verify_ship_invariants.py S01 --json
 ```
 
 Close a failure only with local evidence:

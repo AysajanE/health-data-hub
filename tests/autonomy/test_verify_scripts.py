@@ -10,7 +10,11 @@ from ops.autonomy.autokeel import write_json_atomic
 from scripts.check_autonomous_review_exists import check_review
 from scripts.check_no_tracked_data import check_no_tracked_data
 from scripts.keel_status_digest import digest_status
+from scripts.verify_failure_ledger import verify_failure_ledger
+from scripts.verify_run_retarget_evidence import verify_run_retarget_evidence
+from scripts.verify_ship_invariants import verify_ship_invariants
 from scripts.verify_s02_readiness import verify_s02_readiness
+from scripts.verify_s03_readiness import verify_s03_readiness
 from scripts.verify_v1 import verify_v1
 
 
@@ -117,7 +121,7 @@ class VerifyScriptsTests(unittest.TestCase):
             self.assertEqual(report["status"], "error")
             self.assertTrue(any("tracked sensitive path" in error for error in report["errors"]))
 
-    def test_check_no_tracked_data_allows_documented_fake_test_tokens_only(self) -> None:
+    def test_check_no_tracked_data_allows_exact_fake_test_tokens_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
@@ -129,8 +133,9 @@ class VerifyScriptsTests(unittest.TestCase):
             tests_dir.mkdir()
             fixture = tests_dir / "test_api_security.py"
             fixture.write_text(
-                'FAKE_MOOD_TOKEN = "test-only-mood-token"\n'
-                'ENV = {"MOOD_TOKEN": "real-token-should-not-be-used"}\n',
+                '# explicit fake test fixture context\n'
+                'FAKE_MOOD_TOKEN = "test-mood-token"\n'
+                'ENV = {"MOOD_TOKEN": "fake-mood-token"}\n',
                 encoding="utf-8",
             )
             subprocess.run(["git", "add", ".gitignore", str(fixture.relative_to(root))], cwd=root, check=True)
@@ -143,6 +148,33 @@ class VerifyScriptsTests(unittest.TestCase):
             report = check_no_tracked_data(root)
             self.assertEqual(report["status"], "error")
             self.assertTrue(any("secret/token value" in error for error in report["errors"]))
+
+            fixture.write_text('# fake test fixture\nMOOD_' + 'TOKEN = "test-only-mood-' + 'token"\n', encoding="utf-8")
+            report = check_no_tracked_data(root)
+            self.assertEqual(report["status"], "error")
+
+    def test_check_no_tracked_data_allows_policy_env_var_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text(
+                "data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n",
+                encoding="utf-8",
+            )
+            policy = root / "ops/autonomy/policy.yaml"
+            policy.parent.mkdir(parents=True)
+            policy.write_text(
+                "swr:\n"
+                "  required_env:\n"
+                "    - OPENAI_API_KEY\n"
+                "swr_repair_authorization:\n"
+                "  auto_authorize_single_stage_repair: true\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", ".gitignore", str(policy.relative_to(root))], cwd=root, check=True)
+
+            report = check_no_tracked_data(root)
+            self.assertEqual(report["status"], "ok", report)
 
     def test_verify_v1_fails_with_incomplete_slices(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -449,6 +481,148 @@ class VerifyScriptsTests(unittest.TestCase):
             report = verify_v1(root, run_acceptance_commands=False)
             self.assertEqual(report["status"], "error")
             self.assertTrue(any("recorded ship_commit" in error for error in report["errors"]))
+
+    def test_verify_failure_ledger_rejects_open_high_and_missing_closure_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "ops/autonomy").mkdir(parents=True)
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "autokeel.failure_ledger.v2",
+                        "slice": "S03",
+                        "failure_class": "provider_auth_failure",
+                        "severity": "high",
+                        "open": True,
+                        "root_cause_id": "S03-PROVIDER-AUTH",
+                        "failure_origin": "external_provider",
+                        "supersedes": [],
+                        "superseded_by": None,
+                        "false_positive": False,
+                        "closure_validation_command": "",
+                    }
+                )
+                + "\n"
+                + json.dumps({"slice": "S03", "failure_class": "audit_failure", "severity": "high", "open": False})
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = verify_failure_ledger(root, slice_id="S03")
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("provider_auth_failure is open" in error for error in report["errors"]))
+            self.assertTrue(any("closure_evidence" in error for error in report["errors"]))
+
+    def test_verify_s03_readiness_requires_s01_s02_and_provider_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text(
+                "data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n",
+                encoding="utf-8",
+            )
+            (root / "ops/autonomy").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {"id": "S01", "required": True, "status": "complete"},
+                    {"id": "S02", "required": True, "status": "complete"},
+                    {
+                        "id": "S03",
+                        "required": True,
+                        "status": "pending",
+                        "review_artifacts": ["docs/reviews/s03-autonomous-ingestion-evidence-review.md"],
+                    },
+                ],
+            )
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
+
+            report = verify_s03_readiness(root)
+            self.assertEqual(report["status"], "error")
+            joined = "\n".join(report["errors"])
+            self.assertIn("Oura evidence preflight", joined)
+            self.assertIn("pyEight fallback", joined)
+
+            evidence = root / "private/evidence/S03/oura_smoke/report.json"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
+            decision = root / "ops/autonomy/decisions/pyeight-fallback.json"
+            decision.parent.mkdir(parents=True)
+            decision.write_text(json.dumps({"status": "fallback_accepted", "action": "oura_only_v1"}), encoding="utf-8")
+            report = verify_s03_readiness(root)
+            self.assertEqual(report["status"], "ok", report)
+
+    def test_ship_invariants_require_detached_worktree_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            subprocess.run(["git", "branch", "ship/s01", commit], cwd=root, check=True)
+            (root / "ops/autonomy").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [{"id": "S01", "status": "complete", "run_id": "RUN_TEST", "ship_branch": "ship/s01", "ship_commit": commit}],
+            )
+            (root / "ops/autonomy/events.jsonl").write_text(
+                json.dumps({"slice": "S01", "event": "slice_ship_branch_created", "details": {"operator_branch_before": "main", "operator_branch_after": "main"}})
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = verify_ship_invariants(root, "S01")
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("detached ship worktree" in error for error in report["errors"]))
+
+    def test_run_retarget_evidence_requires_ancestry_and_closure_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            old_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            (root / "new.txt").write_text("new\n", encoding="utf-8")
+            subprocess.run(["git", "add", "new.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "new"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            new_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            merge_base = subprocess.run(["git", "merge-base", old_head, new_head], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            closure = root / "docs/evidence/root-cause.md"
+            closure.parent.mkdir(parents=True)
+            closure.write_text("closed\n", encoding="utf-8")
+            evidence = root / "docs/evidence/S02-run-retarget-test.json"
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "slice": "S02",
+                        "run_id": "RUN_TEST",
+                        "old_run_branch_head": old_head,
+                        "new_target_commit": new_head,
+                        "merge_base": merge_base,
+                        "item_checkpoint_ancestry_proof": "checkpoint commit is ancestor",
+                        "terminal_counts_before": {"passed": 6},
+                        "terminal_counts_after": {"passed": 6},
+                        "reason": "repair item 07 only",
+                        "closure_evidence": str(closure.relative_to(root)),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = verify_run_retarget_evidence(evidence, root=root)
+            self.assertEqual(report["status"], "ok", report)
+
+            payload = json.loads(evidence.read_text(encoding="utf-8"))
+            payload["closure_evidence"] = "docs/evidence/missing.md"
+            evidence.write_text(json.dumps(payload), encoding="utf-8")
+            report = verify_run_retarget_evidence(evidence, root=root)
+            self.assertEqual(report["status"], "error")
 
 
 if __name__ == "__main__":

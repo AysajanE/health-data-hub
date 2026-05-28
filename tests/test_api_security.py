@@ -23,7 +23,7 @@ from src.api.schemas import MoodLogRequest, MoodLogResponse
 from src.api.security import InMemoryRateLimiter
 
 
-FAKE_MOOD_TOKEN = "test-only-mood-token"
+FAKE_MOOD_TOKEN = "test-mood-token"
 SIMULATED_SAME_HOST_IP = "198.51.100.10"
 SIMULATED_LAN_CLIENT_IP = "198.51.100.77"
 SIMULATED_REMOTE_IP = "203.0.113.77"
@@ -113,7 +113,7 @@ class MoodApiContractTest(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "MOOD_TOKEN": "real-token-should-not-be-used",
+                "MOOD_TOKEN": "fake-mood-token",
                 "LAN_BIND_IP": "not-an-ip",
                 "HOME_TIMEZONE": "Not/AZone",
             },

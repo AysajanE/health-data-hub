@@ -141,6 +141,79 @@ Active human approval gates are not emitted, and review artifacts are used in li
         report = self.validate_high_risk_text(text)
         self.assertEqual(report["status"], "ok", report)
 
+    def test_negative_boundary_language_allowed_only_in_policy_notes(self) -> None:
+        text = """# Playbook
+
+autonomous_gate_review evidence is required.
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | safety_note | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|---|
+| 01 | Record review evidence | docs/reviews/s02.md | docs/reviews/s02.md | false | test -s docs/reviews/s02.md | review artifact validates | Active human approval gates are not emitted. | none | docs/evidence/s02-review.json |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "ok", report)
+
+    def test_active_human_approval_in_exit_criteria_fails(self) -> None:
+        text = """# Playbook
+
+autonomous_gate_review evidence is required.
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Record review evidence | docs/reviews/s02.md | docs/reviews/s02.md | false | test -s docs/reviews/s02.md | human approval is complete | none | docs/evidence/s02-review.json |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("exit_criteria" in error and "human approval" in error for error in report["errors"]))
+
+    def test_active_prospective_output_in_action_fails(self) -> None:
+        text = """# Playbook
+
+autonomous_gate_review evidence is required.
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Implement prospective output | src/api/app.py | src/api/app.py | true | python -m pytest tests/test_api_security.py -q | tests pass | none | none |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("v2 scope creep" in error for error in report["errors"]))
+
+    def test_no_prospective_predictions_boundary_language_passes(self) -> None:
+        text = """# Playbook
+
+autonomous_gate_review evidence is required.
+S02 preserves retrospective scope with no prospective predictions.
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Record protected placeholder behavior | src/api/app.py | src/api/app.py | true | python -m pytest tests/test_api_security.py -q | tests pass | none | none |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "ok", report)
+
+    def test_long_out_of_scope_provider_list_passes_when_negated(self) -> None:
+        text = VALID_PLAYBOOK + (
+            "\nDo not implement Oura ingestion, 8 Sleep ingestion, provider OAuth, "
+            "feature engineering, model training, Streamlit UI, Garmin, Withings, "
+            "chest strap, nutrition, or multi-daily mood logging.\n"
+        )
+        report = self.validate_text(text)
+        self.assertEqual(report["status"], "ok", report)
+
+    def test_forbidden_term_in_verification_command_fails(self) -> None:
+        text = """# Playbook
+
+autonomous_gate_review evidence is required.
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Record review evidence | docs/reviews/s02.md | docs/reviews/s02.md | false | grep -F "human approval" docs/reviews/s02.md | review artifact validates | none | docs/evidence/s02-review.json |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("executable field" in error and "human approval" in error for error in report["errors"]))
+
     def test_po_normalization_rejects_natural_language_prerequisites(self) -> None:
         text = """# S02 Mood API Playbook
 

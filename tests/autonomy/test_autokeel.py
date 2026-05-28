@@ -223,6 +223,62 @@ Manual gates are forbidden.
             self.assertEqual(seen["timeout"], 7200)
             self.assertEqual(op.load_state()["active_run"]["run_id"], "RUN_TEST")
 
+    def test_pre_po_contract_runs_real_po_list_items_and_doctor(self) -> None:
+        calls: list[list[str]] = []
+
+        class ContractRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                calls.append(list(argv))
+                joined = " ".join(str(part) for part in argv)
+                if "list-items" in joined or "doctor" in joined:
+                    return CommandResult(list(argv), 0, '{"status":"ok"}', "")
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_TEST"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("playbook", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = ContractRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(result.ok)
+            joined_calls = [" ".join(call) for call in calls]
+            self.assertTrue(any("list-items" in call for call in joined_calls))
+            self.assertTrue(any("doctor" in call for call in joined_calls))
+            self.assertTrue(any("supervise run" in call for call in joined_calls))
+
+    def test_pre_po_contract_rejects_po_doctor_failure(self) -> None:
+        class ContractRejectRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                joined = " ".join(str(part) for part in argv)
+                if "list-items" in joined:
+                    return CommandResult(list(argv), 0, '{"status":"ok"}', "")
+                if "doctor" in joined:
+                    return CommandResult(list(argv), 2, "", "normalization failed")
+                raise AssertionError("PO supervise must not start after doctor failure")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("playbook", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = ContractRejectRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertEqual(result.exit_code, 2)
+            self.assertIn("normalization failed", result.stderr)
+            updated = op.load_slices()[0]
+            self.assertEqual(updated["status"], "blocked_compile_inputs")
+
     def test_active_same_slice_run_invokes_supervise_resume(self) -> None:
         seen: dict[str, object] = {}
 
@@ -609,6 +665,8 @@ Manual gates are forbidden.
     def test_run_once_recovers_passed_run_before_recompile(self) -> None:
         class PreflightRunner:
             def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                if list(argv)[:3] == ["python", "-m", "scripts.verify_autokeel_invariants"]:
+                    return CommandResult(list(argv), 0, '{"status": "ok"}', "")
                 if list(argv)[:3] == ["python", "-m", "scripts.verify_v1"]:
                     return CommandResult(list(argv), 1, '{"status": "error"}', "")
                 if list(argv)[:3] == ["python", "-m", "scripts.evaluate_tripwires"]:
@@ -650,6 +708,33 @@ Manual gates are forbidden.
 
             self.assertEqual(result, 0)
             self.assertEqual(handled, [("S01", "RUN_TEST", {"terminal_state": "passed"})])
+
+    def test_run_once_runs_end_invariants_after_early_return(self) -> None:
+        class TripwireFailureRunner:
+            def __init__(self):
+                self.invariant_calls = 0
+
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                if list(argv)[:3] == ["python", "-m", "scripts.verify_autokeel_invariants"]:
+                    self.invariant_calls += 1
+                    return CommandResult(list(argv), 0, '{"status": "ok"}', "")
+                if list(argv)[:3] == ["python", "-m", "scripts.verify_v1"]:
+                    return CommandResult(list(argv), 1, '{"status": "error"}', "")
+                if list(argv)[:3] == ["python", "-m", "scripts.evaluate_tripwires"]:
+                    return CommandResult(list(argv), 1, '{"status": "error", "fired": ["tripwire"]}', "")
+                raise AssertionError(f"unexpected command: {argv}")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=False)
+            runner = TripwireFailureRunner()
+            op.runner = runner
+
+            result = op.run_once(requested_slice="S01")
+
+            self.assertEqual(result, 6)
+            self.assertEqual(runner.invariant_calls, 2)
 
     def test_row_author_keeps_verification_for_artifact_tasks(self) -> None:
         row = row_for_card(

@@ -24,9 +24,24 @@ swr:
   task_pack_workdir: automation/task_packs/gstack_design_to_po_playbook
   workflow_file: automation/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json
   output_root: .local/autokeel/swr/runs
+  lease_root: .local/autokeel/swr/leases
   max_wait_seconds: 5
   monitor_min_interval_seconds: 300
   skip_token_count: true
+  required_env:
+    - OPENAI_API_KEY
+  provider_auth_preflight: true
+  provider_auth_failure_status: blocked_external
+
+swr_repair_authorization:
+  auto_authorize_single_stage_repair: true
+  allowed_repair_stages:
+    - gate_and_contract_review
+    - final_markdown_playbook
+  require_existing_review_bundle: true
+  require_no_open_high_failures: true
+  max_same_stage_repairs: 1
+  max_total_swr_repairs_per_slice: 2
 
 slice_statuses:
   actionable:
@@ -154,6 +169,14 @@ reviews:
 loop:
   stop_only_when: scripts/verify_v1.py
   max_retries_per_slice_before_replan: 3
+  max_same_failure_class_per_slice: 2
+  max_total_failures_per_slice: 8
+  max_swr_remote_wait_hours: 12
+  max_swr_repairs_per_slice: 2
+  max_po_repaired_resumes_per_item: 1
+  max_terminal_recovery_attempts: 1
+  stop_on_unknown_terminal_state: true
+  stop_on_unclassified_failure: true
   stale_run_minutes: 60
   po_timeout_seconds: 7200
   po_supervisor_wait_seconds: 5

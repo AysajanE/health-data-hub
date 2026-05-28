@@ -21,13 +21,18 @@ FORBIDDEN_PATH_RE = re.compile(
 )
 
 SECRET_CONTENT_RE = re.compile(
-    r"(?i)(access_token|refresh_token|mood_token|x-mood-token|client_secret|password|authorization)"
-    r"\s*[:=]\s*['\"]?(?P<value>[A-Za-z0-9_\-./+=]{16,})"
+    r"(?i)\b(access_token|refresh_token|mood_token|x-mood-token|client_secret|password|authorization)\b"
+    r"[ \t]*[:=][ \t]*['\"]?(?P<value>[A-Za-z0-9_\-./+=]{16,})"
 )
 
-TEST_ONLY_SECRET_VALUE_RE = re.compile(
-    r"(?i)^(?:test|fake|dummy|example|invalid|bad)[A-Za-z0-9_\-./+=]*$|"
-    r"(?:test-only|fake|dummy|example|not-a-real|not-real|should-not-be-used)"
+ALLOWED_FAKE_SECRET_VALUES = {
+    "test-mood-token",
+    "fake-mood-token",
+    "example-token-for-tests",
+}
+
+PROVIDER_SHAPED_SECRET_RE = re.compile(
+    r"(?i)^(sk|rk|pk|pat|ghp|gho|github_pat|xox[baprs]|ya29|eyJ)[A-Za-z0-9_\-./+=]{8,}"
 )
 
 REQUIRED_GITIGNORE_PATTERNS = [
@@ -88,12 +93,35 @@ def check_gitignore(root: Path) -> list[str]:
     return errors
 
 
-def is_allowed_test_fixture_secret(rel_path: str, match: re.Match[str]) -> bool:
-    """Allow obviously fake token fixtures while still flagging real-looking test secrets."""
+def looks_high_entropy(value: str) -> bool:
+    if len(value) < 24:
+        return False
+    classes = sum(
+        bool(pattern.search(value))
+        for pattern in (
+            re.compile(r"[a-z]"),
+            re.compile(r"[A-Z]"),
+            re.compile(r"[0-9]"),
+            re.compile(r"[_./+=-]"),
+        )
+    )
+    unique_ratio = len(set(value)) / max(len(value), 1)
+    return classes >= 3 and unique_ratio > 0.45
+
+
+def is_allowed_test_fixture_secret(rel_path: str, text: str, match: re.Match[str]) -> bool:
+    """Allow only exact fake token fixtures in explicit test context."""
     if not rel_path.startswith("tests/"):
         return False
     value = match.group("value")
-    return bool(TEST_ONLY_SECRET_VALUE_RE.search(value))
+    if value not in ALLOWED_FAKE_SECRET_VALUES:
+        return False
+    if PROVIDER_SHAPED_SECRET_RE.search(value) or looks_high_entropy(value):
+        return False
+    fixture_context = re.compile(r"(?i)(fake|fixture|test)", re.M)
+    start = max(0, match.start() - 240)
+    end = min(len(text), match.end() + 240)
+    return bool(fixture_context.search(text[start:end]))
 
 
 def check_no_tracked_data(root: Path) -> dict[str, Any]:
@@ -128,7 +156,7 @@ def check_no_tracked_data(root: Path) -> dict[str, Any]:
             continue
 
         for match in SECRET_CONTENT_RE.finditer(text):
-            if is_allowed_test_fixture_secret(rel, match):
+            if is_allowed_test_fixture_secret(rel, text, match):
                 continue
             errors.append(f"tracked file appears to contain a secret/token value: {rel}")
             break

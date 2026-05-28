@@ -14,6 +14,7 @@ from scripts.check_no_tracked_data import check_no_tracked_data
 from scripts.evaluate_tripwires import evaluate_tripwires
 from scripts.evidence.pyeight_smoke import collect as collect_pyeight
 from scripts.validate_playbook_autonomous import validate_playbook
+from scripts.validate_swr_review_bundle import validate_swr_review_bundle
 from scripts.verify_s02_readiness import verify_s02_readiness
 from scripts.verify_slice import verify_slice
 
@@ -320,6 +321,8 @@ def write_waiting_swr_manifest(root: Path) -> Path:
     checkpoint = stage_dir / "stage_checkpoint.json"
     response_md.write_text("# Source Authority Map\n\nComplete artifact.\n", encoding="utf-8")
     response_json.write_text(json.dumps({"output": [{"type": "message", "content": []}]}), encoding="utf-8")
+    input_manifest = stage_dir / "input_manifest.json"
+    input_manifest.write_text(json.dumps({"stage_id": "source_authority_map", "input": "test"}), encoding="utf-8")
     checkpoint.write_text(
         json.dumps(
             {
@@ -367,9 +370,10 @@ def write_waiting_swr_manifest(root: Path) -> Path:
                 "stage_number": 1,
                 "gate": "review_required",
                 "status": "waiting_for_review",
+                "response_id": "resp_source_authority_map",
                 "stage_dir": str(stage_dir.relative_to(root)),
                 "checkpoint_path": str(checkpoint.relative_to(root)),
-                "input_manifest_json_path": str((stage_dir / "input_manifest.json").relative_to(root)),
+                "input_manifest_json_path": str(input_manifest.relative_to(root)),
                 "response_markdown_path": str(response_md.relative_to(root)),
                 "response_json_path": str(response_json.relative_to(root)),
             },
@@ -391,6 +395,21 @@ def write_existing_swr_review_bundle(root: Path, manifest_path: Path) -> Path:
     bundle_path = review_dir / "source_authority_map.review_bundle.json"
     bundle = {
         "schema_version": "responses_runner_v2.review_bundle.v1",
+        "slice": "S02",
+        "run_id": payload["run_id"],
+        "stage_id": "source_authority_map",
+        "response_id": stage["response_id"],
+        "input_artifact": stage["input_manifest_json_path"],
+        "input_sha256": file_sha256(root / stage["input_manifest_json_path"]),
+        "output_artifact": stage["response_json_path"],
+        "output_sha256": file_sha256(root / stage["response_json_path"]),
+        "reviewer_results": [
+            {"reviewer": "operator_codex", "verdict": "pass"},
+            {"reviewer": "codex_review_agent", "verdict": "pass"},
+            {"reviewer": "claude_review_agent", "verdict": "pass"},
+        ],
+        "consolidated_verdict": "pass",
+        "accepted_at": "2026-05-27T00:00:00-04:00",
         "workflow_id": payload["workflow_id"],
         "source_stage_id": "source_authority_map",
         "source_run_id": payload["run_id"],
@@ -421,6 +440,13 @@ class CompletedSwrRunner:
 
 
 class AutoKeelV1FeedbackTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._openai_env = mock.patch.dict(os.environ, {"OPENAI_API_KEY": "test-openai-key"}, clear=False)
+        self._openai_env.start()
+
+    def tearDown(self) -> None:
+        self._openai_env.stop()
+
     def test_command_runner_timeout_returns_124(self) -> None:
         runner = CommandRunner(ROOT, {"manual_gates": {"forbidden_commands": []}}, timeout=0.01)
         result = runner.run(["python", "-c", "import time; time.sleep(1)"])
@@ -724,22 +750,23 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             code = op._run_once_impl(requested_slice="S02", force_slice=True)
 
             self.assertEqual(code, 26)
-            self.assertTrue(any("keel-swr" in call[0] for call in runner.calls))
+            self.assertFalse(any("keel-swr" in call[0] and "run" in call for call in runner.calls))
             self.assertFalse((root / "docs/playbooks/s02-mood-api.playbook.md").exists())
             updated = next(item for item in op.load_slices() if item["id"] == "S02")
             self.assertEqual(updated["status"], "blocked_external")
-            self.assertEqual(updated["reason"], "missing OPENAI_API_KEY for keel-swr")
+            self.assertEqual(updated["reason"], "missing required SWR provider environment")
             ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
             self.assertIn("provider_auth_failure", ledger)
             self.assertNotIn("compile_failure", ledger)
-            evidence_files = list((root / "docs/evidence").glob("s02-mood-api-swr-provider-auth-failure-*.json"))
+            evidence_files = list((root / "docs/evidence").glob("s02-mood-api-swr-provider-preflight-*.json"))
             self.assertEqual(len(evidence_files), 1)
             evidence = json.loads(evidence_files[0].read_text(encoding="utf-8"))
             self.assertEqual(evidence["status"], "blocked_external")
-            self.assertEqual(evidence["failure_class"], "provider_auth_failure")
-            self.assertFalse(evidence["environment_probe"]["OPENAI_API_KEY_set_in_process_env"])
+            self.assertEqual(evidence["provider"], "openai")
+            self.assertEqual(evidence["missing_env"], ["OPENAI_API_KEY"])
+            self.assertFalse(evidence["secret_values_logged"])
             events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
-            self.assertIn("swr_provider_auth_failed", events)
+            self.assertIn("swr_provider_preflight_evidence_recorded", events)
 
     def test_active_swr_manifest_blocks_relaunch(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -802,6 +829,121 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertNotIn("stopped_run_id", updated)
             ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
             self.assertNotIn("compile_failure", ledger)
+
+    def test_swr_active_lease_blocks_duplicate_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_active_swr_manifest(root)
+            op = AutoKeel(root=root, dry_run=False)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+            op.record_active_swr_run(slice_, manifest, "test active lease")
+            lease = root / ".local/autokeel/swr/leases/S02.json"
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertEqual(result.exit_code, 31)
+            self.assertTrue(lease.exists())
+            payload = json.loads(lease.read_text(encoding="utf-8"))
+            self.assertEqual(payload["run_manifest"], str(manifest.relative_to(root)))
+
+    def test_swr_missing_manifest_with_active_lease_blocks_and_records_state_divergence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            lease = root / ".local/autokeel/swr/leases/S02.json"
+            lease.parent.mkdir(parents=True)
+            lease.write_text(
+                json.dumps(
+                    {
+                        "slice": "S02",
+                        "run_id": "run_missing",
+                        "run_dir": ".local/autokeel/swr/runs/missing",
+                        "run_manifest": ".local/autokeel/swr/runs/missing/run_manifest.json",
+                        "stage_id": "source_authority_map",
+                        "response_id": "resp_missing",
+                        "status": "in_progress",
+                        "created_at": "2026-05-27T00:00:00-04:00",
+                        "last_checked_at": "2026-05-27T00:00:00-04:00",
+                        "next_check_not_before": "2026-05-27T00:05:00-04:00",
+                        "lease_owner_pid": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            op = AutoKeel(root=root, dry_run=False)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertEqual(result.exit_code, 35)
+            self.assertIn("manifest missing", result.stderr)
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("state_divergence", ledger)
+
+    def test_swr_stale_lease_requires_remote_response_check_not_new_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_active_swr_manifest(root)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            state["active_swr_run"] = {
+                "slice": "S02",
+                "run_manifest": str(manifest.relative_to(root)),
+                "last_remote_check_at": "2026-01-01T00:00:00+00:00",
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            lease = root / ".local/autokeel/swr/leases/S02.json"
+            lease.parent.mkdir(parents=True)
+            lease.write_text(
+                json.dumps(
+                    {
+                        "slice": "S02",
+                        "run_id": "run_20260527_test_active",
+                        "run_dir": str(manifest.parent.relative_to(root)),
+                        "run_manifest": str(manifest.relative_to(root)),
+                        "stage_id": "source_authority_map",
+                        "response_id": "resp_test_s02_active",
+                        "status": "in_progress",
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "last_checked_at": "2026-01-01T00:00:00+00:00",
+                        "next_check_not_before": "2026-01-01T00:05:00+00:00",
+                        "lease_owner_pid": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            class ResumeOnlyRunner:
+                def __init__(self):
+                    self.calls: list[list[str]] = []
+
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    argv = list(argv)
+                    self.calls.append(argv)
+                    if "keel-swr" in str(argv[0]) and "--run-name" in argv:
+                        raise AssertionError("stale lease must not start a new SWR run")
+                    if "keel-swr" in str(argv[0]) and "resume" in argv:
+                        return CommandResult(
+                            argv,
+                            1,
+                            str(manifest.relative_to(root)) + "\n",
+                            "ApiError: Response resp_test_s02_active did not reach a terminal state within 5.0s (last_status=in_progress).",
+                        )
+                    return CommandResult(argv, 0, "", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = ResumeOnlyRunner()
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertEqual(result.exit_code, 31)
+            self.assertTrue(any("resume" in call for call in op.runner.calls))
+            self.assertFalse(any("--run-name" in call for call in op.runner.calls))
 
     def test_swr_wait_timeout_in_progress_records_active_run_not_compile_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1024,6 +1166,39 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertEqual(state["active_swr_run"]["current_stage_id"], "repo_grounding")
             self.assertEqual(state["active_swr_run"]["response_id"], "resp_stage2_reused")
 
+    def test_swr_review_bundle_requires_matching_response_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+            bundle = write_existing_swr_review_bundle(root, manifest)
+            report = validate_swr_review_bundle(bundle, root=root)
+            self.assertEqual(report["status"], "ok", report)
+
+            payload = json.loads(bundle.read_text(encoding="utf-8"))
+            payload["output_sha256"] = "0" * 64
+            bundle.write_text(json.dumps(payload), encoding="utf-8")
+
+            report = validate_swr_review_bundle(bundle, root=root)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("output_sha256" in error for error in report["errors"]))
+
+    def test_swr_review_bundle_reuse_rejects_different_response_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+            bundle = write_existing_swr_review_bundle(root, manifest)
+            payload = json.loads(bundle.read_text(encoding="utf-8"))
+            payload["response_id"] = "resp_other"
+            bundle.write_text(json.dumps(payload), encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+
+            manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertIsNone(op.existing_swr_review_bundle(next(item for item in op.load_slices() if item["id"] == "S02"), manifest_payload))
+
     def test_s02_readiness_blocks_when_active_swr_manifest_exists_without_state_adoption(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1193,11 +1368,25 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             result = op.start_or_resume_po(slice_)
 
             self.assertEqual(result.exit_code, 29)
-            self.assertIn("missing matching SWR playbook evidence", result.stderr)
+            self.assertIn("SWR-required slice cannot enter PO", result.stderr)
             updated = next(item for item in op.load_slices() if item["id"] == "S02")
             self.assertEqual(updated["status"], "blocked_compile_inputs")
             ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
-            self.assertIn("swr_evidence_missing", ledger)
+            self.assertIn("state_divergence", ledger)
+
+    def test_high_risk_swr_slice_cannot_ship_without_matching_swr_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            playbook = root / "docs/playbooks/s02-mood-api.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("# stale S02 playbook\n", encoding="utf-8")
+
+            op = AutoKeel(root=root, dry_run=False)
+            result = op.ship_slice("S02", "RUN_TEST")
+
+            self.assertEqual(result.exit_code, 29)
+            self.assertIn("SWR-required slice", result.stderr)
 
     def test_s02_stale_compiler_playbook_is_archived_before_swr(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1356,10 +1545,11 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             op.runner = runner
             code = op._run_once_impl(requested_slice="S02", force_slice=True)
 
-            self.assertEqual(code, 34)
+            self.assertEqual(code, 0)
             self.assertFalse(any("keel-swr" in call[0] and "--run-name" in call for call in runner.calls))
+            self.assertTrue(any("keel-swr" in call[0] and "--run-dir" in call and "--stage" in call for call in runner.calls))
             updated = next(item for item in op.load_slices() if item["id"] == "S02")
-            self.assertEqual(updated["status"], "blocked_compile_inputs")
+            self.assertEqual(updated["status"], "waiting_for_playbook")
             self.assertEqual(updated["swr_validation_repair"]["repair_stage_id"], "gate_and_contract_review")
             cmd = op.build_swr_stage_rerun_command(repair)
             self.assertIn("--run-dir", cmd)
@@ -1475,6 +1665,74 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertNotIn("response_json_path", stages["gate_and_contract_review"])
             self.assertNotIn("response_json_path", stages["final_markdown_playbook"])
             self.assertNotIn("review_bundle_path", stages["gate_and_contract_review"])
+
+    def test_swr_stage5_writer_drops_valid_stage4_repairs_stage5_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_completed_swr_manifest_with_stage_contract_drift(root)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            stage4 = next(stage for stage in payload["stages"] if stage["stage_id"] == "gate_and_contract_review")
+            stage4_text = "required_verification_commands and autonomous_gate_review are present in Stage 4."
+            (root / stage4["response_markdown_path"]).write_text(stage4_text, encoding="utf-8")
+            (root / stage4["response_json_path"]).write_text(
+                json.dumps({"output": [{"type": "message", "content": [{"type": "output_text", "text": stage4_text}]}]}),
+                encoding="utf-8",
+            )
+            op = AutoKeel(root=root, dry_run=False)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            diagnosis = op.diagnose_swr_validation_failure(
+                slice_,
+                manifest,
+                ["missing required column: required_verification_commands", "missing required gate term: autonomous_gate_review"],
+            )
+
+            self.assertEqual(diagnosis["repair_stage_id"], "final_markdown_playbook")
+            self.assertEqual(diagnosis["source_review_stage_id"], "gate_and_contract_review")
+
+    def test_swr_repair_missing_model_gate_review_repairs_stage4_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_completed_swr_manifest_with_stage_contract_drift(root)
+            op = AutoKeel(root=root, dry_run=False)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            diagnosis = op.diagnose_swr_validation_failure(slice_, manifest, ["missing model_gate_review"])
+
+            self.assertEqual(diagnosis["repair_stage_id"], "gate_and_contract_review")
+            self.assertIn("model_gate_review", diagnosis["stage4_missing_terms"])
+
+    def test_swr_repair_missing_counterfactual_safety_review_repairs_stage4_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_completed_swr_manifest_with_stage_contract_drift(root)
+            op = AutoKeel(root=root, dry_run=False)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            diagnosis = op.diagnose_swr_validation_failure(slice_, manifest, ["missing counterfactual_safety_review"])
+
+            self.assertEqual(diagnosis["repair_stage_id"], "gate_and_contract_review")
+            self.assertIn("counterfactual_safety_review", diagnosis["stage4_missing_terms"])
+
+    def test_swr_repair_missing_restore_secret_logging_review_repairs_stage4_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_completed_swr_manifest_with_stage_contract_drift(root)
+            op = AutoKeel(root=root, dry_run=False)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            diagnosis = op.diagnose_swr_validation_failure(slice_, manifest, ["missing restore_secret_logging_review"])
+
+            self.assertEqual(diagnosis["repair_stage_id"], "gate_and_contract_review")
+            self.assertIn("restore_secret_logging_review", diagnosis["stage4_missing_terms"])
 
     def test_lane_decision_review_artifacts_must_match_slice_review_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

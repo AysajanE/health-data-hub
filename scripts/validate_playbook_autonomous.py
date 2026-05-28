@@ -57,6 +57,17 @@ DEFAULT_REQUIRED_COLUMNS = {
     "required_verification_commands",
     "exit_criteria",
 }
+POLICY_NOTE_FIELDS = {
+    "policy_note",
+    "policy_notes",
+    "safety_note",
+    "safety_notes",
+    "boundary_note",
+    "guardrail",
+    "notes",
+}
+EXECUTABLE_FIELD_NAMES = {"required_verification_commands", "verification", "command", "commands"}
+STRICT_FORBIDDEN_ROW_FIELDS = {"action", "deliverable", "deliverables", "exit_criteria"}
 
 
 def load_validation_policy(playbook_path: Path, explicit_policy: Path | None = None) -> dict[str, Any]:
@@ -196,6 +207,10 @@ def row_text(row: dict[str, str]) -> str:
     return " ".join(str(value) for value in row.values())
 
 
+def non_table_text(text: str) -> str:
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("|"))
+
+
 def is_ui_row(row: dict[str, str]) -> bool:
     text = row_text(row).lower()
     return any(token in text for token in ("streamlit", "ui", "insight", "counterfactual", "copy", "language"))
@@ -256,11 +271,29 @@ def forbidden_banned_language_present(text: str, term: str) -> bool:
     return False
 
 
+def field_contains_term(value: str, term: str) -> bool:
+    return re.search(term_pattern(term), value, re.I) is not None
+
+
+def field_has_v2_scope(value: str, pattern: str) -> re.Match[str] | None:
+    return re.search(pattern, value, re.I)
+
+
+def is_executable_command_field(field_name: str, value: str) -> bool:
+    if field_name not in EXECUTABLE_FIELD_NAMES:
+        return False
+    return not is_empty(value)
+
+
 def allowed_v2_scope_context(text: str, match: re.Match[str]) -> bool:
     start = max(0, match.start() - 120)
     end = min(len(text), match.end() + 120)
     window = text[start:end]
     matched = re.escape(match.group(0))
+    sentence_start = max(text.rfind(".", 0, match.start()) + 1, text.rfind("\n", 0, match.start()) + 1)
+    prefix = text[sentence_start : match.start()]
+    if re.search(r"\b(?:no|not|never|without|do not|must not|must never|should not|cannot)\b[^.\n|]{0,500}$", prefix, re.I):
+        return True
     allowed_patterns = (
         rf"\b(?:no|not|never|without)\b[^.\n|]{{0,100}}{matched}",
         rf"\b(?:do not|does not|did not|must not|must never|should not|cannot)\b[^.\n|]{{0,100}}{matched}",
@@ -355,11 +388,12 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
 
     text = path.read_text(encoding="utf-8")
     lowered = text.lower()
+    preamble_lowered = non_table_text(text).lower()
     for term in banned_language:
         if not term:
             continue
-        if forbidden_banned_language_present(lowered, term):
-            errors.append(f"forbidden autonomous playbook language: {term}")
+        if forbidden_banned_language_present(preamble_lowered, term):
+            errors.append(f"forbidden autonomous playbook preamble language: {term}")
     for term in required_gate_terms:
         if term and term not in lowered:
             errors.append(f"playbook missing required autonomous gate term: {term}")
@@ -416,6 +450,23 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
             if forbidden:
                 errors.append(f"row {idx}: forbidden executable command appears in row: {forbidden}")
 
+        for field_name, field_value in row.items():
+            value_lower = str(field_value).lower()
+            if not value_lower:
+                continue
+            for term in banned_language:
+                if not term or not field_contains_term(value_lower, term):
+                    continue
+                if is_executable_command_field(field_name, field_value):
+                    errors.append(f"row {idx}: forbidden autonomous term appears in executable field {field_name}: {term}")
+                elif field_name in POLICY_NOTE_FIELDS:
+                    if not allowed_negative_policy_context(value_lower, term):
+                        errors.append(f"row {idx}: forbidden autonomous term is not boundary language in {field_name}: {term}")
+                elif field_name in STRICT_FORBIDDEN_ROW_FIELDS:
+                    errors.append(f"row {idx}: forbidden autonomous term appears in {field_name}: {term}")
+                elif not allowed_negative_policy_context(value_lower, term):
+                    errors.append(f"row {idx}: forbidden autonomous term appears in row: {term}")
+
         external = (row.get("external_check") or "").strip().lower()
         if external and external not in EMPTY_VALUES and "private/evidence" not in row_text(row) and "docs/evidence" not in row_text(row):
             if "blocked_external" in row_text(row).lower():
@@ -433,14 +484,33 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
             if re.search(pattern, lower_row, re.I):
                 errors.append(f"row {idx}: unverified limiter dependency contract matched /{pattern}/")
 
-        for pattern in V2_SCOPE_PATTERNS:
-            match = re.search(pattern, lower_row, re.I)
-            if match and not allowed_v2_scope_context(lower_row, match):
-                errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
+        for field_name, field_value in row.items():
+            value_lower = str(field_value).lower()
+            if not value_lower:
+                continue
+            for pattern in V2_SCOPE_PATTERNS:
+                match = field_has_v2_scope(value_lower, pattern)
+                if not match:
+                    continue
+                if is_executable_command_field(field_name, field_value):
+                    errors.append(f"row {idx}: forbidden v2 term appears in executable field {field_name}: /{pattern}/")
+                elif field_name in POLICY_NOTE_FIELDS:
+                    if not allowed_v2_scope_context(value_lower, match):
+                        errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
+                elif field_name in STRICT_FORBIDDEN_ROW_FIELDS:
+                    if not allowed_v2_scope_context(value_lower, match):
+                        errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
+                elif not allowed_v2_scope_context(value_lower, match):
+                    errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
 
     for pattern in UNVERIFIED_DEPENDENCY_PATTERNS:
         if re.search(pattern, lowered, re.I):
             errors.append(f"playbook unverified limiter dependency contract matched /{pattern}/")
+
+    for pattern in V2_SCOPE_PATTERNS:
+        for match in re.finditer(pattern, preamble_lowered, re.I):
+            if not allowed_v2_scope_context(preamble_lowered, match):
+                errors.append(f"playbook v2 scope creep matched /{pattern}/")
 
     po_errors, po_plan = normalize_plan_orchestrator(path, text)
     errors.extend(po_errors)

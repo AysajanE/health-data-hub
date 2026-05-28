@@ -16,7 +16,7 @@ from src.api.dependencies import build_api_settings
 from src.warehouse.warehouse import connect_duckdb, select_current_mood_entries
 
 
-FAKE_MOOD_TOKEN = "test-only-mood-token"
+FAKE_MOOD_TOKEN = "test-mood-token"
 SIMULATED_SAME_HOST_IP = "198.51.100.10"
 SIMULATED_LAN_CLIENT_IP = "198.51.100.77"
 VALID_TOKEN_HEADERS = {"X-Mood-Token": FAKE_MOOD_TOKEN}

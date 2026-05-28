@@ -11,7 +11,14 @@ gates, records evidence/failures, and only marks a slice complete after
 ```bash
 python -m ops.autonomy.autokeel --doctor
 python -m ops.autonomy.autokeel --doctor --strict
+python -m ops.autonomy.autokeel --doctor --strict-swr S05
 python -m ops.autonomy.autokeel --readiness S02
+python -m ops.autonomy.autokeel --readiness S03
+python scripts/verify_failure_ledger.py --json
+python scripts/verify_autokeel_invariants.py --json
+python scripts/verify_ship_invariants.py S02 --json
+python scripts/verify_run_retarget_evidence.py docs/evidence/<slice>-run-retarget-<timestamp>.json --json
+python scripts/validate_swr_review_bundle.py .local/autokeel/swr/review_lane/<bundle>.json --json
 python -m ops.autonomy.autokeel --once --dry-run
 python -m ops.autonomy.autokeel --next-slice
 python -m ops.autonomy.autokeel --status --failures
@@ -52,13 +59,28 @@ Stage 5 prompts so `required_verification_commands` and
 `autonomous_gate_review` are generated before the playbook reaches
 `scripts/validate_playbook_autonomous.py`.
 
+SWR-required slices also require matching `keel-swr` evidence immediately
+before PO start and immediately before terminal shipping. The invariant is
+rechecked inside `start_or_resume_po()` and `ship_slice()` so a forced slice,
+terminal recovery, or manual state mutation cannot silently downgrade to a
+compiler playbook.
+
+Before a real SWR launch, AutoKeel checks the configured `swr.required_env`
+without logging secret values. For OpenAI-backed SWR this means
+`OPENAI_API_KEY` must be present in the AutoKeel process environment. A missing
+key records sanitized `blocked_external` evidence and does not fall back to the
+compiler route. Use `python -m ops.autonomy.autokeel --doctor --strict-swr S05`
+to test that prerequisite before selecting a future SWR slice.
+
 `keel-swr` uses background Responses API work and the first stage can remain
 queued or in progress for minutes to hours. A short local wait timeout with a
 remote `last_status=in_progress` is not a compile failure. AutoKeel records the
 run in `autonomy_state.json` as `active_swr_run`, marks S02
-`waiting_for_playbook`, and refuses to launch another SWR run while the active
-manifest remains non-terminal. The S02 readiness gate also scans local SWR run
-manifests so it blocks duplicate starts even before state adoption. Do not poll
+`waiting_for_playbook`, writes a per-slice lease under
+`.local/autokeel/swr/leases/<slice>.json`, and refuses to launch another SWR
+run while the active lease or manifest remains non-terminal. The readiness gate
+also scans local SWR run manifests so it blocks duplicate starts even before
+state adoption. Do not poll
 the live response at minute cadence; resume or inspect it only on the configured
 operator-approved low-cadence interval. The current S02 SWR monitor interval is
 300 seconds.
@@ -80,9 +102,41 @@ blocks with `blocked_compile_inputs`. The repair plan preserves the source
 `run_manifest`, `run_dir`, validator errors, and the smallest rerunnable stage.
 For Stage 4 contract drift, AutoKeel resets only Stage 4 and downstream Stage 5
 before any authorized repair. For Stage 5-only drift, it resets only Stage 5.
-A future repair command must use `keel-swr run --run-dir ... --stage ...` plus
-the required approved review bundle; it must not use `--run-name` or
-`--output-root`.
+A future repair command must satisfy
+`ops/autonomy/authorization_policy.yaml`, use `keel-swr run --run-dir ...
+--stage ...` plus the required approved review bundle, and must not use
+`--run-name` or `--output-root`.
+
+Before PO start, AutoKeel runs both repository validation and the real
+plan-orchestrator parser:
+
+```bash
+python scripts/validate_playbook_autonomous.py docs/playbooks/<slice>.playbook.md --risk <risk> --json
+python automation/run_plan_orchestrator.py list-items --playbook docs/playbooks/<slice>.playbook.md --format json
+python automation/run_plan_orchestrator.py doctor --playbook docs/playbooks/<slice>.playbook.md --format json
+```
+
+Any failure blocks PO before execution.
+
+## S03 Controlled Launch Posture
+
+S03 is controlled-autonomous only. Do not run a full S03-S09 zero-human loop
+yet. Before launching S03, run:
+
+```bash
+python -m ops.autonomy.autokeel --doctor --strict
+python scripts/verify_autonomy_preflight.py --json
+python scripts/verify_failure_ledger.py --json
+python scripts/verify_autokeel_invariants.py --json
+python scripts/verify_s03_readiness.py --json
+python -m ops.autonomy.autokeel --once --dry-run --slice S03
+```
+
+Only if those pass should a real bounded S03 tick run:
+
+```bash
+python -m ops.autonomy.autokeel --once --slice S03
+```
 
 For PO execution, AutoKeel creates a local ignored `automation/` shim that
 points at the installed Keel plan-orchestrator runtime. This lets the

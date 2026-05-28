@@ -1,0 +1,23 @@
+swr_single_stage_repair:
+  auto_authorized: true
+  max_repairs_per_slice: 2
+  max_repairs_per_stage: 1
+  require_existing_run_manifest: true
+  require_existing_review_bundle: true
+  require_no_open_high_or_critical_failures: true
+  require_repair_stage_id:
+    - gate_and_contract_review
+    - final_markdown_playbook
+
+po_escalation_repair:
+  auto_authorized: true
+  max_repaired_resumes_per_item: 1
+  require_closed_audit_failure: true
+  require_closure_evidence: true
+  require_retarget_ancestry_proof: true
+
+terminal_recovery:
+  auto_authorized: true
+  require_po_terminal_passed: true
+  require_no_open_failures_for_run: true
+  run_before_playbook_generation: true
