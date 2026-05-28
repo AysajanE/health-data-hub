@@ -36,7 +36,7 @@ This artifact is an autonomous review substitution. It is not a compliance certi
 - `python scripts/check_no_tracked_data.py`
 - `python scripts/check_autonomous_review_exists.py S02 --json`
 
-Command evidence: docs/evidence/s02-privacy-review-command-evidence-20260526.json
+Command evidence: docs/evidence/s02-privacy-review-command-evidence-20260528-item07-repair.json
 
 ## Control-to-test mapping
 

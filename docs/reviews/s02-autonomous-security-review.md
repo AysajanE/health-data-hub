@@ -21,6 +21,28 @@ No human signoff was performed.
 
 This artifact is an autonomous review substitution. It is not a compliance certification, and it does not replace final slice verification.
 
+## Evidence files checked
+
+- `docs/gstack/health-data-hub-office-hours.md`
+- `docs/gstack/s02-mood-api-autoplan.md`
+- `docs/briefs/s02-mood-api.autonomous-brief.md`
+- `src/api/security.py`
+- `src/api/app.py`
+- `tests/test_api_security.py`
+- `tests/test_mood_date.py`
+- `tests/test_mood_correction.py`
+- `scripts/check_no_tracked_data.py`
+- `scripts/check_autonomous_review_exists.py`
+- `scripts/verify_slice.py`
+
+## Exact commands run
+
+- `python -m pytest tests/test_api_security.py tests/test_mood_date.py tests/test_mood_correction.py -q`
+- `python scripts/check_no_tracked_data.py`
+- `python scripts/check_autonomous_review_exists.py S02 --json`
+
+Command evidence: docs/evidence/s02-security-review-command-evidence-20260528-item07-repair.json
+
 ## Control-to-test mapping
 
 ### same-host read boundary
