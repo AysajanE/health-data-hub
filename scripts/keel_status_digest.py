@@ -175,10 +175,6 @@ def collect_states(value: Any) -> list[str]:
     elif isinstance(value, list):
         for item in value:
             states.extend(collect_states(item))
-    elif isinstance(value, str):
-        state = normalize_state(value)
-        if state:
-            states.append(state)
     return states
 
 

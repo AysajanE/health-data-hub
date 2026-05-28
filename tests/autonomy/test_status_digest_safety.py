@@ -73,6 +73,32 @@ class StatusDigestSafetyTests(unittest.TestCase):
         digest = digest_status(payload)
         self.assertEqual(digest["terminal_state"], "blocked_external")
 
+    def test_supervisor_command_schema_strings_do_not_define_terminal_state(self) -> None:
+        payload = {
+            "run_id": "run_1",
+            "kernel_status": {
+                "current_state": "ST61_AUDITING_CLAUDE",
+                "terminal_counts": {"none": 6, "passed": 1},
+            },
+            "supervision_status": {
+                "claim_class": "live_attached",
+                "exit_code": 0,
+                "active_stage": {
+                    "stage_name": "audit_claude",
+                    "child_command": '{"next_recommended_state":{"enum":["pass","triage","blocked_external","escalate"]}}',
+                },
+                "latest_intervention": {
+                    "action_kind": "resume_saved_run",
+                    "result_status": "applied",
+                    "reason": "A saved run was explicitly re-entered under supervision.",
+                },
+            },
+        }
+
+        digest = digest_status(payload)
+
+        self.assertEqual(digest["terminal_state"], "running")
+
     def test_supervision_park_is_escalated_not_unknown(self) -> None:
         payload = {
             "run_id": "run_1",
