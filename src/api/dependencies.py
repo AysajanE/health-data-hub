@@ -4,7 +4,7 @@ from functools import lru_cache
 from ipaddress import ip_address
 import os
 from typing import Mapping
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -30,7 +30,10 @@ class ApiSettings(BaseModel):
     @field_validator("home_timezone")
     @classmethod
     def validate_home_timezone(cls, value: str) -> str:
-        ZoneInfo(value)
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("invalid timezone") from exc
         return value
 
 

@@ -37,6 +37,19 @@ class MoodApiContractTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             MoodLogRequest.model_validate({"feeling": 6, "energy": 0})
 
+    def test_request_schema_rejects_non_strict_rating_values(self) -> None:
+        invalid_payloads = (
+            {"feeling": True},
+            {"feeling": "7"},
+            {"feeling": 6, "energy": False},
+            {"feeling": 6, "energy": "5"},
+        )
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValidationError):
+                    MoodLogRequest.model_validate(payload)
+
     def test_request_schema_rejects_unknown_context_chip(self) -> None:
         with self.assertRaises(ValidationError):
             MoodLogRequest.model_validate({"feeling": 6, "context_chips": ["unknown_chip"]})
@@ -90,6 +103,26 @@ class MoodApiContractTest(unittest.TestCase):
 
         self.assertEqual(get_mood_token(settings), "fake-token")
         self.assertEqual(get_lan_bind_ip(settings), "192.168.1.55")
+        self.assertEqual(get_home_timezone(settings).key, "America/Toronto")
+
+    def test_settings_reject_invalid_home_timezone(self) -> None:
+        with self.assertRaises(ValidationError):
+            load_api_settings(
+                {
+                    "MOOD_TOKEN": "fake-token",
+                    "LAN_BIND_IP": "192.168.1.55",
+                    "HOME_TIMEZONE": "Not/AZone",
+                }
+            )
+
+    def test_settings_default_home_timezone_fallback(self) -> None:
+        settings = load_api_settings(
+            {
+                "MOOD_TOKEN": "fake-token",
+                "LAN_BIND_IP": "192.168.1.55",
+            }
+        )
+
         self.assertEqual(get_home_timezone(settings).key, "America/Toronto")
 
 

@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 from src.warehouse.models import ContextChip
 
@@ -22,8 +22,8 @@ class ApiModel(BaseModel):
 
 
 class MoodLogRequest(ApiModel):
-    feeling: int = Field(ge=1, le=10)
-    energy: int | None = Field(default=None, ge=1, le=10)
+    feeling: StrictInt = Field(ge=1, le=10)
+    energy: StrictInt | None = Field(default=None, ge=1, le=10)
     notes: str | None = None
     context_chips: tuple[ContextChip, ...] = Field(default_factory=tuple)
     logged_at_utc: datetime | None = None
