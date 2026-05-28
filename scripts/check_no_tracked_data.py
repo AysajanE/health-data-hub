@@ -22,7 +22,12 @@ FORBIDDEN_PATH_RE = re.compile(
 
 SECRET_CONTENT_RE = re.compile(
     r"(?i)(access_token|refresh_token|mood_token|x-mood-token|client_secret|password|authorization)"
-    r"\s*[:=]\s*['\"]?[A-Za-z0-9_\-./+=]{16,}"
+    r"\s*[:=]\s*['\"]?(?P<value>[A-Za-z0-9_\-./+=]{16,})"
+)
+
+TEST_ONLY_SECRET_VALUE_RE = re.compile(
+    r"(?i)^(?:test|fake|dummy|example|invalid|bad)[A-Za-z0-9_\-./+=]*$|"
+    r"(?:test-only|fake|dummy|example|not-a-real|not-real|should-not-be-used)"
 )
 
 REQUIRED_GITIGNORE_PATTERNS = [
@@ -83,6 +88,14 @@ def check_gitignore(root: Path) -> list[str]:
     return errors
 
 
+def is_allowed_test_fixture_secret(rel_path: str, match: re.Match[str]) -> bool:
+    """Allow obviously fake token fixtures while still flagging real-looking test secrets."""
+    if not rel_path.startswith("tests/"):
+        return False
+    value = match.group("value")
+    return bool(TEST_ONLY_SECRET_VALUE_RE.search(value))
+
+
 def check_no_tracked_data(root: Path) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -114,8 +127,11 @@ def check_no_tracked_data(root: Path) -> dict[str, Any]:
         except UnicodeDecodeError:
             continue
 
-        if SECRET_CONTENT_RE.search(text):
+        for match in SECRET_CONTENT_RE.finditer(text):
+            if is_allowed_test_fixture_secret(rel, match):
+                continue
             errors.append(f"tracked file appears to contain a secret/token value: {rel}")
+            break
 
     for rel in git_untracked_files(root):
         if FORBIDDEN_PATH_RE.search(rel):

@@ -117,6 +117,33 @@ class VerifyScriptsTests(unittest.TestCase):
             self.assertEqual(report["status"], "error")
             self.assertTrue(any("tracked sensitive path" in error for error in report["errors"]))
 
+    def test_check_no_tracked_data_allows_documented_fake_test_tokens_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text(
+                "data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n",
+                encoding="utf-8",
+            )
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            fixture = tests_dir / "test_api_security.py"
+            fixture.write_text(
+                'FAKE_MOOD_TOKEN = "test-only-mood-token"\n'
+                'ENV = {"MOOD_TOKEN": "real-token-should-not-be-used"}\n',
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", ".gitignore", str(fixture.relative_to(root))], cwd=root, check=True)
+
+            report = check_no_tracked_data(root)
+            self.assertEqual(report["status"], "ok", report)
+
+            real_token = "sk_live_" + "realistic_token_value"
+            fixture.write_text(f'MOOD_TOKEN = "{real_token}"\n', encoding="utf-8")
+            report = check_no_tracked_data(root)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("secret/token value" in error for error in report["errors"]))
+
     def test_verify_v1_fails_with_incomplete_slices(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

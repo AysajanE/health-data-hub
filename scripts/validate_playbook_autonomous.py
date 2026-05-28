@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -76,6 +77,70 @@ def load_validation_policy(playbook_path: Path, explicit_policy: Path | None = N
         return {}
     profile = policy.get("playbook_validation", {})
     return profile if isinstance(profile, dict) else {}
+
+
+def plan_orchestrator_roots(playbook_path: Path) -> list[Path]:
+    roots: list[Path] = []
+    configured = os.environ.get("KEEL_PO_ROOT")
+    if configured:
+        roots.append(Path(configured))
+
+    policy_path = None
+    for parent in [playbook_path.parent, *playbook_path.parents]:
+        candidate = parent / "ops" / "autonomy" / "policy.yaml"
+        if candidate.exists():
+            policy_path = candidate
+            break
+    if policy_path is not None:
+        try:
+            from ops.autonomy.autokeel import load_policy
+
+            policy = load_policy(policy_path)
+            if policy.get("plan_orchestrator_root"):
+                roots.append(Path(str(policy["plan_orchestrator_root"])))
+            elif policy.get("keel_root"):
+                roots.append(Path(str(policy["keel_root"])) / "tools" / "plan-orchestrator")
+        except Exception:
+            pass
+
+    roots.append(REPO_ROOT / "automation")
+    roots.append(Path("/Users/aeziz-local/keel/tools/plan-orchestrator"))
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        resolved = root.expanduser()
+        key = str(resolved)
+        if key not in seen:
+            deduped.append(resolved)
+            seen.add(key)
+    return deduped
+
+
+def ensure_plan_orchestrator_import_path(playbook_path: Path) -> None:
+    try:
+        import automation.plan_orchestrator  # noqa: F401
+
+        return
+    except ModuleNotFoundError:
+        pass
+
+    for root in plan_orchestrator_roots(playbook_path):
+        if (root / "automation" / "plan_orchestrator").exists():
+            candidate = root
+        elif root.name == "automation" and (root / "plan_orchestrator").exists():
+            candidate = root.parent
+        else:
+            continue
+        candidate_text = str(candidate)
+        if candidate_text not in sys.path:
+            sys.path.insert(0, candidate_text)
+        try:
+            import automation.plan_orchestrator  # noqa: F401
+
+            return
+        except ModuleNotFoundError:
+            continue
 
 
 def split_markdown_row(line: str) -> list[str]:
@@ -222,6 +287,7 @@ def normalize_plan_orchestrator(path: Path, text: str) -> tuple[list[str], Any |
     if not should_validate_po_normalization(text):
         return [], None
     try:
+        ensure_plan_orchestrator_import_path(path)
         from automation.plan_orchestrator.adapters.markdown_playbook import MarkdownPlaybookAdapter
         from automation.plan_orchestrator.playbook_parser import parse_playbook
 
