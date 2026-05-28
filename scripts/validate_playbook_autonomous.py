@@ -5,13 +5,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 
-EMPTY_VALUES = {"", "none", "n/a", "na", "false", "no", "-", "null"}
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+EMPTY_VALUES = {"", "none", "n/a", "na", "no", "-", "null"}
 BROAD_ROOTS = {".", "/", "src", "src/", "tests", "tests/", "test", "test/", "docs", "docs/"}
 FORBIDDEN_ROOT_PREFIXES = (".git", ".local", ".env", ".codex", ".claude", "data", "data/", "private", "private/")
 FORBIDDEN_COMMAND_PATTERNS = ("mark-manual-gate", "keel-run mark-manual-gate")
@@ -36,6 +42,11 @@ V2_SCOPE_PATTERNS = (
     r"\btraining_load\b",
     r"\bzone4\b",
     r"\bdinner timing\b",
+)
+UNVERIFIED_DEPENDENCY_PATTERNS = (
+    r"\balready available in-memory limiter dependency\b",
+    r"\bplanned in-memory limiter dependency\b",
+    r"\blimiter dependency is unavailable\b",
 )
 CODE_PATH_PREFIXES = ("src/", "app/", "scripts/", "tests/")
 DEFAULT_REQUIRED_COLUMNS = {
@@ -66,6 +77,70 @@ def load_validation_policy(playbook_path: Path, explicit_policy: Path | None = N
         return {}
     profile = policy.get("playbook_validation", {})
     return profile if isinstance(profile, dict) else {}
+
+
+def plan_orchestrator_roots(playbook_path: Path) -> list[Path]:
+    roots: list[Path] = []
+    configured = os.environ.get("KEEL_PO_ROOT")
+    if configured:
+        roots.append(Path(configured))
+
+    policy_path = None
+    for parent in [playbook_path.parent, *playbook_path.parents]:
+        candidate = parent / "ops" / "autonomy" / "policy.yaml"
+        if candidate.exists():
+            policy_path = candidate
+            break
+    if policy_path is not None:
+        try:
+            from ops.autonomy.autokeel import load_policy
+
+            policy = load_policy(policy_path)
+            if policy.get("plan_orchestrator_root"):
+                roots.append(Path(str(policy["plan_orchestrator_root"])))
+            elif policy.get("keel_root"):
+                roots.append(Path(str(policy["keel_root"])) / "tools" / "plan-orchestrator")
+        except Exception:
+            pass
+
+    roots.append(REPO_ROOT / "automation")
+    roots.append(Path("/Users/aeziz-local/keel/tools/plan-orchestrator"))
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        resolved = root.expanduser()
+        key = str(resolved)
+        if key not in seen:
+            deduped.append(resolved)
+            seen.add(key)
+    return deduped
+
+
+def ensure_plan_orchestrator_import_path(playbook_path: Path) -> None:
+    try:
+        import automation.plan_orchestrator  # noqa: F401
+
+        return
+    except ModuleNotFoundError:
+        pass
+
+    for root in plan_orchestrator_roots(playbook_path):
+        if (root / "automation" / "plan_orchestrator").exists():
+            candidate = root
+        elif root.name == "automation" and (root / "plan_orchestrator").exists():
+            candidate = root.parent
+        else:
+            continue
+        candidate_text = str(candidate)
+        if candidate_text not in sys.path:
+            sys.path.insert(0, candidate_text)
+        try:
+            import automation.plan_orchestrator  # noqa: F401
+
+            return
+        except ModuleNotFoundError:
+            continue
 
 
 def split_markdown_row(line: str) -> list[str]:
@@ -109,6 +184,10 @@ def split_list_cell(value: str) -> list[str]:
     return [part.strip().strip("`") for part in re.split(r"[,;\n]+", value or "") if part.strip()]
 
 
+def split_allowed_write_roots(value: str) -> list[str]:
+    return [part.strip().strip("`") for part in re.split(r"[;\n]+", value or "") if part.strip()]
+
+
 def is_empty(value: str) -> bool:
     return value.strip().lower() in EMPTY_VALUES
 
@@ -150,6 +229,107 @@ def contains_forbidden_executable_command(value: str, forbidden_commands: tuple[
     return None
 
 
+def term_pattern(term: str) -> str:
+    return r"\b" + re.escape(term).replace(r"\ ", r"\s+") + r"\b"
+
+
+def allowed_negative_policy_context(text: str, term: str) -> bool:
+    pattern = term_pattern(term)
+    allowed_patterns = (
+        rf"\b(?:no|not|never|without)\b[^.\n|]{{0,100}}{pattern}",
+        rf"\b(?:do not|does not|did not|must not|must never|should not|cannot)\b[^.\n|]{{0,100}}{pattern}",
+        rf"\b(?:in lieu of|instead of)\b[^.\n|]{{0,80}}{pattern}",
+        rf"{pattern}[^.\n|]{{0,100}}\b(?:not emitted|not claimed|not performed|not part|not required|forbidden|prohibited)\b",
+        rf"{pattern}[^.\n|]{{0,100}}\b(?:is|are)\s+(?:forbidden|prohibited|not emitted|not claimed|not performed)\b",
+    )
+    return any(re.search(allowed, text, re.I) for allowed in allowed_patterns)
+
+
+def forbidden_banned_language_present(text: str, term: str) -> bool:
+    pattern = re.compile(term_pattern(term), re.I)
+    for match in pattern.finditer(text):
+        start = max(0, match.start() - 120)
+        end = min(len(text), match.end() + 120)
+        if allowed_negative_policy_context(text[start:end], term):
+            continue
+        return True
+    return False
+
+
+def allowed_v2_scope_context(text: str, match: re.Match[str]) -> bool:
+    start = max(0, match.start() - 120)
+    end = min(len(text), match.end() + 120)
+    window = text[start:end]
+    matched = re.escape(match.group(0))
+    allowed_patterns = (
+        rf"\b(?:no|not|never|without)\b[^.\n|]{{0,100}}{matched}",
+        rf"\b(?:do not|does not|did not|must not|must never|should not|cannot)\b[^.\n|]{{0,100}}{matched}",
+        rf"{matched}[^.\n|]{{0,100}}\b(?:not in scope|out of scope|outside scope|deferred|forbidden|prohibited|not implemented|not returned)\b",
+        rf"\b(?:not in scope|out of scope|outside scope|deferred|forbidden|prohibited)\b[^.\n|]{{0,100}}{matched}",
+    )
+    return any(re.search(allowed, window, re.I) for allowed in allowed_patterns)
+
+
+def should_validate_po_normalization(text: str) -> bool:
+    lowered = text.lower()
+    if "format: markdown_playbook_v1" in lowered:
+        return True
+    return bool(
+        re.search(
+            r"\|\s*step_id\s*\|[^\n]*\bwhy_now\b[^\n]*\brequires_red_green\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def normalize_plan_orchestrator(path: Path, text: str) -> tuple[list[str], Any | None]:
+    if not should_validate_po_normalization(text):
+        return [], None
+    try:
+        ensure_plan_orchestrator_import_path(path)
+        from automation.plan_orchestrator.adapters.markdown_playbook import MarkdownPlaybookAdapter
+        from automation.plan_orchestrator.playbook_parser import parse_playbook
+
+        parsed = parse_playbook(path)
+        plan = MarkdownPlaybookAdapter(path.parent).normalize(parsed, path)
+    except Exception as exc:
+        return [f"plan-orchestrator normalization failed: {exc}"], None
+    return [], plan
+
+
+def repo_path_tracked_at_head(rel_path: str) -> bool:
+    if Path(rel_path).is_absolute() or ".." in Path(rel_path).parts:
+        return False
+    if not (REPO_ROOT / ".git").exists():
+        return (REPO_ROOT / rel_path).exists()
+    proc = subprocess.run(
+        ["git", "cat-file", "-e", f"HEAD:{rel_path}"],
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def repo_surface_availability_errors(plan: Any | None) -> list[str]:
+    if plan is None:
+        return []
+    errors: list[str] = []
+    prior_deliverables: set[str] = set()
+    for idx, item in enumerate(getattr(plan, "items", []), start=1):
+        for rel_path in getattr(item, "consult_paths", []):
+            if rel_path in prior_deliverables or repo_path_tracked_at_head(rel_path):
+                continue
+            errors.append(
+                f"row {idx}: repo_surfaces references path unavailable before row execution: {rel_path}"
+            )
+        prior_deliverables.update(str(path) for path in getattr(item, "deliverable_paths", []))
+    return errors
+
+
 def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | None = None) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -178,17 +358,7 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
     for term in banned_language:
         if not term:
             continue
-        # Allow explicit negation phrases used to explain policy, but do not
-        # allow positive approval language.
-        allowed_negations = {
-            f"not {term}",
-            f"no {term}",
-            f"never {term}",
-            f"without {term}",
-            f"forbidden: {term}",
-            f"{term} is forbidden",
-        }
-        if term in lowered and not any(phrase in lowered for phrase in allowed_negations):
+        if forbidden_banned_language_present(lowered, term):
             errors.append(f"forbidden autonomous playbook language: {term}")
     for term in required_gate_terms:
         if term and term not in lowered:
@@ -213,7 +383,10 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
         if manual_gate_value and not is_empty(manual_gate_value):
             errors.append(f"row {idx}: active manual_gate is forbidden in autonomous mode")
 
-        roots = split_list_cell(row.get("allowed_write_roots", ""))
+        raw_roots = row.get("allowed_write_roots", "")
+        if "," in raw_roots:
+            errors.append(f"row {idx}: allowed_write_roots must use semicolon separators, not commas")
+        roots = split_allowed_write_roots(raw_roots)
         if not roots:
             errors.append(f"row {idx}: allowed_write_roots is required")
         for root in roots:
@@ -256,9 +429,22 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
                     errors.append(f"row {idx}: forbidden v1 UI language matched /{pattern}/")
 
         lower_row = row_text(row).lower()
+        for pattern in UNVERIFIED_DEPENDENCY_PATTERNS:
+            if re.search(pattern, lower_row, re.I):
+                errors.append(f"row {idx}: unverified limiter dependency contract matched /{pattern}/")
+
         for pattern in V2_SCOPE_PATTERNS:
-            if re.search(pattern, lower_row, re.I) and "not in scope" not in lower_row and "defer" not in lower_row:
+            match = re.search(pattern, lower_row, re.I)
+            if match and not allowed_v2_scope_context(lower_row, match):
                 errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
+
+    for pattern in UNVERIFIED_DEPENDENCY_PATTERNS:
+        if re.search(pattern, lowered, re.I):
+            errors.append(f"playbook unverified limiter dependency contract matched /{pattern}/")
+
+    po_errors, po_plan = normalize_plan_orchestrator(path, text)
+    errors.extend(po_errors)
+    errors.extend(repo_surface_availability_errors(po_plan))
 
     return {"status": "ok" if not errors else "error", "errors": errors, "warnings": warnings, "row_count": len(candidate_rows)}
 

@@ -10,7 +10,94 @@ from ops.autonomy.autokeel import write_json_atomic
 from scripts.check_autonomous_review_exists import check_review
 from scripts.check_no_tracked_data import check_no_tracked_data
 from scripts.keel_status_digest import digest_status
+from scripts.verify_s02_readiness import verify_s02_readiness
 from scripts.verify_v1 import verify_v1
+
+
+def write_s02_readiness_fixture(root: Path, *, active_run: dict | None = None, with_policy: bool = False) -> None:
+    subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    (root / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+    (root / "ops/autonomy/decisions").mkdir(parents=True)
+    if with_policy:
+        (root / "ops/autonomy/policy.yaml").write_text("lanes:\n  swr_preferred: use_swr\n", encoding="utf-8")
+    write_json_atomic(
+        root / "ops/autonomy/autonomy_state.json",
+        {"active_run": active_run, "completed_slices": ["S01"], "current_slice": None, "last_event_id": 0},
+    )
+    write_json_atomic(
+        root / "ops/autonomy/decisions/S02-lane.json",
+        {
+            "created_at": "2026-05-26T00:00:00-04:00",
+            "status": "accepted",
+            "slice": "S02",
+            "lane": "swr_preferred",
+            "decision": "use_swr",
+            "risk": "high",
+            "review_artifacts": [
+                "docs/reviews/s02-autonomous-security-review.md",
+                "docs/reviews/s02-autonomous-privacy-review.md",
+            ],
+            "commands": [
+                {
+                    "command": "python scripts/verify_autonomy_preflight.py --json",
+                    "exit_code": 0,
+                    "stdout_tail": "ok",
+                    "stderr_tail": "",
+                }
+            ],
+            "verdict": "pass",
+        },
+    )
+    write_json_atomic(
+        root / "ops/autonomy/slices.json",
+        [
+            {"id": "S01", "required": True, "status": "complete"},
+            {
+                "id": "S02",
+                "required": True,
+                "status": "pending",
+                "lane": "swr_preferred",
+                "risk": "high",
+                "playbook": "docs/playbooks/s02-mood-api.playbook.md",
+                "lane_decision": "ops/autonomy/decisions/S02-lane.json",
+                "review_artifacts": [
+                    "docs/reviews/s02-autonomous-security-review.md",
+                    "docs/reviews/s02-autonomous-privacy-review.md",
+                ],
+            },
+        ],
+    )
+    evidence = root / "docs/evidence/s02-command-output.json"
+    evidence.parent.mkdir(parents=True)
+    write_json_atomic(
+        evidence,
+        {
+            "commands": [
+                {
+                    "command": "python -m pytest tests/test_api_security.py -q",
+                    "exit_code": 0,
+                    "stdout_tail": "passed",
+                    "stderr_tail": "",
+                }
+            ]
+        },
+    )
+    for rel in (
+        "docs/reviews/s02-autonomous-security-review.md",
+        "docs/reviews/s02-autonomous-privacy-review.md",
+    ):
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "# Autonomous Slice Review: S02\n\n"
+            "Autonomous slice review provenance: independent reviewer.\n\n"
+            "Verdict: pass\n"
+            "Evidence files checked:\n- `src/api/mood.py`\n"
+            "Exact commands run:\n- `python -m pytest tests/test_api_security.py -q`\n"
+            "Command evidence: docs/evidence/s02-command-output.json\n"
+            "Blocking findings: none\n",
+            encoding="utf-8",
+        )
 
 
 class VerifyScriptsTests(unittest.TestCase):
@@ -29,6 +116,33 @@ class VerifyScriptsTests(unittest.TestCase):
             report = check_no_tracked_data(root)
             self.assertEqual(report["status"], "error")
             self.assertTrue(any("tracked sensitive path" in error for error in report["errors"]))
+
+    def test_check_no_tracked_data_allows_documented_fake_test_tokens_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text(
+                "data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n",
+                encoding="utf-8",
+            )
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            fixture = tests_dir / "test_api_security.py"
+            fixture.write_text(
+                'FAKE_MOOD_TOKEN = "test-only-mood-token"\n'
+                'ENV = {"MOOD_TOKEN": "real-token-should-not-be-used"}\n',
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", ".gitignore", str(fixture.relative_to(root))], cwd=root, check=True)
+
+            report = check_no_tracked_data(root)
+            self.assertEqual(report["status"], "ok", report)
+
+            real_token = "sk_live_" + "realistic_token_value"
+            fixture.write_text(f'MOOD_TOKEN = "{real_token}"\n', encoding="utf-8")
+            report = check_no_tracked_data(root)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("secret/token value" in error for error in report["errors"]))
 
     def test_verify_v1_fails_with_incomplete_slices(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -80,8 +194,216 @@ class VerifyScriptsTests(unittest.TestCase):
             evidence = root / "docs/evidence/s01-command-output.json"
             evidence.parent.mkdir(parents=True)
             evidence.write_text('{"status":"ok"}\n', encoding="utf-8")
+            structurally_invalid = check_review(root, "S01")
+            self.assertEqual(structurally_invalid["status"], "error")
+            self.assertTrue(any("non-empty commands list" in error for error in structurally_invalid["errors"]))
+
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "commands": [
+                            {
+                                "command": "python scripts/check_schema_contract.py",
+                                "exit_code": 0,
+                                "stdout_tail": "ok",
+                                "stderr_tail": "",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
             present = check_review(root, "S01")
             self.assertEqual(present["status"], "ok", present)
+
+    def test_review_rejects_failed_or_secret_command_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "ops/autonomy").mkdir(parents=True)
+            review = root / "docs/reviews/s01.md"
+            review.parent.mkdir(parents=True)
+            review.write_text(
+                "# Autonomous Slice Review: S01\n\n"
+                "Autonomous slice review provenance: independent reviewer.\n\n"
+                "Verdict: pass\n"
+                "Evidence files checked:\n- `src/db/schema.sql`\n"
+                "Exact commands run:\n- `python scripts/check_schema_contract.py`\n"
+                "Command evidence: docs/evidence/s01-command-output.json\n"
+                "Blocking findings: none\n",
+                encoding="utf-8",
+            )
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [{"id": "S01", "required": True, "review_artifacts": ["docs/reviews/s01.md"]}],
+            )
+            evidence = root / "docs/evidence/s01-command-output.json"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "commands": [
+                            {
+                                "command": "python scripts/check_schema_contract.py",
+                                "exit_code": 1,
+                                "stdout_tail": "authorization token was redacted",
+                                "stderr_tail": "failed",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = check_review(root, "S01")
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("nonzero exit_code" in error for error in report["errors"]))
+            self.assertTrue(any("secret marker" in error for error in report["errors"]))
+
+    def test_verify_s02_readiness_requires_lane_decision_and_reviews(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+            (root / "ops/autonomy").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {"id": "S01", "required": True, "status": "complete"},
+                    {
+                        "id": "S02",
+                        "required": True,
+                        "status": "pending",
+                        "lane": "swr_preferred",
+                        "risk": "high",
+                        "review_artifacts": [
+                            "docs/reviews/s02-autonomous-security-review.md",
+                            "docs/reviews/s02-autonomous-privacy-review.md",
+                        ],
+                    },
+                ],
+            )
+
+            missing = verify_s02_readiness(root)
+            self.assertEqual(missing["status"], "error")
+            self.assertTrue(any("missing lane_decision" in error for error in missing["errors"]))
+
+    def test_verify_s02_readiness_passes_with_decision_reviews_and_safe_git_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+            (root / "ops/autonomy/decisions").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/decisions/S02-lane.json",
+                {
+                    "created_at": "2026-05-26T00:00:00-04:00",
+                    "status": "accepted",
+                    "slice": "S02",
+                    "lane": "swr_preferred",
+                    "decision": "use_swr",
+                    "risk": "high",
+                    "review_artifacts": [
+                        "docs/reviews/s02-autonomous-security-review.md",
+                        "docs/reviews/s02-autonomous-privacy-review.md",
+                    ],
+                    "commands": [
+                        {
+                            "command": "python scripts/verify_autonomy_preflight.py --json",
+                            "exit_code": 0,
+                            "stdout_tail": "ok",
+                            "stderr_tail": "",
+                        }
+                    ],
+                    "verdict": "pass",
+                },
+            )
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {"id": "S01", "required": True, "status": "complete"},
+                    {
+                        "id": "S02",
+                        "required": True,
+                        "status": "pending",
+                        "lane": "swr_preferred",
+                        "risk": "high",
+                        "lane_decision": "ops/autonomy/decisions/S02-lane.json",
+                        "review_artifacts": [
+                            "docs/reviews/s02-autonomous-security-review.md",
+                            "docs/reviews/s02-autonomous-privacy-review.md",
+                        ],
+                    },
+                ],
+            )
+            evidence = root / "docs/evidence/s02-command-output.json"
+            evidence.parent.mkdir(parents=True)
+            write_json_atomic(
+                evidence,
+                {
+                    "commands": [
+                        {
+                            "command": "python -m pytest tests/test_api_security.py -q",
+                            "exit_code": 0,
+                            "stdout_tail": "passed",
+                            "stderr_tail": "",
+                        }
+                    ]
+                },
+            )
+            for rel in (
+                "docs/reviews/s02-autonomous-security-review.md",
+                "docs/reviews/s02-autonomous-privacy-review.md",
+            ):
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    "# Autonomous Slice Review: S02\n\n"
+                    "Autonomous slice review provenance: independent reviewer.\n\n"
+                    "Verdict: pass\n"
+                    "Evidence files checked:\n- `src/api/mood.py`\n"
+                    "Exact commands run:\n- `python -m pytest tests/test_api_security.py -q`\n"
+                    "Command evidence: docs/evidence/s02-command-output.json\n"
+                    "Blocking findings: none\n",
+                    encoding="utf-8",
+                )
+
+            report = verify_s02_readiness(root)
+            self.assertEqual(report["status"], "ok", report)
+
+    def test_s02_readiness_fails_with_active_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_s02_readiness_fixture(
+                root,
+                active_run={
+                    "slice": "S02",
+                    "run_id": "RUN_20260526T173005Z_e4b9f767c7024cc9b3741d04055ec544",
+                },
+            )
+
+            report = verify_s02_readiness(root)
+
+            self.assertEqual(report["status"], "error")
+            self.assertEqual(
+                report["checks"]["active_run"]["run_id"],
+                "RUN_20260526T173005Z_e4b9f767c7024cc9b3741d04055ec544",
+            )
+            self.assertTrue(any("active_run must be null" in error for error in report["errors"]))
+
+    def test_s02_readiness_fails_when_playbook_exists_without_swr_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_s02_readiness_fixture(root, with_policy=True)
+            playbook = root / "docs/playbooks/s02-mood-api.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("# stale compiler playbook\n", encoding="utf-8")
+
+            report = verify_s02_readiness(root)
+
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(report["checks"]["canonical_playbook_exists"])
+            self.assertFalse(report["checks"]["swr_evidence_exists"])
+            self.assertTrue(any("without matching SWR evidence" in error for error in report["errors"]))
 
     def test_verify_v1_fails_when_ship_branch_head_differs_from_recorded_commit(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -1,0 +1,505 @@
+{
+  "compiler_warnings": [
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[01]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[02]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[03]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[04]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[05]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[06]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[07]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[08]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[09]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[10]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_EXTERNAL_HINTS_WITHOUT_CHECK: source artifacts mention external dependencies, but no row requires external evidence",
+    "AUTHOR_MANUAL_HINTS_WITHOUT_GATE: source artifacts mention a risky manual gate, but no row has manual_gate set",
+    "UNKNOWN_VERIFICATION_COMMAND[09]: verification command is not in the compiler allowlist: 'python scripts/check_autonomous_review_exists.py S02'",
+    "UNKNOWN_VERIFICATION_COMMAND[10]: verification command is not in the compiler allowlist: 'python scripts/check_autonomous_review_exists.py S02'"
+  ],
+  "rows": [
+    {
+      "action": "Create the FastAPI app, expose the v1 endpoint set (`POST /api/mood`, `GET /api/health`, `GET /api/insights/{date}`, `GET /api/insights/latest_logged_day`, `GET /api/counterfactuals/{date}`, `GET /api/counterfactuals/latest_logged_day`), an",
+      "allowed_write_roots": [
+        "src/api"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/api/__init__.py",
+        "src/api/app.py"
+      ],
+      "exit_criteria": "src/api/__init__.py, src/api/app.py exist with the required S02 behavior; python -m pytest tests/test_api_security.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_001",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "FastAPI application skeleton",
+      "prerequisites": "none",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_api_security.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "01",
+      "why_now": "Required for the S02 acceptance contract."
+    },
+    {
+      "action": "Implement `require_token` as a FastAPI dependency that validates `X-Mood-Token` against `MOOD_TOKEN` using `secrets.compare_digest`. Attach it to every `/api/*` route (POST and GET). Add the `slowapi` 10 req/min limiter on `POST /api/mood`.",
+      "allowed_write_roots": [
+        "src/api",
+        "tests/test_api_security.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/api/security.py",
+        "src/api/dependencies.py",
+        "src/api/app.py",
+        "tests/test_api_security.py"
+      ],
+      "exit_criteria": "src/api/security.py, src/api/dependencies.py, src/api/app.py, tests/test_api_security.py exist with the required S02 behavior; python -m pytest tests/test_api_security.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_002",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Token authentication and request gating",
+      "prerequisites": "01",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_api_security.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "02",
+      "why_now": "Required for the S02 acceptance contract."
+    },
+    {
+      "action": "Implement `resolve_mood_date(logged_at_utc, home_tz)` enforcing the 04:00-local cutoff rule and DST safety via `zoneinfo`. The function returns the `mood_date` that the API persists.",
+      "allowed_write_roots": [
+        "src/api",
+        "tests/test_mood_date.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/api/mood_date.py",
+        "tests/test_mood_date.py"
+      ],
+      "exit_criteria": "src/api/mood_date.py, tests/test_mood_date.py exist with the required S02 behavior; python -m pytest tests/test_mood_date.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_003",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Mood-date attribution",
+      "prerequisites": "02",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_mood_date.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "03",
+      "why_now": "Required for the S02 acceptance contract."
+    },
+    {
+      "action": "Add Pydantic request/response models for `POST /api/mood` matching the design contract: `feeling` (int 1-10, required), `energy` (int 1-10, optional), `notes` (optional str), `context_chips` (Literal set, optional, defaults empty), and opti",
+      "allowed_write_roots": [
+        "src/api",
+        "tests/test_api_security.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/api/schemas.py",
+        "tests/test_api_security.py"
+      ],
+      "exit_criteria": "src/api/schemas.py, tests/test_api_security.py exist with the required S02 behavior; python -m pytest tests/test_api_security.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_004",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Mood ingest schemas",
+      "prerequisites": "03",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_api_security.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "04",
+      "why_now": "Required for the S02 acceptance contract."
+    },
+    {
+      "action": "Implement the `POST /api/mood` handler so it (a) validates the body against the Pydantic schema, (b) resolves `mood_date`, (c) calls the S01 warehouse helpers to append a new `mood_entries` row, (d) updates `mood_current` to point at the ne",
+      "allowed_write_roots": [
+        "src/api",
+        "tests/test_mood_correction.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/api/app.py",
+        "tests/test_mood_correction.py"
+      ],
+      "exit_criteria": "src/api/app.py, tests/test_mood_correction.py exist with the required S02 behavior; python -m pytest tests/test_mood_correction.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_005",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Mood write path and correction flow",
+      "prerequisites": "04",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "src",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_mood_correction.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "05",
+      "why_now": "Required for the S02 acceptance contract."
+    },
+    {
+      "action": "Implement cover the security contract end-to-end: missing token \u2192 401; bad token \u2192 401 (constant-time); GET from a simulated remote IP \u2192 403; POST from a LAN IP with valid token \u2192 200; GET from `127.0.0.1` with valid token \u2192 200; GET from `",
+      "allowed_write_roots": [
+        "tests/test_api_security.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "tests/test_api_security.py"
+      ],
+      "exit_criteria": "tests/test_api_security.py exist with the required S02 behavior; python -m pytest tests/test_api_security.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_006",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Same-host read security tests",
+      "prerequisites": "05",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_api_security.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "06",
+      "why_now": "Required for the S02 acceptance contract."
+    },
+    {
+      "action": "Implement cover the date-attribution rule: 23:30 local \u2192 same date; 00:30 local \u2192 previous date; 03:59 local \u2192 previous date; 04:01 local \u2192 current date; DST transition night resolves through `zoneinfo` without crashing or off-by-one.",
+      "allowed_write_roots": [
+        "tests/test_mood_date.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "tests/test_mood_date.py"
+      ],
+      "exit_criteria": "tests/test_mood_date.py exist with the required S02 behavior; python -m pytest tests/test_mood_date.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_007",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Mood-date attribution tests",
+      "prerequisites": "06",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_mood_date.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "07",
+      "why_now": "Required for the S02 acceptance contract."
+    },
+    {
+      "action": "Implement cover the correction flow: a second POST on the same `mood_date` appends to `mood_entries` with `supersedes_log_id` set to the prior row's `log_id`; `mood_current` updates to the new `log_id`; the training join (`mood_current` \u22c8 `",
+      "allowed_write_roots": [
+        "tests/test_mood_correction.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "tests/test_mood_correction.py"
+      ],
+      "exit_criteria": "tests/test_mood_correction.py exist with the required S02 behavior; python -m pytest tests/test_mood_correction.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_008",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Mood correction tests",
+      "prerequisites": "07",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_mood_correction.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "08",
+      "why_now": "Required for the S02 acceptance contract."
+    },
+    {
+      "action": "Generate the S02 autonomous security review artifact covering the same-host read middleware, constant-time token comparison, `X-Mood-Token` defense-in-depth, rate limit on `POST /api/mood`, CORS-disabled posture, token storage policy, and t",
+      "allowed_write_roots": [
+        "docs/reviews"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "docs/reviews/s02-autonomous-security-review.md"
+      ],
+      "exit_criteria": "docs/reviews/s02-autonomous-security-review.md exist with the required S02 behavior; python scripts/check_autonomous_review_exists.py S02 passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_009",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Autonomous security review",
+      "prerequisites": "08",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "docs/reviews",
+        "docs/reviews/s02-autonomous-security-review.md"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python scripts/check_autonomous_review_exists.py S02"
+      ],
+      "requires_red_green": true,
+      "step_id": "09",
+      "why_now": "Required for the S02 acceptance contract."
+    },
+    {
+      "action": "Generate the S02 autonomous privacy review artifact covering: mood data stays in the local DuckDB warehouse, no third-party transmission, no tokens or bodies in logs, raw mood payload quarantine reuses the S01 `0600` pathway, `.env` and `da",
+      "allowed_write_roots": [
+        "docs/reviews"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "docs/reviews/s02-autonomous-privacy-review.md"
+      ],
+      "exit_criteria": "docs/reviews/s02-autonomous-privacy-review.md exist with the required S02 behavior; python scripts/check_autonomous_review_exists.py S02 passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_010",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Autonomous privacy review",
+      "prerequisites": "09",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s02-mood-api-autoplan.md",
+        "docs/briefs/s02-mood-api.autonomous-brief.md",
+        "docs/reviews",
+        "docs/reviews/s02-autonomous-privacy-review.md"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python scripts/check_autonomous_review_exists.py S02"
+      ],
+      "requires_red_green": true,
+      "step_id": "10",
+      "why_now": "Required for the S02 acceptance contract."
+    }
+  ],
+  "schema_version": "po_candidate_rows_v1",
+  "support_sections": {
+    "immediate_next_actions": "Run S02 acceptance commands only after all rows complete.",
+    "phase_details": [
+      {
+        "body": "Executes S02 task rows for FastAPI application skeleton.",
+        "phase_slug": "fastapi-application-skeleton",
+        "title": "FastAPI application skeleton"
+      },
+      {
+        "body": "Executes S02 task rows for Token authentication and request gating.",
+        "phase_slug": "token-authentication-and-request-gating",
+        "title": "Token authentication and request gating"
+      },
+      {
+        "body": "Executes S02 task rows for Mood-date attribution.",
+        "phase_slug": "mood-date-attribution",
+        "title": "Mood-date attribution"
+      },
+      {
+        "body": "Executes S02 task rows for Mood ingest schemas.",
+        "phase_slug": "mood-ingest-schemas",
+        "title": "Mood ingest schemas"
+      },
+      {
+        "body": "Executes S02 task rows for Mood write path and correction flow.",
+        "phase_slug": "mood-write-path-and-correction-flow",
+        "title": "Mood write path and correction flow"
+      },
+      {
+        "body": "Executes S02 task rows for Same-host read security tests.",
+        "phase_slug": "same-host-read-security-tests",
+        "title": "Same-host read security tests"
+      },
+      {
+        "body": "Executes S02 task rows for Mood-date attribution tests.",
+        "phase_slug": "mood-date-attribution-tests",
+        "title": "Mood-date attribution tests"
+      },
+      {
+        "body": "Executes S02 task rows for Mood correction tests.",
+        "phase_slug": "mood-correction-tests",
+        "title": "Mood correction tests"
+      },
+      {
+        "body": "Executes S02 task rows for Autonomous security review.",
+        "phase_slug": "autonomous-security-review",
+        "title": "Autonomous security review"
+      },
+      {
+        "body": "Executes S02 task rows for Autonomous privacy review.",
+        "phase_slug": "autonomous-privacy-review",
+        "title": "Autonomous privacy review"
+      }
+    ],
+    "plan_context": "S02 builds one Health Data Hub v1 slice under the autonomous AutoKeel policy.",
+    "risks_and_contingencies": "If verification fails, stop and record an AutoKeel failure instead of fabricating evidence.",
+    "shared_guidance": [
+      {
+        "body": "Manual gates are forbidden; autonomous_gate_review artifacts, deterministic tests, and recorded evidence are required instead.",
+        "title": "Autonomous Gate Policy"
+      },
+      {
+        "body": "Do not commit raw health data, provider payloads, secrets, DuckDB files, snapshots, or quarantine payloads.",
+        "title": "Health Data Safety"
+      }
+    ]
+  }
+}

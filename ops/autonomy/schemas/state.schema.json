@@ -18,6 +18,32 @@
         }
       ]
     },
+    "active_swr_run": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["slice", "run_manifest"],
+          "properties": {
+            "slice": {"type": "string"},
+            "run_id": {"type": ["string", "null"]},
+            "run_name": {"type": ["string", "null"]},
+            "run_dir": {"type": ["string", "null"]},
+            "run_manifest": {"type": "string"},
+            "workflow_id": {"type": ["string", "null"]},
+            "status": {"type": ["string", "null"]},
+            "current_stage_id": {"type": ["string", "null"]},
+            "current_stage_status": {"type": ["string", "null"]},
+            "response_id": {"type": ["string", "null"]},
+            "supervisor_session_id": {"type": ["string", "null"]},
+            "last_remote_check_at": {"type": ["string", "null"]},
+            "last_remote_check_exit_code": {"type": ["integer", "null"]},
+            "last_remote_check_stderr": {"type": ["string", "null"]},
+            "recorded_at": {"type": "string"}
+          }
+        }
+      ]
+    },
     "completed_slices": {"type": "array", "items": {"type": "string"}},
     "current_slice": {"type": ["string", "null"]},
     "last_event_id": {"type": "integer"},

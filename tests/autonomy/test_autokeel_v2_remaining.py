@@ -160,6 +160,20 @@ CREATE TABLE IF NOT EXISTS sleep_merge_diagnostics (
             self.assertTrue(command_allowed("python scripts/evidence/oura_smoke.py --json", root))
             self.assertFalse(command_allowed("python scripts/arbitrary.py", root))
 
+    def test_acceptance_policy_rejects_broad_python_script_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            policy = root / "ops/autonomy/policy.yaml"
+            policy.parent.mkdir(parents=True)
+            policy.write_text(
+                "acceptance_commands:\n"
+                "  allow_prefixes:\n"
+                "    - python scripts/\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(command_allowed("python scripts/arbitrary.py", root))
+            self.assertTrue(command_allowed("python -m pytest tests/autonomy -q", root))
+
     def test_oura_tripwire_is_not_auto_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

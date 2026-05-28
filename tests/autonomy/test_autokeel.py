@@ -84,6 +84,23 @@ class AutoKeelTests(unittest.TestCase):
             self.assertNotIn(access_value, content)
             self.assertIn("[REDACTED]", content)
 
+    def test_log_event_uses_event_log_high_water_mark(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            state_path = root / "ops/autonomy/autonomy_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["last_event_id"] = 3
+            write_json_atomic(state_path, state)
+            events_path = root / "ops/autonomy/events.jsonl"
+            events_path.write_text(json.dumps({"event_id": 9, "event": "prior"}) + "\n", encoding="utf-8")
+
+            op = AutoKeel(root=root, dry_run=True)
+            event = op.log_event("after_prior", {"ok": True}, slice_id="S01")
+
+            self.assertEqual(event["event_id"], 10)
+            self.assertEqual(op.load_state()["last_event_id"], 10)
+
     def test_choose_next_slice_skips_complete_required_slices(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -199,6 +216,8 @@ Manual gates are forbidden.
             self.assertNotIn("keel-run", " ".join(argv))
             self.assertIn("--max-wait-seconds", argv)
             self.assertEqual(argv[argv.index("--max-wait-seconds") + 1], "5")
+            self.assertIn("--max-auto-resume-attempts", argv)
+            self.assertEqual(argv[argv.index("--max-auto-resume-attempts") + 1], "0")
             self.assertEqual(Path(seen["cwd"]).resolve(), root.resolve())
             self.assertEqual(seen["env"], {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"})
             self.assertEqual(seen["timeout"], 7200)
@@ -239,11 +258,96 @@ Manual gates are forbidden.
             self.assertIn("--run-id", argv)
             self.assertEqual(argv[argv.index("--run-id") + 1], "RUN_TEST")
             self.assertIn("--max-wait-seconds", argv)
+            self.assertIn("--max-auto-resume-attempts", argv)
+            self.assertEqual(argv[argv.index("--max-auto-resume-attempts") + 1], "0")
             self.assertEqual(seen["env"], {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"})
             self.assertEqual(seen["timeout"], 7200)
             active = op.load_state()["active_run"]
             self.assertEqual(active["run_id"], "RUN_TEST")
             self.assertIn("last_seen_at", active)
+
+    def test_superseded_active_run_snapshot_starts_new_po_run(self) -> None:
+        seen: dict[str, object] = {}
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                seen["argv"] = list(argv)
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_NEW"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("current playbook", encoding="utf-8")
+            run_root = root / ".local/automation/plan_orchestrator/runs/RUN_OLD"
+            run_root.mkdir(parents=True)
+            write_json_atomic(run_root / "run_state.json", {"playbook_source_sha256": "old-sha"})
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_OLD",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(result.ok)
+            self.assertEqual(seen["argv"][2:4], ["supervise", "run"])
+            self.assertEqual(op.load_state()["active_run"]["run_id"], "RUN_NEW")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("state_divergence", ledger)
+            self.assertIn("superseded playbook snapshot", ledger)
+
+    def test_active_same_slice_resume_rejects_dirty_product_changes(self) -> None:
+        class ShouldNotRun:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                raise AssertionError("resume command should not run after dirty precheck")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            init_git_repo(root)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            state["active_run"] = {
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "started_at": now,
+                "last_seen_at": now,
+            }
+            write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            (root / "src").mkdir(exist_ok=True)
+            (root / "src" / "unexpected.py").write_text("print('dirty')\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = ShouldNotRun()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertFalse(result.ok)
+            self.assertIn("non-AutoKeel dirty paths", result.stderr)
+            self.assertIn("src/unexpected.py", result.stderr)
+
+    def test_heartbeat_writes_ignored_runtime_file_without_tracked_state_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            state_before = (root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8")
+            events_before = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+
+            op.log_heartbeat()
+
+            self.assertEqual((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"), state_before)
+            self.assertEqual((root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8"), events_before)
+            self.assertTrue((root / "ops/autonomy/heartbeats/latest.json").exists())
 
     def test_pre_po_checkpoint_commits_only_autokeel_runtime_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

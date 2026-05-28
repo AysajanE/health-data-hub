@@ -29,6 +29,7 @@ STATE_KEYS = (
     "supervisor_state",
     "current_state",
 )
+STATE_SCAN_SKIP_KEYS = {"latest_intervention"}
 
 
 def normalize_state(raw: str | None) -> str | None:
@@ -141,6 +142,28 @@ def terminal_from_kernel_counts(payload: dict[str, Any]) -> str | None:
     return current
 
 
+def terminal_from_supervision_status(payload: dict[str, Any]) -> str | None:
+    supervision = payload.get("supervision_status")
+    if not isinstance(supervision, dict):
+        return None
+    latest = supervision.get("latest_intervention")
+    latest = latest if isinstance(latest, dict) else {}
+    action = str(latest.get("action_kind") or "").lower()
+    result = str(latest.get("result_status") or "").lower()
+    recoverability = str(latest.get("recoverability_class") or "").lower()
+    claim = str(supervision.get("claim_class") or "").lower()
+    try:
+        exit_code = int(supervision.get("exit_code"))
+    except (TypeError, ValueError):
+        exit_code = 0
+
+    if action == "park" or result == "parked" or recoverability == "non_recoverable":
+        return "escalated"
+    if claim == "terminal_observed" and exit_code not in {0, 12}:
+        return "escalated"
+    return None
+
+
 def collect_states(value: Any) -> list[str]:
     states: list[str] = []
     if isinstance(value, dict):
@@ -148,15 +171,13 @@ def collect_states(value: Any) -> list[str]:
             state = normalize_state(value.get(key))
             if state:
                 states.append(state)
-        for item in value.values():
+        for key, item in value.items():
+            if key in STATE_SCAN_SKIP_KEYS:
+                continue
             states.extend(collect_states(item))
     elif isinstance(value, list):
         for item in value:
             states.extend(collect_states(item))
-    elif isinstance(value, str):
-        state = normalize_state(value)
-        if state:
-            states.append(state)
     return states
 
 
@@ -170,6 +191,7 @@ def extract_items(payload: Any) -> list[Any]:
 
 
 def determine_terminal_state(payload: dict[str, Any]) -> str:
+    supervision = terminal_from_supervision_status(payload)
     kernel = terminal_from_kernel_counts(payload)
     top = explicit_top_state(payload)
     all_states = collect_states(payload)
@@ -180,6 +202,9 @@ def determine_terminal_state(payload: dict[str, Any]) -> str:
         return "escalated"
     if "blocked_external" in all_states:
         return "blocked_external"
+
+    if supervision:
+        return supervision
 
     if kernel:
         return kernel
@@ -253,11 +278,23 @@ def load_status(args: argparse.Namespace) -> dict[str, Any]:
 def digest_status(payload: dict[str, Any], run_id: str | None = None) -> dict[str, Any]:
     items = extract_items(payload)
     kernel = _find_kernel_status(payload)
+    supervision = payload.get("supervision_status")
+    latest_intervention = supervision.get("latest_intervention") if isinstance(supervision, dict) else None
+    latest_intervention = latest_intervention if isinstance(latest_intervention, dict) else {}
     return {
         "run_id": run_id or payload.get("run_id") or payload.get("id"),
         "terminal_state": determine_terminal_state(payload),
         "raw_state": payload.get("state") or payload.get("status") or payload.get("terminal_state"),
         "kernel_terminal_counts": kernel.get("terminal_counts") if kernel else None,
+        "supervision": {
+            "claim_class": supervision.get("claim_class"),
+            "exit_code": supervision.get("exit_code"),
+            "latest_action": latest_intervention.get("action_kind"),
+            "latest_result": latest_intervention.get("result_status"),
+            "latest_reason": latest_intervention.get("reason"),
+        }
+        if isinstance(supervision, dict)
+        else None,
         "items_total": len(items) if items else None,
         "source": "keel_status_digest",
         "status_command": payload.get("_status_command"),

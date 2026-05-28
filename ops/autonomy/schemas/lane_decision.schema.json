@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutoKeel lane decision",
+  "type": "object",
+  "required": [
+    "created_at",
+    "status",
+    "slice",
+    "lane",
+    "decision",
+    "risk",
+    "review_artifacts",
+    "commands",
+    "verdict"
+  ],
+  "properties": {
+    "created_at": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "accepted"
+      ]
+    },
+    "slice": {
+      "type": "string",
+      "pattern": "^S[0-9]{2}$"
+    },
+    "lane": {
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "use_swr",
+        "compile_with_keel_compile",
+        "block"
+      ]
+    },
+    "risk": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "review_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "command",
+          "exit_code"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer"
+          },
+          "stdout_tail": {
+            "type": "string"
+          },
+          "stderr_tail": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    }
+  }
+}

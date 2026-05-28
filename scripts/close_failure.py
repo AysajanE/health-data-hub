@@ -41,11 +41,18 @@ def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def next_event_id(root: Path) -> int:
     state_path = root / "ops" / "autonomy" / "autonomy_state.json"
+    event_path = root / "ops" / "autonomy" / "events.jsonl"
     if state_path.exists():
         state = json.loads(state_path.read_text(encoding="utf-8") or "{}")
     else:
         state = {}
-    event_id = int(state.get("last_event_id") or 0) + 1
+    log_event_id = 0
+    for row in iter_jsonl(event_path):
+        try:
+            log_event_id = max(log_event_id, int(row.get("event_id") or 0))
+        except (TypeError, ValueError):
+            continue
+    event_id = max(int(state.get("last_event_id") or 0), log_event_id) + 1
     state["last_event_id"] = event_id
     tmp = state_path.with_suffix(state_path.suffix + ".tmp")
     tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")

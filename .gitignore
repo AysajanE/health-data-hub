@@ -24,6 +24,7 @@ private/
 orchestrator/
 automation/plan_orchestrator
 automation/run_plan_orchestrator.py
+automation/task_packs/
 ops/autonomy/.autokeel.lock
 ops/autonomy/*.tmp
 ops/autonomy/heartbeats/*.json

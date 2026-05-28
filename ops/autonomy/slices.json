@@ -55,18 +55,28 @@
     ],
     "autoplan": "docs/gstack/s02-mood-api-autoplan.md",
     "brief": "docs/briefs/s02-mood-api.autonomous-brief.md",
+    "failure_path": "ops/autonomy/failures/S02-state_divergence-20260527T212205-0400-fc2806b8.md",
     "id": "S02",
     "lane": "swr_preferred",
+    "lane_decision": "ops/autonomy/decisions/S02-lane-decision-20260526T112916-0400.json",
     "name": "Mood API loop",
     "playbook": "docs/playbooks/s02-mood-api.playbook.md",
+    "reason": "active run playbook snapshot superseded: b9d9a554f8b9dc86b61ef4c1a722aa7199361cb67237cb79a85c7fb89d620f6d != 3f2b64184e29fd4f88800bf69c5cb4257cfa22aa2a02f486d75dc31f747d80d9",
     "required": true,
+    "retry_count": 0,
     "review_artifacts": [
       "docs/reviews/s02-autonomous-security-review.md",
       "docs/reviews/s02-autonomous-privacy-review.md"
     ],
     "risk": "high",
+    "run_id": "RUN_20260528T002221Z_3826a50efd00422aa9718d2772062e36",
     "slug": "s02-mood-api",
-    "status": "pending"
+    "status": "pending",
+    "stopped_swr_response_id": "resp_0ffe2a332e9936d6006a176b42c90881a0b974350d5ca9c85b",
+    "stopped_swr_run_id": "run_20260527_214940_13c23775",
+    "swr_run_id": "run_20260527_193037_b4691e05",
+    "swr_run_manifest": ".local/autokeel/swr/runs/2026-05-27_193037_autokeel-s02-20260527t153037-0400_gstack_design_to_po_playbook/run_manifest.json",
+    "updated_at": "2026-05-27T21:22:05-04:00"
   },
   {
     "acceptance": [

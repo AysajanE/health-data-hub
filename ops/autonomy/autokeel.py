@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -73,6 +75,14 @@ def now_iso() -> str:
 
 def slug_ts() -> str:
     return datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -286,6 +296,8 @@ class CommandRunner:
 class AutoKeel:
     ACTIONABLE_STATUSES = {"pending", "waiting_for_playbook", "replan_required", "evidence_ready"}
     BLOCKED_STATUSES = {"blocked", "blocked_external", "blocked_external_waiting_for_evidence", "blocked_compile_inputs", "complete"}
+    SWR_ACTIVE_RUN_STATUSES = {"running", "waiting_for_review"}
+    SWR_ACTIVE_STAGE_STATUSES = {"submitted", "in_progress"}
     DRY_RUN_RESTORE_PATHS = (
         "ops/autonomy/autonomy_state.json",
         "ops/autonomy/events.jsonl",
@@ -309,6 +321,7 @@ class AutoKeel:
         statuses = self.policy.get("slice_statuses", {})
         self.actionable_statuses = set(statuses.get("actionable", self.ACTIONABLE_STATUSES))
         self.blocked_statuses = set(statuses.get("blocked", self.BLOCKED_STATUSES))
+        self._swr_materializations: dict[str, dict[str, Any]] = {}
 
     def snapshot_dry_run_state(self) -> dict[Path, bytes | None]:
         snapshots: dict[Path, bytes | None] = {}
@@ -332,6 +345,16 @@ class AutoKeel:
     def save_state(self, state: dict[str, Any]) -> None:
         write_json_atomic(self.state_path, state)
 
+    def last_event_id_from_log(self) -> int:
+        last_event_id = 0
+        for event in iter_jsonl(self.events_path):
+            try:
+                event_id = int(event.get("event_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            last_event_id = max(last_event_id, event_id)
+        return last_event_id
+
     def load_slices(self) -> list[dict[str, Any]]:
         payload = read_json(self.slices_path, [])
         if not isinstance(payload, list):
@@ -343,7 +366,7 @@ class AutoKeel:
 
     def log_event(self, event_type: str, details: dict[str, Any] | None = None, slice_id: str | None = None) -> dict[str, Any]:
         state = self.load_state()
-        event_id = int(state.get("last_event_id") or 0) + 1
+        event_id = max(int(state.get("last_event_id") or 0), self.last_event_id_from_log()) + 1
         payload = {
             "event_id": event_id,
             "ts": now_iso(),
@@ -379,9 +402,6 @@ class AutoKeel:
         }
         heartbeat_path = self.root / self.policy.get("loop", {}).get("heartbeat_path", "ops/autonomy/heartbeats/latest.json")
         write_json_atomic(heartbeat_path, heartbeat)
-        state["last_heartbeat_at"] = heartbeat["ts"]
-        self.save_state(state)
-        self.log_event("heartbeat", heartbeat)
 
     def choose_next_slice(self, requested: str | None = None, force: bool = False) -> dict[str, Any] | None:
         slices = self.load_slices()
@@ -432,9 +452,9 @@ class AutoKeel:
                     status = "blocked"
                     extra.setdefault("reason", "retry cap exceeded")
 
-            if status == "complete":
+            if status in {"complete", "waiting_for_playbook", "pending"}:
                 slice_["retry_count"] = 0
-                for stale_key in ("failure_path", "reason"):
+                for stale_key in ("failure_path", "stopped_run_id", "reason"):
                     slice_.pop(stale_key, None)
 
             slice_["status"] = status
@@ -573,6 +593,9 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
 
     def po_supervisor_wait_seconds(self) -> int:
         return int(self.policy.get("loop", {}).get("po_supervisor_wait_seconds", 5))
+
+    def po_max_auto_resume_attempts(self) -> int:
+        return int(self.policy.get("loop", {}).get("po_max_auto_resume_attempts", 0))
 
     def checkpoint_allowed_pre_po_changes(self, slice_id: str) -> CommandResult:
         status = self._git_status_paths()
@@ -866,6 +889,1792 @@ Return only a Markdown autoplan suitable to save at:
         )
         return archive
 
+    def lane_decision_payload(self, slice_: dict[str, Any]) -> dict[str, Any]:
+        decision_rel = slice_.get("lane_decision")
+        if not decision_rel:
+            return {}
+        path = self.root / str(decision_rel)
+        payload = read_json(path, {})
+        return payload if isinstance(payload, dict) else {}
+
+    def swr_required(self, slice_: dict[str, Any]) -> bool:
+        if slice_.get("lane") != "swr_preferred":
+            return False
+        lane_mode = self.policy.get("lanes", {}).get("swr_preferred", "compile_with_decision")
+        if lane_mode == "use_swr":
+            return True
+        return self.lane_decision_payload(slice_).get("decision") == "use_swr"
+
+    def swr_evidence_path(self, slice_: dict[str, Any]) -> Path:
+        rel = slice_.get("swr_evidence") or f"docs/evidence/{slice_.get('slug', str(slice_['id']).lower())}-swr-playbook-evidence.json"
+        return self.root / str(rel)
+
+    def swr_evidence_matches_playbook(self, slice_: dict[str, Any], playbook: Path) -> bool:
+        evidence = self.swr_evidence_path(slice_)
+        if not playbook.exists() or not evidence.exists():
+            return False
+        payload = read_json(evidence, {})
+        return (
+            isinstance(payload, dict)
+            and payload.get("status") == "ok"
+            and payload.get("tool") == "keel-swr"
+            and payload.get("playbook") == str(playbook.relative_to(self.root))
+            and payload.get("playbook_sha256") == file_sha256(playbook)
+        )
+
+    def swr_run_is_active(self, payload: dict[str, Any]) -> bool:
+        if str(payload.get("status", "")) in self.SWR_ACTIVE_RUN_STATUSES:
+            return True
+        stages = payload.get("stages")
+        if not isinstance(stages, list):
+            return False
+        return any(
+            isinstance(stage, dict) and str(stage.get("status", "")) in self.SWR_ACTIVE_STAGE_STATUSES
+            for stage in stages
+        )
+
+    def latest_swr_manifest_for_slice(self, slice_: dict[str, Any]) -> Path | None:
+        output_root = self.root / str(self.policy.get("swr", {}).get("output_root", ".local/autokeel/swr/runs"))
+        if not output_root.exists():
+            return None
+        prefix = f"autokeel-{str(slice_['id']).lower()}-"
+        candidates: list[tuple[float, Path]] = []
+        for manifest in output_root.glob("*/run_manifest.json"):
+            payload = read_json(manifest, {})
+            if not isinstance(payload, dict):
+                continue
+            if not str(payload.get("run_name", "")).startswith(prefix):
+                continue
+            if not self.swr_run_is_active(payload):
+                continue
+            candidates.append((manifest.stat().st_mtime, manifest))
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item[0])[1]
+
+    def active_swr_manifest_from_state(self, slice_: dict[str, Any]) -> Path | None:
+        state = self.load_state()
+        active = state.get("active_swr_run")
+        if not isinstance(active, dict) or active.get("slice") != slice_["id"]:
+            return None
+        manifest_rel = active.get("run_manifest")
+        if not isinstance(manifest_rel, str) or not manifest_rel:
+            return None
+        manifest = self.root / manifest_rel
+        payload = read_json(manifest, {})
+        if isinstance(payload, dict) and self.swr_run_is_active(payload):
+            return manifest
+        return None
+
+    def record_active_swr_run(
+        self,
+        slice_: dict[str, Any],
+        manifest_path: Path,
+        reason: str,
+        observed_result: CommandResult | None = None,
+    ) -> None:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            payload = {}
+        current_stage_id = payload.get("current_stage_id")
+        current_stage: dict[str, Any] = {}
+        stages = payload.get("stages")
+        if isinstance(stages, list):
+            for stage in stages:
+                if isinstance(stage, dict) and stage.get("stage_id") == current_stage_id:
+                    current_stage = stage
+                    break
+        state = self.load_state()
+        previous_active = state.get("active_swr_run")
+        manifest_rel = str(manifest_path.relative_to(self.root))
+        run_id = payload.get("run_id")
+        previous_matches = (
+            isinstance(previous_active, dict)
+            and previous_active.get("slice") == slice_["id"]
+            and (
+                previous_active.get("run_manifest") == manifest_rel
+                or (run_id is not None and previous_active.get("run_id") == run_id)
+            )
+        )
+        previous_active = previous_active if previous_matches else {}
+        recorded_at = now_iso()
+        last_remote_check_at = previous_active.get("last_remote_check_at")
+        last_remote_check_exit_code = previous_active.get("last_remote_check_exit_code")
+        last_remote_check_stderr = previous_active.get("last_remote_check_stderr")
+        if observed_result is not None:
+            last_remote_check_at = recorded_at
+            last_remote_check_exit_code = observed_result.exit_code
+            last_remote_check_stderr = observed_result.stderr[-1000:]
+        state["active_swr_run"] = {
+            "slice": slice_["id"],
+            "run_id": run_id,
+            "run_name": payload.get("run_name"),
+            "run_dir": payload.get("run_dir"),
+            "run_manifest": manifest_rel,
+            "workflow_id": payload.get("workflow_id"),
+            "status": payload.get("status"),
+            "current_stage_id": current_stage_id,
+            "current_stage_status": current_stage.get("status"),
+            "response_id": current_stage.get("response_id"),
+            "supervisor_session_id": previous_active.get("supervisor_session_id"),
+            "last_remote_check_at": last_remote_check_at,
+            "last_remote_check_exit_code": last_remote_check_exit_code,
+            "last_remote_check_stderr": last_remote_check_stderr,
+            "recorded_at": recorded_at,
+        }
+        self.save_state(state)
+        self.log_event(
+            "swr_run_active",
+            {
+                "run_id": payload.get("run_id"),
+                "run_manifest": str(manifest_path.relative_to(self.root)),
+                "status": payload.get("status"),
+                "current_stage_id": current_stage_id,
+                "current_stage_status": current_stage.get("status"),
+                "response_id": current_stage.get("response_id"),
+                "reason": reason,
+            },
+            slice_id=slice_["id"],
+        )
+        self.mark_slice_status(
+            slice_["id"],
+            "waiting_for_playbook",
+            swr_run_manifest=str(manifest_path.relative_to(self.root)),
+            swr_run_id=payload.get("run_id"),
+            reason=reason,
+        )
+
+    def swr_wait_timeout_in_progress(self, result: CommandResult) -> bool:
+        text = f"{result.stdout}\n{result.stderr}".lower()
+        return "did not reach a terminal state within" in text and "last_status=" in text
+
+    def archive_swr_evidence_for_replan(self, slice_: dict[str, Any], archive_dir: Path | None = None) -> Path | None:
+        evidence = self.swr_evidence_path(slice_)
+        if not evidence.exists():
+            return None
+        target_dir = archive_dir or self.root / "ops" / "autonomy" / "failures" / "archived_playbooks"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        archive = target_dir / f"{slice_['id']}-{slug_ts()}-{evidence.name}"
+        os.replace(evidence, archive)
+        self.log_event(
+            "swr_evidence_archived_for_replan",
+            {"from": str(evidence.relative_to(self.root)), "to": str(archive.relative_to(self.root))},
+            slice_id=slice_["id"],
+        )
+        return archive
+
+    def archive_swr_playbook_and_evidence(self, slice_: dict[str, Any], reason: str) -> tuple[Path | None, Path | None]:
+        playbook_archive = self.archive_playbook_for_replan(slice_)
+        archive_dir = playbook_archive.parent if playbook_archive is not None else None
+        evidence_archive = self.archive_swr_evidence_for_replan(slice_, archive_dir=archive_dir)
+        self.log_event(
+            "swr_artifacts_archived_for_replan",
+            {
+                "reason": reason,
+                "playbook_archive": str(playbook_archive.relative_to(self.root)) if playbook_archive else None,
+                "evidence_archive": str(evidence_archive.relative_to(self.root)) if evidence_archive else None,
+            },
+            slice_id=slice_["id"],
+        )
+        return playbook_archive, evidence_archive
+
+    def archive_swr_playbook_and_evidence_for_validation_repair(
+        self, slice_: dict[str, Any], reason: str
+    ) -> tuple[Path | None, Path | None]:
+        archive_dir = self.root / "ops" / "autonomy" / "failures" / "archived_playbooks"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        playbook_archive: Path | None = None
+        playbook = self.root / slice_["playbook"]
+        if playbook.exists():
+            playbook_archive = archive_dir / f"{slice_['id']}-{slug_ts()}-{playbook.name}"
+            os.replace(playbook, playbook_archive)
+            self.log_event(
+                "swr_playbook_archived_for_validation_repair",
+                {"from": str(playbook.relative_to(self.root)), "to": str(playbook_archive.relative_to(self.root))},
+                slice_id=slice_["id"],
+            )
+
+        evidence_archive: Path | None = None
+        evidence = self.swr_evidence_path(slice_)
+        if evidence.exists():
+            evidence_archive = archive_dir / f"{slice_['id']}-{slug_ts()}-{evidence.name}"
+            os.replace(evidence, evidence_archive)
+            self.log_event(
+                "swr_evidence_archived_for_validation_repair",
+                {"from": str(evidence.relative_to(self.root)), "to": str(evidence_archive.relative_to(self.root))},
+                slice_id=slice_["id"],
+            )
+
+        self.log_event(
+            "swr_artifacts_archived_for_validation_repair",
+            {
+                "reason": reason,
+                "playbook_archive": str(playbook_archive.relative_to(self.root)) if playbook_archive else None,
+                "evidence_archive": str(evidence_archive.relative_to(self.root)) if evidence_archive else None,
+            },
+            slice_id=slice_["id"],
+        )
+        return playbook_archive, evidence_archive
+
+    def extract_swr_manifest_path(self, result: CommandResult) -> Path | None:
+        for stream in (result.stdout, result.stderr):
+            for line in reversed(stream.splitlines()):
+                value = line.strip()
+                if not value or "run_manifest.json" not in value:
+                    continue
+                candidate = Path(value)
+                if not candidate.is_absolute():
+                    candidate = self.root / candidate
+                if candidate.exists() and candidate.name == "run_manifest.json":
+                    return candidate
+        return None
+
+    def extract_response_output_text(self, response_json: dict[str, Any]) -> str:
+        texts: list[str] = []
+        output = response_json.get("output")
+        if not isinstance(output, list):
+            return ""
+        for item in output:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "output_text" and isinstance(part.get("text"), str):
+                    text = part["text"].strip()
+                    if text:
+                        texts.append(text)
+        return "\n\n".join(texts).strip()
+
+    def validation_errors_from_result(self, validation: CommandResult) -> list[str]:
+        payload = self.parse_json_stdout(validation, {})
+        if isinstance(payload, dict):
+            errors = payload.get("errors")
+            if isinstance(errors, list):
+                return [str(error) for error in errors]
+            if isinstance(errors, str) and errors:
+                return [errors]
+        lines = [line.strip() for line in f"{validation.stdout}\n{validation.stderr}".splitlines()]
+        return [line for line in lines if line][-20:]
+
+    def swr_materialization_source_for_slice(self, slice_: dict[str, Any]) -> dict[str, str]:
+        materialization = self._swr_materializations.get(slice_["id"], {})
+        source = materialization.get("swr_source")
+        return source if isinstance(source, dict) else {}
+
+    def swr_manifest_from_materialization_source(self, source: dict[str, str]) -> Path | None:
+        manifest_rel = source.get("manifest") or source.get("run_manifest")
+        if not isinstance(manifest_rel, str) or not manifest_rel:
+            return None
+        manifest_path = Path(manifest_rel)
+        if not manifest_path.is_absolute():
+            manifest_path = self.root / manifest_path
+        try:
+            manifest_path.resolve().relative_to(self.root)
+        except ValueError:
+            return None
+        if manifest_path.exists() and manifest_path.name == "run_manifest.json":
+            return manifest_path
+        return None
+
+    def swr_stage_summary(self, payload: dict[str, Any], stage_id: str) -> dict[str, Any]:
+        for stage in payload.get("stages", []) if isinstance(payload.get("stages"), list) else []:
+            if isinstance(stage, dict) and stage.get("stage_id") == stage_id:
+                return stage
+        return {}
+
+    def swr_stage_response_text(self, manifest_path: Path, stage_id: str) -> str:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            return ""
+        stage = self.swr_stage_summary(payload, stage_id)
+        if not stage:
+            return ""
+        markdown_rel = (
+            stage.get("response_markdown_path")
+            or stage.get("response_final_markdown_path")
+            or (f"{stage.get('stage_dir')}/response.final.md" if stage.get("stage_dir") else "")
+        )
+        if isinstance(markdown_rel, str) and markdown_rel:
+            markdown_path = self.repo_artifact_path(markdown_rel)
+            if markdown_path is not None and markdown_path.exists():
+                return markdown_path.read_text(encoding="utf-8")
+        json_rel = stage.get("response_json_path") or stage.get("response_final_json_path")
+        if isinstance(json_rel, str) and json_rel:
+            json_path = self.repo_artifact_path(json_rel)
+            if json_path is not None and json_path.exists():
+                response_json = read_json(json_path, {})
+                if isinstance(response_json, dict):
+                    return self.extract_response_output_text(response_json)
+        return ""
+
+    def swr_review_bundle_for_stage(self, slice_: dict[str, Any], manifest_path: Path, source_stage_id: str) -> str | None:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            return None
+        stage = self.swr_stage_summary(payload, source_stage_id)
+        candidates: list[str] = []
+        bundle_rel = stage.get("review_bundle_path") if isinstance(stage, dict) else None
+        if isinstance(bundle_rel, str) and bundle_rel:
+            candidates.append(bundle_rel)
+        run_id = str(payload.get("run_id") or "")
+        if run_id:
+            safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{slice_['id']}-{run_id}-{source_stage_id}").strip("-")
+            candidates.append(f".local/autokeel/swr/review_lane/{safe}/{source_stage_id}.review_bundle.json")
+        for candidate in candidates:
+            path = self.repo_artifact_path(candidate)
+            if path is not None and path.exists():
+                return str(path.relative_to(self.root))
+        return None
+
+    def plan_swr_validation_repair(
+        self,
+        slice_: dict[str, Any],
+        validation: CommandResult,
+        source: dict[str, str],
+        playbook_archive: Path | None,
+        evidence_archive: Path | None,
+    ) -> dict[str, Any]:
+        plan: dict[str, Any] = {
+            "created_at": now_iso(),
+            "status": "planned",
+            "reason": "SWR-generated playbook failed autonomous validation before PO.",
+            "validation_errors": self.validation_errors_from_result(validation),
+            "validation_exit_code": validation.exit_code,
+            "rejected_playbook_archive": str(playbook_archive.relative_to(self.root)) if playbook_archive else None,
+            "rejected_evidence_archive": str(evidence_archive.relative_to(self.root)) if evidence_archive else None,
+            "swr_source": source,
+        }
+
+        manifest_path = self.swr_manifest_from_materialization_source(source)
+        if manifest_path is None:
+            plan.update(
+                {
+                    "repair_stage_id": None,
+                    "repair_action": "blocked_pending_source_manifest",
+                    "rationale": "No source SWR run manifest was recorded for the rejected playbook.",
+                }
+            )
+            return plan
+
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            plan.update(
+                {
+                    "run_manifest": str(manifest_path.relative_to(self.root)),
+                    "repair_stage_id": None,
+                    "repair_action": "blocked_pending_valid_manifest",
+                    "rationale": "The source SWR run manifest is not valid JSON object data.",
+                }
+            )
+            return plan
+
+        required_terms = ["required_verification_commands"]
+        if str(slice_.get("risk", "")).lower() == "high" or self.swr_required(slice_):
+            required_terms.append("autonomous_gate_review")
+
+        stage4_text = self.swr_stage_response_text(manifest_path, "gate_and_contract_review")
+        stage5_text = self.swr_stage_response_text(manifest_path, "final_markdown_playbook")
+        stage4_missing = [term for term in required_terms if term not in stage4_text]
+        stage5_missing = [term for term in required_terms if term not in stage5_text]
+
+        if stage4_text and stage4_missing:
+            repair_stage_id = "gate_and_contract_review"
+            source_review_stage_id = "execution_row_draft"
+            rationale = (
+                "Stage 4 hardened the handoff without the validator-required contract terms; "
+                "rerun Stage 4, then review it before any Stage 5 rerun."
+            )
+        elif stage5_text and stage5_missing:
+            repair_stage_id = "final_markdown_playbook"
+            source_review_stage_id = "gate_and_contract_review"
+            rationale = (
+                "Stage 4 contains the required contract terms but Stage 5 dropped them; "
+                "rerun only Stage 5 with the approved Stage 4 review bundle."
+            )
+        elif stage5_text:
+            repair_stage_id = "final_markdown_playbook"
+            source_review_stage_id = "gate_and_contract_review"
+            rationale = (
+                "The source run reached Stage 5 and validation failed on the terminal artifact; "
+                "rerun Stage 5 only unless the Stage 4 handoff is later shown invalid."
+            )
+        else:
+            repair_stage_id = None
+            source_review_stage_id = None
+            rationale = "The failed playbook cannot be traced to a completed Stage 5 artifact."
+
+        source_review_bundle = (
+            self.swr_review_bundle_for_stage(slice_, manifest_path, source_review_stage_id)
+            if source_review_stage_id is not None
+            else None
+        )
+        if repair_stage_id is not None and source_review_bundle is None:
+            repair_action = "blocked_pending_review_bundle"
+        elif repair_stage_id is not None:
+            repair_action = "rerun_single_stage"
+        else:
+            repair_action = "blocked_pending_diagnosis"
+
+        plan.update(
+            {
+                "repair_action": repair_action,
+                "repair_stage_id": repair_stage_id,
+                "source_review_stage_id": source_review_stage_id,
+                "source_review_bundle": source_review_bundle,
+                "run_id": payload.get("run_id"),
+                "run_dir": payload.get("run_dir") or str(manifest_path.parent.relative_to(self.root)),
+                "run_manifest": str(manifest_path.relative_to(self.root)),
+                "stage4_missing_terms": stage4_missing,
+                "stage5_missing_terms": stage5_missing,
+                "rationale": rationale,
+            }
+        )
+        return plan
+
+    def write_swr_validation_failure_evidence(
+        self,
+        slice_: dict[str, Any],
+        validation: CommandResult,
+        repair_plan: dict[str, Any],
+    ) -> Path:
+        evidence = self.root / "docs" / "evidence" / f"{slice_['slug']}-swr-validation-repair-{slug_ts()}.md"
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        validation_command = " ".join(shlex.quote(part) for part in validation.argv)
+        text = f"""# {slice_['id']} SWR Validation Repair Plan
+
+Status: blocked_compile_inputs
+
+## Root Cause
+
+The SWR-generated playbook failed `scripts/validate_playbook_autonomous.py`
+before plan-orchestrator execution. AutoKeel rejected the playbook and planned
+a stage-specific SWR repair instead of marking the slice `replan_required`.
+
+## Validation Command
+
+```bash
+{validation_command}
+```
+
+Exit code: {validation.exit_code}
+
+## Validation Errors
+
+```json
+{json.dumps(repair_plan.get("validation_errors", []), indent=2, sort_keys=True)}
+```
+
+## Repair Plan
+
+```json
+{json.dumps(repair_plan, indent=2, sort_keys=True)}
+```
+
+## Guardrail
+
+AutoKeel must not start a fresh full SWR workflow for this failure. A future
+operator-authorized continuation must use the recorded `run_dir` and
+`repair_stage_id` with `keel-swr run --run-dir ... --stage ...`.
+"""
+        evidence.write_text(text, encoding="utf-8")
+        self.log_event(
+            "swr_validation_repair_evidence_recorded",
+            {"evidence": str(evidence.relative_to(self.root)), "repair_stage_id": repair_plan.get("repair_stage_id")},
+            slice_id=slice_["id"],
+        )
+        return evidence
+
+    def clear_active_swr_run(self, slice_id: str, reason: str) -> None:
+        state = self.load_state()
+        active = state.get("active_swr_run")
+        if not isinstance(active, dict) or active.get("slice") != slice_id:
+            return
+        state["active_swr_run"] = None
+        self.save_state(state)
+        self.log_event("active_swr_run_cleared", {"reason": reason}, slice_id=slice_id)
+
+    def clear_swr_validation_repair(self, slice_id: str) -> None:
+        slices = self.load_slices()
+        changed = False
+        for item in slices:
+            if item.get("id") == slice_id and "swr_validation_repair" in item:
+                item.pop("swr_validation_repair", None)
+                changed = True
+                break
+        if changed:
+            self.save_slices(slices)
+            self.log_event("swr_validation_repair_cleared", {}, slice_id=slice_id)
+
+    def handle_swr_playbook_validation_failure(self, slice_: dict[str, Any], validation: CommandResult) -> int:
+        source = self.swr_materialization_source_for_slice(slice_)
+        playbook_archive, evidence_archive = self.archive_swr_playbook_and_evidence_for_validation_repair(
+            slice_,
+            "SWR playbook validation failed; preserving the source run for stage-specific repair.",
+        )
+        repair_plan = self.plan_swr_validation_repair(slice_, validation, source, playbook_archive, evidence_archive)
+        evidence = self.write_swr_validation_failure_evidence(slice_, validation, repair_plan)
+        failure = self.record_failure(
+            slice_["id"],
+            "compile_failure",
+            "high",
+            "SWR-generated playbook failed autonomous validation before PO.",
+            "Rejected the playbook, preserved the source SWR run manifest, and blocked with a minimal stage-repair plan instead of starting a fresh full SWR run.",
+            evidence,
+        )
+        self.clear_active_swr_run(slice_["id"], "SWR validation failed and requires stage-specific repair")
+        self.mark_slice_status(
+            slice_["id"],
+            "blocked_compile_inputs",
+            failure_path=str(failure.relative_to(self.root)),
+            reason="SWR playbook validation failed; minimal stage repair required",
+            swr_validation_repair=repair_plan,
+        )
+        self.log_event("swr_validation_repair_planned", repair_plan, slice_id=slice_["id"])
+        return 3
+
+    def materialize_swr_playbook_from_manifest(self, slice_: dict[str, Any], manifest_path: Path) -> dict[str, str] | None:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict) or payload.get("status") != "completed":
+            return None
+        stages = payload.get("stages")
+        if not isinstance(stages, list):
+            return None
+        final_stage = next(
+            (
+                stage
+                for stage in stages
+                if isinstance(stage, dict)
+                and stage.get("stage_id") == "final_markdown_playbook"
+                and stage.get("status") == "completed"
+            ),
+            None,
+        )
+        if not isinstance(final_stage, dict):
+            return None
+
+        response_rel = final_stage.get("response_json_path")
+        if not isinstance(response_rel, str) or not response_rel:
+            return None
+        response_path = Path(response_rel)
+        if not response_path.is_absolute():
+            response_path = self.root / response_path
+        if not response_path.exists():
+            return None
+
+        response_json = read_json(response_path, {})
+        if not isinstance(response_json, dict):
+            return None
+        playbook_text = self.extract_response_output_text(response_json)
+        if not playbook_text:
+            return None
+
+        playbook = self.root / slice_["playbook"]
+        playbook.parent.mkdir(parents=True, exist_ok=True)
+        playbook.write_text(playbook_text.rstrip() + "\n", encoding="utf-8")
+        self.log_event(
+            "swr_playbook_materialized",
+            {
+                "manifest": str(manifest_path.relative_to(self.root)),
+                "response_json": str(response_path.relative_to(self.root)),
+                "playbook": str(playbook.relative_to(self.root)),
+                "playbook_sha256": file_sha256(playbook),
+            },
+            slice_id=slice_["id"],
+        )
+        source = {
+            "manifest": str(manifest_path.relative_to(self.root)),
+            "run_id": str(payload.get("run_id") or ""),
+            "run_dir": str(payload.get("run_dir") or manifest_path.parent.relative_to(self.root)),
+            "stage_id": "final_markdown_playbook",
+            "response_json": str(response_path.relative_to(self.root)),
+        }
+        response_markdown = final_stage.get("response_markdown_path") or final_stage.get("response_final_markdown_path")
+        if isinstance(response_markdown, str) and response_markdown:
+            source["response_markdown"] = response_markdown
+        return source
+
+    def record_swr_materialization(self, slice_: dict[str, Any], command: list[str], source: dict[str, str] | None = None) -> None:
+        self._swr_materializations[slice_["id"]] = {
+            "command": list(command),
+            "swr_source": source or {},
+        }
+
+    def write_swr_playbook_evidence(self, slice_: dict[str, Any], validation: CommandResult) -> None:
+        playbook = self.root / slice_["playbook"]
+        if not playbook.exists():
+            return
+        materialization = self._swr_materializations.get(slice_["id"], {})
+        evidence = self.swr_evidence_path(slice_)
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        validation_command = validation.argv or [
+            "python",
+            "-m",
+            "scripts.validate_playbook_autonomous",
+            str(playbook),
+            "--risk",
+            str(slice_.get("risk", "")),
+            "--json",
+        ]
+        write_json_atomic(
+            evidence,
+            {
+                "status": "ok",
+                "tool": "keel-swr",
+                "slice": slice_["id"],
+                "command": materialization.get("command", []),
+                "playbook": str(playbook.relative_to(self.root)),
+                "playbook_sha256": file_sha256(playbook),
+                "swr_source": materialization.get("swr_source", {}),
+                "validation": {
+                    "command": " ".join(shlex.quote(part) for part in validation_command),
+                    "exit_code": validation.exit_code,
+                    "stdout_tail": validation.stdout[-2000:],
+                    "stderr_tail": validation.stderr[-2000:],
+                },
+                "recorded_at": now_iso(),
+            },
+        )
+        self.log_event(
+            "swr_playbook_evidence_recorded",
+            {
+                "evidence": str(evidence.relative_to(self.root)),
+                "playbook": str(playbook.relative_to(self.root)),
+                "playbook_sha256": file_sha256(playbook),
+            },
+            slice_id=slice_["id"],
+        )
+
+    def swr_provider_auth_failure(self, result: CommandResult) -> bool:
+        text = f"{result.stdout}\n{result.stderr}".lower()
+        return (
+            "openai_api_key is not set" in text
+            or ("openai_api_key" in text and "not found in .env" in text)
+            or ("api key" in text and any(marker in text for marker in ("not set", "missing", "not found")))
+        )
+
+    def write_swr_provider_auth_evidence(self, slice_: dict[str, Any], command: list[str], result: CommandResult) -> Path:
+        evidence = self.root / "docs" / "evidence" / f"{str(slice_['slug'])}-swr-provider-auth-failure-{slug_ts()}.json"
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(
+            evidence,
+            {
+                "status": "blocked_external",
+                "tool": "keel-swr",
+                "slice": slice_["id"],
+                "failure_class": "provider_auth_failure",
+                "root_cause": "SWR playbook generation requires real OpenAI API credentials, but OPENAI_API_KEY was not available to the AutoKeel process and no repo-local .env was present.",
+                "command": command,
+                "exit_code": result.exit_code,
+                "stdout_tail": result.stdout[-2000:],
+                "stderr_tail": result.stderr[-2000:],
+                "environment_probe": {
+                    "OPENAI_API_KEY_set_in_process_env": bool(os.environ.get("OPENAI_API_KEY")),
+                    "env_file_exists": (self.root / ".env").exists(),
+                },
+                "next_action": "Provide real local OpenAI API credentials via the process environment or an ignored repo-local .env, then rerun AutoKeel for S02.",
+                "recorded_at": now_iso(),
+            },
+        )
+        self.log_event(
+            "swr_provider_auth_evidence_recorded",
+            {"evidence": str(evidence.relative_to(self.root)), "exit_code": result.exit_code},
+            slice_id=slice_["id"],
+        )
+        return evidence
+
+    def require_swr_evidence_before_po(self, slice_: dict[str, Any], playbook: Path) -> CommandResult:
+        if not self.swr_required(slice_) or self.swr_evidence_matches_playbook(slice_, playbook):
+            return CommandResult([], 0, "SWR playbook evidence verified", "")
+        failure = self.record_failure(
+            slice_["id"],
+            "swr_evidence_missing",
+            "high",
+            "SWR-required slice attempted PO start without matching SWR playbook evidence.",
+            "Blocked PO start before execution.",
+            playbook if playbook.exists() else None,
+        )
+        self.mark_slice_status(
+            slice_["id"],
+            "blocked_compile_inputs",
+            failure_path=str(failure.relative_to(self.root)),
+            reason="missing matching SWR playbook evidence",
+        )
+        return CommandResult([], 29, "", "missing matching SWR playbook evidence")
+
+    def materialize_swr_task_pack(self) -> CommandResult:
+        swr_policy = self.policy.get("swr", {})
+        keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
+        source_rel = str(swr_policy.get("task_pack_source") or "tools/staged-workflow-runner/automation/task_packs/gstack_design_to_po_playbook")
+        workdir_rel = str(swr_policy.get("task_pack_workdir") or "automation/task_packs/gstack_design_to_po_playbook")
+        source = keel_root / source_rel
+        target = self.root / workdir_rel
+
+        if not source.exists() or not source.is_dir():
+            return CommandResult([], 27, "", f"SWR task pack missing: {source}")
+        if self.dry_run:
+            return CommandResult(["test", "-d", str(source)], 0, "dry run SWR task-pack materialization planned", "")
+
+        if target.exists():
+            shutil.rmtree(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(
+            source,
+            target,
+            ignore=shutil.ignore_patterns(".local", ".pytest_cache", "__pycache__", "*.pyc"),
+        )
+        self.write_swr_autonomous_contract_overlay(target)
+        return CommandResult(["cp", "-R", str(source), str(target)], 0, str(target.relative_to(self.root)), "")
+
+    def write_swr_autonomous_contract_overlay(self, task_pack_root: Path) -> None:
+        marker = "<!-- autokeel-autonomous-validation-overlay-v1 -->"
+        overlay = f"""
+
+{marker}
+
+## AutoKeel Autonomous Validation Overlay
+
+This repository runs the SWR output through
+`scripts/validate_playbook_autonomous.py` before plan-orchestrator execution.
+For AutoKeel autonomous runs, this overlay supersedes any older table-column
+summary above when the stricter validator requires additional columns.
+
+The execution table must include these columns:
+
+| step_id | phase | action | why_now | owner_type | prerequisites | repo_surfaces | deliverable | exit_criteria | allowed_write_roots | requires_red_green | required_verification_commands |
+
+Additional validator requirements:
+
+- Include the literal term `autonomous_gate_review` in the playbook when the
+  slice is high risk or uses autonomous gate substitution.
+- `prerequisites` must be `none`, a comma-separated list of exact step ids
+  such as `03,05`, or a numeric range such as `01-04`. Do not use natural
+  language forms such as `03 and 05`; plan-orchestrator normalization rejects
+  those strings before execution.
+- `allowed_write_roots` must use semicolon-separated repo-relative roots such
+  as `src/api/app.py; tests/test_api_security.py`. Do not use comma-separated
+  roots; plan-orchestrator treats comma text as one root.
+- `repo_surfaces` are inputs, not outputs. They must name tracked repo paths
+  that already exist before the row runs, or exact deliverable paths from
+  earlier rows. Do not list same-row or future deliverables as repo surfaces;
+  plan-orchestrator refuses to materialize missing inputs into its worktree.
+- Every executable code, script, or test deliverable must have a non-empty
+  `required_verification_commands` cell.
+- Rows with `requires_red_green=true` must have a non-empty
+  `required_verification_commands` cell.
+- Docs-only rows with `requires_red_green=false` still need concrete reviewable
+  validation commands or content checks in `required_verification_commands`.
+- Do not emit active manual gates, human approval claims, or
+  `keel-run mark-manual-gate`.
+""".rstrip()
+
+        for rel in (
+            "corpus/markdown_playbook_v1_contract.md",
+            "prompts/stage3_execution_row_draft.md",
+            "prompts/stage4_gate_and_contract_review.md",
+            "prompts/stage5_final_markdown_playbook.md",
+            "shared_instructions.md",
+        ):
+            path = task_pack_root / rel
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            if marker in text:
+                continue
+            path.write_text(text.rstrip() + "\n" + overlay + "\n", encoding="utf-8")
+
+    def materialize_swr_supervisor_task_pack(self) -> CommandResult:
+        swr_policy = self.policy.get("swr", {})
+        keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
+        source_rel = str(
+            swr_policy.get("supervisor_task_pack_source")
+            or "tools/staged-workflow-runner/automation/task_packs/responses_runner_v2_supervisor_internal"
+        )
+        workdir_rel = str(
+            swr_policy.get("supervisor_task_pack_workdir")
+            or "automation/task_packs/responses_runner_v2_supervisor_internal"
+        )
+        source = keel_root / source_rel
+        target = self.root / workdir_rel
+        if not source.exists() or not source.is_dir():
+            return CommandResult([], 33, "", f"SWR supervisor task pack missing: {source}")
+        if self.dry_run:
+            return CommandResult(["test", "-d", str(source)], 0, "dry run SWR supervisor task-pack materialization planned", "")
+        if target.exists():
+            shutil.rmtree(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(
+            source,
+            target,
+            ignore=shutil.ignore_patterns(".local", ".pytest_cache", "__pycache__", "*.pyc"),
+        )
+        return CommandResult(["cp", "-R", str(source), str(target)], 0, str(target.relative_to(self.root)), "")
+
+    def build_swr_command(self, slice_: dict[str, Any]) -> list[str]:
+        swr_policy = self.policy.get("swr", {})
+        keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
+        keel_swr = keel_root / "bin" / "keel-swr"
+        workflow_rel = str(swr_policy.get("workflow_file") or "automation/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json")
+        output_root_rel = str(swr_policy.get("output_root") or ".local/autokeel/swr/runs")
+        max_wait_seconds = str(swr_policy.get("max_wait_seconds", 5))
+
+        cmd = [
+            str(keel_swr),
+            "run",
+            "--root",
+            str(self.root),
+            "--workflow-file",
+            workflow_rel,
+            "--run-name",
+            f"autokeel-{str(slice_['id']).lower()}-{slug_ts()}",
+            "--output-root",
+            output_root_rel,
+            "--wait",
+            "--max-wait-seconds",
+            max_wait_seconds,
+        ]
+        if bool(swr_policy.get("skip_token_count", False)):
+            cmd.append("--skip-token-count")
+        for candidate in (self.design_doc_path(slice_), self.root / str(slice_.get("autoplan", "")), self.root / str(slice_.get("brief", ""))):
+            if candidate.exists():
+                cmd.extend(["--primary-job-input", str(candidate.relative_to(self.root))])
+        return cmd
+
+    def keel_swr_path(self) -> Path:
+        return Path(self.policy.get("keel_root", "/Users/aeziz-local/keel")) / "bin" / "keel-swr"
+
+    def swr_workflow_file(self) -> str:
+        return str(
+            self.policy.get("swr", {}).get("workflow_file")
+            or "automation/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json"
+        )
+
+    def swr_wait_seconds(self) -> str:
+        return str(self.policy.get("swr", {}).get("max_wait_seconds", 5))
+
+    def build_swr_resume_command(self, manifest_path: Path) -> list[str]:
+        payload = read_json(manifest_path, {})
+        stage_id = str(payload.get("current_stage_id") or "")
+        run_dir = str(payload.get("run_dir") or manifest_path.parent.relative_to(self.root))
+        return [
+            str(self.keel_swr_path()),
+            "resume",
+            "--root",
+            str(self.root),
+            "--run-dir",
+            run_dir,
+            "--stage",
+            stage_id,
+            "--wait",
+            "--max-wait-seconds",
+            self.swr_wait_seconds(),
+        ]
+
+    def build_swr_continue_command(self, manifest_path: Path, review_bundle: str) -> list[str]:
+        payload = read_json(manifest_path, {})
+        run_dir = str(payload.get("run_dir") or manifest_path.parent.relative_to(self.root))
+        cmd = [
+            str(self.keel_swr_path()),
+            "run",
+            "--root",
+            str(self.root),
+            "--workflow-file",
+            self.swr_workflow_file(),
+            "--run-dir",
+            run_dir,
+            "--review-bundle",
+            review_bundle,
+            "--wait",
+            "--max-wait-seconds",
+            self.swr_wait_seconds(),
+        ]
+        overrides = payload.get("operator_overrides")
+        if isinstance(overrides, dict):
+            for candidate in overrides.get("primary_job_inputs", []) if isinstance(overrides.get("primary_job_inputs"), list) else []:
+                if isinstance(candidate, str) and candidate:
+                    cmd.extend(["--primary-job-input", candidate])
+            for candidate in overrides.get("reference_context", []) if isinstance(overrides.get("reference_context"), list) else []:
+                if isinstance(candidate, str) and candidate:
+                    cmd.extend(["--reference-context", candidate])
+        if bool(self.policy.get("swr", {}).get("skip_token_count", False)):
+            cmd.append("--skip-token-count")
+        return cmd
+
+    def build_swr_stage_rerun_command(self, repair_plan: dict[str, Any]) -> list[str]:
+        run_dir = str(repair_plan.get("run_dir") or "")
+        stage_id = str(repair_plan.get("repair_stage_id") or "")
+        if not run_dir or not stage_id:
+            raise AutoKeelError("SWR validation repair plan is missing run_dir or repair_stage_id")
+        cmd = [
+            str(self.keel_swr_path()),
+            "run",
+            "--root",
+            str(self.root),
+            "--workflow-file",
+            self.swr_workflow_file(),
+            "--run-dir",
+            run_dir,
+            "--stage",
+            stage_id,
+        ]
+        review_bundle = repair_plan.get("source_review_bundle")
+        if isinstance(review_bundle, str) and review_bundle:
+            cmd.extend(["--review-bundle", review_bundle])
+        cmd.extend(["--wait", "--max-wait-seconds", self.swr_wait_seconds()])
+
+        manifest_rel = repair_plan.get("run_manifest")
+        manifest_path = self.root / str(manifest_rel) if isinstance(manifest_rel, str) and manifest_rel else None
+        payload = read_json(manifest_path, {}) if manifest_path is not None else {}
+        overrides = payload.get("operator_overrides") if isinstance(payload, dict) else {}
+        if isinstance(overrides, dict):
+            for candidate in overrides.get("primary_job_inputs", []) if isinstance(overrides.get("primary_job_inputs"), list) else []:
+                if isinstance(candidate, str) and candidate:
+                    cmd.extend(["--primary-job-input", candidate])
+            for candidate in overrides.get("reference_context", []) if isinstance(overrides.get("reference_context"), list) else []:
+                if isinstance(candidate, str) and candidate:
+                    cmd.extend(["--reference-context", candidate])
+        if bool(self.policy.get("swr", {}).get("skip_token_count", False)):
+            cmd.append("--skip-token-count")
+        return cmd
+
+    def reset_swr_manifest_for_stage_rerun(self, manifest_path: Path, stage_id: str) -> None:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            raise AutoKeelError(f"invalid SWR manifest: {manifest_path}")
+        stages = payload.get("stages")
+        if not isinstance(stages, list):
+            raise AutoKeelError(f"SWR manifest has no stages: {manifest_path}")
+        stage_order = payload.get("stage_order")
+        if isinstance(stage_order, list) and stage_id in stage_order:
+            target_index = stage_order.index(stage_id)
+        else:
+            stage_numbers = {
+                str(stage.get("stage_id")): int(stage.get("stage_number") or 0)
+                for stage in stages
+                if isinstance(stage, dict) and stage.get("stage_id") is not None
+            }
+            if stage_id not in stage_numbers:
+                raise AutoKeelError(f"SWR stage not found in manifest: {stage_id}")
+            target_index = stage_numbers[stage_id] - 1
+
+        stale_keys = {
+            "approved_from_status",
+            "checkpoint_path",
+            "input_manifest_json_path",
+            "input_manifest_markdown_path",
+            "response_id",
+            "response_status",
+            "response_latest_json_path",
+            "response_markdown_path",
+            "response_markdown_sha256",
+            "response_json_path",
+            "response_json_sha256",
+            "review_approved",
+            "review_bundle_path",
+            "sidecar_response_json_path",
+            "sidecar_response_json_sha256",
+            "sidecar_response_markdown_path",
+            "sidecar_response_markdown_sha256",
+            "structured_output_path",
+            "structured_output_sha256",
+            "token_preflight_path",
+            "token_preflight_error_path",
+        }
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            current_id = str(stage.get("stage_id") or "")
+            if isinstance(stage_order, list) and current_id in stage_order:
+                current_index = stage_order.index(current_id)
+            else:
+                current_index = int(stage.get("stage_number") or 0) - 1
+            if current_index < target_index:
+                continue
+            for key in stale_keys:
+                stage.pop(key, None)
+            stage["status"] = "prepared"
+        payload["status"] = "created"
+        payload["current_stage_id"] = stage_id
+        write_json_atomic(manifest_path, payload)
+        self.log_event(
+            "swr_stage_rerun_manifest_reset",
+            {"run_manifest": str(manifest_path.resolve().relative_to(self.root)), "stage_id": stage_id},
+        )
+
+    def swr_waiting_for_review(self, payload: dict[str, Any]) -> bool:
+        if str(payload.get("status", "")) != "waiting_for_review":
+            return False
+        current_stage_id = payload.get("current_stage_id")
+        for stage in payload.get("stages", []) if isinstance(payload.get("stages"), list) else []:
+            if isinstance(stage, dict) and stage.get("stage_id") == current_stage_id:
+                return stage.get("gate") == "review_required" and stage.get("status") == "waiting_for_review"
+        return False
+
+    def swr_final_stage_completed(self, payload: dict[str, Any]) -> bool:
+        if str(payload.get("status", "")) != "completed":
+            return False
+        current_stage_id = payload.get("current_stage_id")
+        stage_order = payload.get("stage_order")
+        return isinstance(stage_order, list) and bool(stage_order) and current_stage_id == stage_order[-1]
+
+    def swr_remote_check_due(self, slice_: dict[str, Any]) -> bool:
+        state = self.load_state()
+        active = state.get("active_swr_run")
+        if not isinstance(active, dict) or active.get("slice") != slice_["id"]:
+            return True
+        checked_at = active.get("last_remote_check_at")
+        if not checked_at:
+            return True
+        try:
+            checked = datetime.fromisoformat(str(checked_at))
+        except ValueError:
+            return True
+        interval = int(self.policy.get("swr", {}).get("monitor_min_interval_seconds", 300))
+        return (datetime.now().astimezone() - checked.astimezone()).total_seconds() >= interval
+
+    def update_active_swr_remote_check(self, slice_id: str, result: CommandResult) -> None:
+        state = self.load_state()
+        active = state.get("active_swr_run")
+        if not isinstance(active, dict) or active.get("slice") != slice_id:
+            return
+        active["last_remote_check_at"] = now_iso()
+        active["last_remote_check_exit_code"] = result.exit_code
+        active["last_remote_check_stderr"] = result.stderr[-1000:]
+        state["active_swr_run"] = active
+        self.save_state(state)
+
+    def parse_json_stdout(self, result: CommandResult, default: Any = None) -> Any:
+        text = result.stdout.strip()
+        if not text:
+            return default
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return default
+
+    def swr_review_dir(self, slice_: dict[str, Any], payload: dict[str, Any]) -> Path:
+        run_id = str(payload.get("run_id") or "unknown_run")
+        stage_id = str(payload.get("current_stage_id") or "unknown_stage")
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{slice_['id']}-{run_id}-{stage_id}").strip("-")
+        return self.root / ".local" / "autokeel" / "swr" / "review_lane" / safe
+
+    def repo_artifact_path(self, rel_or_abs: str) -> Path | None:
+        if not rel_or_abs:
+            return None
+        path = Path(rel_or_abs)
+        if not path.is_absolute():
+            path = self.root / path
+        try:
+            path.resolve().relative_to(self.root)
+        except ValueError:
+            return None
+        return path
+
+    def current_swr_stage(self, payload: dict[str, Any]) -> dict[str, Any]:
+        current_stage_id = payload.get("current_stage_id")
+        for stage in payload.get("stages", []) if isinstance(payload.get("stages"), list) else []:
+            if isinstance(stage, dict) and stage.get("stage_id") == current_stage_id:
+                return stage
+        return {}
+
+    def swr_review_bundle_is_valid(self, bundle_path: Path, payload: dict[str, Any]) -> bool:
+        bundle = read_json(bundle_path, {})
+        if not isinstance(bundle, dict):
+            return False
+        stage_id = str(payload.get("current_stage_id") or "")
+        run_id = str(payload.get("run_id") or "")
+        if bundle.get("review_status") != "approved":
+            return False
+        if str(bundle.get("source_stage_id") or "") != stage_id:
+            return False
+        if str(bundle.get("source_run_id") or "") != run_id:
+            return False
+
+        artifacts = self.swr_stage_artifacts(payload)
+        checks = [
+            ("primary_artifact_markdown", artifacts.get("response_markdown"), "primary_artifact_markdown_sha256"),
+            ("response_artifact_json", artifacts.get("response_json"), "response_artifact_json_sha256"),
+            ("reviewer_notes", bundle.get("reviewer_notes"), "reviewer_notes_sha256"),
+        ]
+        hashes = bundle.get("artifact_hashes")
+        hashes = hashes if isinstance(hashes, dict) else {}
+        for bundle_key, expected_rel, hash_key in checks:
+            rel = str(bundle.get(bundle_key) or "")
+            if not rel:
+                return False
+            if expected_rel is not None and str(expected_rel) and bundle_key != "reviewer_notes" and rel != str(expected_rel):
+                return False
+            artifact_path = self.repo_artifact_path(rel)
+            if artifact_path is None or not artifact_path.exists():
+                return False
+            expected_hash = hashes.get(hash_key)
+            if isinstance(expected_hash, str) and expected_hash and expected_hash != file_sha256(artifact_path):
+                return False
+        return True
+
+    def existing_swr_review_bundle(self, slice_: dict[str, Any], payload: dict[str, Any]) -> Path | None:
+        stage = self.current_swr_stage(payload)
+        stage_id = str(payload.get("current_stage_id") or "")
+        candidates: list[Path] = []
+        stage_bundle = stage.get("review_bundle_path") if isinstance(stage, dict) else None
+        if isinstance(stage_bundle, str) and stage_bundle:
+            candidate = self.repo_artifact_path(stage_bundle)
+            if candidate is not None:
+                candidates.append(candidate)
+        if stage_id:
+            candidates.append(self.swr_review_dir(slice_, payload) / f"{stage_id}.review_bundle.json")
+
+        seen: set[Path] = set()
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if candidate.exists() and self.swr_review_bundle_is_valid(candidate, payload):
+                return candidate
+        return None
+
+    def swr_supervisor_session_id(self, slice_: dict[str, Any], payload: dict[str, Any]) -> str:
+        raw = f"autokeel-{slice_['id']}-{payload.get('run_id') or 'run'}"
+        return re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip("-").lower()
+
+    def ensure_swr_supervisor_session(self, slice_: dict[str, Any], manifest_path: Path) -> tuple[str, CommandResult]:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            payload = {}
+        task_pack = self.materialize_swr_supervisor_task_pack()
+        if not task_pack.ok:
+            self.log_event(
+                "swr_supervisor_task_pack_missing",
+                {"exit_code": task_pack.exit_code, "stderr": task_pack.stderr[-2000:]},
+                slice_id=slice_["id"],
+            )
+            return "", task_pack
+        session_id = self.swr_supervisor_session_id(slice_, payload)
+        session_manifest = self.root / ".local" / "automation" / "responses_runner_v2" / "supervisor_sessions" / session_id / "supervisor_session.json"
+        if session_manifest.exists():
+            return session_id, CommandResult(["test", "-f", str(session_manifest)], 0, str(session_manifest.relative_to(self.root)), "")
+        cmd = [
+            str(self.keel_swr_path()),
+            "supervisor",
+            "init-session",
+            "--root",
+            str(self.root),
+            "--clarified-task-brief",
+            str((self.root / str(slice_["brief"])).relative_to(self.root)),
+            "--summary",
+            f"AutoKeel SWR review lane for {slice_['id']} {slice_.get('name', '')}".strip(),
+            "--session-id",
+            session_id,
+        ]
+        result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        if result.ok:
+            state = self.load_state()
+            active = state.get("active_swr_run")
+            if isinstance(active, dict) and active.get("slice") == slice_["id"]:
+                active["supervisor_session_id"] = session_id
+                state["active_swr_run"] = active
+                self.save_state(state)
+        self.log_event(
+            "swr_supervisor_session_ready" if result.ok else "swr_supervisor_session_failed",
+            {"session_id": session_id, "exit_code": result.exit_code, "stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:]},
+            slice_id=slice_["id"],
+        )
+        return session_id, result
+
+    def swr_stage_artifacts(self, payload: dict[str, Any]) -> dict[str, str]:
+        stage_summary = self.current_swr_stage(payload)
+        stage_dir = str(stage_summary.get("stage_dir") or "")
+        return {
+            "run_manifest": str(payload.get("run_dir", "")).rstrip("/") + "/run_manifest.json",
+            "stage_checkpoint": str(stage_summary.get("checkpoint_path") or (f"{stage_dir}/stage_checkpoint.json" if stage_dir else "")),
+            "input_manifest_json": str(stage_summary.get("input_manifest_json_path") or (f"{stage_dir}/input_manifest.json" if stage_dir else "")),
+            "input_manifest_markdown": str(stage_summary.get("input_manifest_markdown_path") or (f"{stage_dir}/input_manifest.md" if stage_dir else "")),
+            "request_payload": str(stage_summary.get("request_payload_path") or (f"{stage_dir}/request_payload.json" if stage_dir else "")),
+            "response_markdown": str(stage_summary.get("response_markdown_path") or stage_summary.get("response_final_markdown_path") or (f"{stage_dir}/response.final.md" if stage_dir else "")),
+            "response_json": str(stage_summary.get("response_json_path") or stage_summary.get("response_final_json_path") or (f"{stage_dir}/response.final.json" if stage_dir else "")),
+        }
+
+    def write_swr_stage_review_job(self, slice_: dict[str, Any], manifest_path: Path, review_dir: Path, outcome_path: Path) -> Path:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            payload = {}
+        review_dir.mkdir(parents=True, exist_ok=True)
+        artifacts = self.swr_stage_artifacts(payload)
+        job = {
+            "job_id": f"autokeel_{slice_['id']}_{payload.get('run_id')}_{payload.get('current_stage_id')}_stage_review",
+            "objective": "Review this completed SWR stage output before any next-stage launch.",
+            "review_kind": "stage_output",
+            "slice": slice_["id"],
+            "workflow_id": payload.get("workflow_id"),
+            "run_id": payload.get("run_id"),
+            "stage_id": payload.get("current_stage_id"),
+            "run_manifest": str(manifest_path.relative_to(self.root)),
+            "stage_outcome": str(outcome_path.relative_to(self.root)),
+            "reviewed_artifacts": artifacts,
+            "allowed_write_paths": [
+                str(review_dir.relative_to(self.root)),
+                str((review_dir / "reviewer_notes.md").relative_to(self.root)),
+                str((review_dir / "approved_handoff.md").relative_to(self.root)),
+            ],
+            "required_checks": [
+                "Do not advance output-limit incomplete artifacts.",
+                "Do not advance failed-no-artifact attempts.",
+                "Verify Stage 1 through Stage 4 outputs receive approved review bundles before the next stage.",
+                "Reject unsupported claims and any bundle path/hash mismatch.",
+            ],
+            "next_stage_rule": "If approved, AutoKeel may create an approved review bundle and continue the same SWR run with --review-bundle.",
+        }
+        path = review_dir / "stage_review_job.json"
+        write_json_atomic(path, job)
+        return path
+
+    def write_swr_reviewer_notes(self, review_dir: Path, payload: dict[str, Any], files: dict[str, str]) -> Path:
+        notes = review_dir / "reviewer_notes.md"
+        lines = [
+            "# SWR Stage Review Notes",
+            "",
+            f"- workflow_id: {payload.get('workflow_id')}",
+            f"- run_id: {payload.get('run_id')}",
+            f"- stage_id: {payload.get('current_stage_id')}",
+            "",
+            "## Review Artifacts",
+            "",
+        ]
+        for label, rel in files.items():
+            lines.append(f"- {label}: `{rel}`")
+        lines.extend(
+            [
+                "",
+                "## Decision",
+                "",
+                "AutoKeel created this note after the SWR supervisor operator, reviewer, consolidation, and acceptance artifacts were produced. It is used only as the hash-stable reviewer-notes input to the approved review bundle.",
+            ]
+        )
+        notes.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        return notes
+
+    def handle_swr_continue_result(self, slice_: dict[str, Any], manifest_path: Path, result: CommandResult) -> CommandResult:
+        self.log_event(
+            "swr_stage_continue_passed" if result.ok else "swr_stage_continue_failed",
+            {"exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
+            slice_id=slice_["id"],
+        )
+        if not result.ok:
+            if self.swr_wait_timeout_in_progress(result):
+                self.record_active_swr_run(slice_, manifest_path, "SWR background run in progress", observed_result=result)
+                return CommandResult(result.argv, 31, result.stdout, "SWR background run is still in progress; do not relaunch")
+            return result
+        payload = read_json(manifest_path, {})
+        if isinstance(payload, dict) and self.swr_final_stage_completed(payload):
+            source = self.materialize_swr_playbook_from_manifest(slice_, manifest_path)
+            playbook = self.root / slice_["playbook"]
+            if playbook.exists():
+                self.record_swr_materialization(slice_, result.argv, source)
+                return result
+        self.record_active_swr_run(slice_, manifest_path, "SWR background run in progress")
+        return CommandResult(result.argv, 31, result.stdout, "SWR background run is still in progress; do not relaunch")
+
+    def run_swr_validation_repair(self, slice_: dict[str, Any], repair_plan: dict[str, Any]) -> CommandResult:
+        recovered = self.recover_revalidated_swr_playbook(slice_, repair_plan)
+        if recovered is not None:
+            return recovered
+
+        if repair_plan.get("status") != "authorized":
+            command: list[str] = []
+            try:
+                command = self.build_swr_stage_rerun_command(repair_plan)
+            except AutoKeelError:
+                command = []
+            self.log_event(
+                "swr_validation_repair_waiting_for_authorization",
+                {
+                    "repair_stage_id": repair_plan.get("repair_stage_id"),
+                    "run_manifest": repair_plan.get("run_manifest"),
+                    "planned_command": " ".join(shlex.quote(part) for part in command) if command else None,
+                },
+                slice_id=slice_["id"],
+            )
+            return CommandResult(command, 34, "", "SWR validation repair is blocked pending explicit operator authorization")
+
+        if repair_plan.get("repair_action") != "rerun_single_stage":
+            self.log_event(
+                "swr_validation_repair_not_runnable",
+                {"repair_action": repair_plan.get("repair_action"), "rationale": repair_plan.get("rationale")},
+                slice_id=slice_["id"],
+            )
+            return CommandResult([], 34, "", "SWR validation repair plan is not runnable")
+
+        manifest_rel = repair_plan.get("run_manifest")
+        stage_id = str(repair_plan.get("repair_stage_id") or "")
+        if not isinstance(manifest_rel, str) or not manifest_rel or not stage_id:
+            return CommandResult([], 34, "", "SWR validation repair plan is missing run manifest or stage id")
+        manifest_path = self.root / manifest_rel
+        if not manifest_path.exists():
+            return CommandResult([], 34, "", f"SWR validation repair manifest missing: {manifest_rel}")
+
+        cmd = self.build_swr_stage_rerun_command(repair_plan)
+        if self.dry_run:
+            self.log_event(
+                "dry_run_swr_validation_repair_planned",
+                {"command": " ".join(shlex.quote(part) for part in cmd)},
+                slice_id=slice_["id"],
+            )
+            return CommandResult(cmd, 0, "dry run SWR validation repair planned", "")
+
+        self.reset_swr_manifest_for_stage_rerun(manifest_path, stage_id)
+        result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        self.log_event(
+            "swr_validation_repair_stage_passed" if result.ok else "swr_validation_repair_stage_failed",
+            {"exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
+            slice_id=slice_["id"],
+        )
+        if not result.ok:
+            if self.swr_wait_timeout_in_progress(result):
+                self.record_active_swr_run(slice_, manifest_path, "SWR validation repair in progress", observed_result=result)
+                return CommandResult(result.argv, 31, result.stdout, "SWR validation repair is still in progress; do not relaunch")
+            return result
+
+        payload = read_json(manifest_path, {})
+        if isinstance(payload, dict) and self.swr_waiting_for_review(payload):
+            return self.run_swr_review_lane(slice_, manifest_path)
+        if isinstance(payload, dict) and self.swr_final_stage_completed(payload):
+            source = self.materialize_swr_playbook_from_manifest(slice_, manifest_path)
+            playbook = self.root / slice_["playbook"]
+            if playbook.exists():
+                self.clear_swr_validation_repair(slice_["id"])
+                self.record_swr_materialization(slice_, result.argv, source)
+                return result
+
+        self.record_active_swr_run(slice_, manifest_path, "SWR validation repair in progress")
+        return CommandResult(result.argv, 31, result.stdout, "SWR validation repair is still in progress; do not relaunch")
+
+    def recover_revalidated_swr_playbook(
+        self, slice_: dict[str, Any], repair_plan: dict[str, Any]
+    ) -> CommandResult | None:
+        archive_rel = repair_plan.get("rejected_playbook_archive")
+        if not isinstance(archive_rel, str) or not archive_rel:
+            return None
+        archive = self.repo_artifact_path(archive_rel)
+        if archive is None or not archive.exists():
+            return None
+
+        validation = self.runner.run(
+            [
+                "python",
+                "-m",
+                "scripts.validate_playbook_autonomous",
+                str(archive),
+                "--risk",
+                str(slice_.get("risk", "")),
+                "--json",
+            ],
+            cwd=self.root,
+            execute_in_dry_run=True,
+        )
+        self.log_event(
+            "swr_validation_repair_archived_playbook_revalidated"
+            if validation.ok
+            else "swr_validation_repair_archived_playbook_still_rejected",
+            {
+                "archive": str(archive.relative_to(self.root)),
+                "exit_code": validation.exit_code,
+                "stdout": validation.stdout[-4000:],
+                "stderr": validation.stderr[-4000:],
+            },
+            slice_id=slice_["id"],
+        )
+        if not validation.ok:
+            return None
+
+        restore_command = [
+            "restore-revalidated-swr-playbook",
+            str(archive.relative_to(self.root)),
+            slice_["playbook"],
+        ]
+        if self.dry_run:
+            return CommandResult(restore_command, 0, "dry run SWR validation repair recovery planned", "")
+
+        playbook = self.root / slice_["playbook"]
+        playbook.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(archive, playbook)
+        source = repair_plan.get("swr_source") if isinstance(repair_plan.get("swr_source"), dict) else {}
+        self.clear_swr_validation_repair(slice_["id"])
+        self.record_swr_materialization(slice_, restore_command, source)
+        self.mark_slice_status(
+            slice_["id"],
+            "pending",
+            reason="SWR playbook revalidated after validator false-positive fix",
+        )
+        self.log_event(
+            "swr_validation_repair_recovered_without_rerun",
+            {
+                "archive": str(archive.relative_to(self.root)),
+                "playbook": str(playbook.relative_to(self.root)),
+                "playbook_sha256": file_sha256(playbook),
+                "repair_stage_id": repair_plan.get("repair_stage_id"),
+            },
+            slice_id=slice_["id"],
+        )
+        return CommandResult(restore_command, 0, str(playbook.relative_to(self.root)), "")
+
+    def run_swr_review_lane(self, slice_: dict[str, Any], manifest_path: Path) -> CommandResult:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            return CommandResult([], 32, "", f"invalid SWR manifest: {manifest_path}")
+        stage_id = str(payload.get("current_stage_id") or "")
+        existing_bundle = self.existing_swr_review_bundle(slice_, payload)
+        if existing_bundle is not None:
+            bundle_rel = str(existing_bundle.relative_to(self.root))
+            self.log_event(
+                "swr_stage_review_bundle_reused",
+                {"stage_id": stage_id, "review_bundle": bundle_rel},
+                slice_id=slice_["id"],
+            )
+            continue_cmd = self.build_swr_continue_command(manifest_path, bundle_rel)
+            continued = self.runner.run(continue_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+            return self.handle_swr_continue_result(slice_, manifest_path, continued)
+
+        session_id, session_result = self.ensure_swr_supervisor_session(slice_, manifest_path)
+        if not session_result.ok:
+            return session_result
+        review_dir = self.swr_review_dir(slice_, payload)
+        review_dir.mkdir(parents=True, exist_ok=True)
+        classify_output = review_dir / "stage_outcome.json"
+        classify_cmd = [
+            str(self.keel_swr_path()),
+            "supervisor",
+            "classify",
+            "--root",
+            str(self.root),
+            "--session",
+            session_id,
+            "--run-dir",
+            str(payload.get("run_dir") or manifest_path.parent.relative_to(self.root)),
+            "--stage",
+            stage_id,
+            "--output",
+            str(classify_output.relative_to(self.root)),
+        ]
+        classify = self.runner.run(classify_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        self.log_event(
+            "swr_stage_classified" if classify.ok else "swr_stage_classification_failed",
+            {"stage_id": stage_id, "exit_code": classify.exit_code, "stdout": classify.stdout[-2000:], "stderr": classify.stderr[-2000:]},
+            slice_id=slice_["id"],
+        )
+        if not classify.ok:
+            return classify
+        outcome = read_json(classify_output, self.parse_json_stdout(classify, {}))
+        if not isinstance(outcome, dict) or not outcome.get("reviewable") or not outcome.get("review_bundle_allowed", True):
+            failure = self.record_failure(
+                slice_["id"],
+                "audit_failure",
+                "high",
+                "SWR stage output was not reviewable for next-stage progression.",
+                "Stopped before creating a review bundle or launching the next SWR stage.",
+                classify_output if classify_output.exists() else manifest_path,
+            )
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="SWR stage review blocked")
+            return CommandResult(classify_cmd, 32, "", "SWR stage review blocked")
+
+        job = self.write_swr_stage_review_job(slice_, manifest_path, review_dir, classify_output)
+        cycle = f"{stage_id}_stage_review"
+        operator_cmd = [
+            str(self.keel_swr_path()),
+            "supervisor",
+            "invoke-operator",
+            "--root",
+            str(self.root),
+            "--session",
+            session_id,
+            "--review-cycle",
+            cycle,
+            "--review-kind",
+            "stage_output",
+            "--job-json",
+            str(job.relative_to(self.root)),
+            "--output-dir",
+            str((review_dir / "operator").relative_to(self.root)),
+        ]
+        operator = self.runner.run(operator_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        if not operator.ok:
+            return operator
+        operator_payload = self.parse_json_stdout(operator, {})
+        operator_review = str(operator_payload.get("operator_review")) if isinstance(operator_payload, dict) else ""
+
+        reviewers_cmd = [
+            str(self.keel_swr_path()),
+            "supervisor",
+            "invoke-reviewers",
+            "--root",
+            str(self.root),
+            "--session",
+            session_id,
+            "--review-cycle",
+            cycle,
+            "--review-kind",
+            "stage_output",
+            "--job-json",
+            str(job.relative_to(self.root)),
+            "--output-dir",
+            str((review_dir / "agents").relative_to(self.root)),
+        ]
+        reviewers = self.runner.run(reviewers_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        if not reviewers.ok:
+            return reviewers
+        reviewers_payload = self.parse_json_stdout(reviewers, {})
+        codex_review = str(reviewers_payload.get("codex_review")) if isinstance(reviewers_payload, dict) else ""
+        claude_review = str(reviewers_payload.get("claude_review")) if isinstance(reviewers_payload, dict) else ""
+
+        consolidated = review_dir / "consolidated_review.json"
+        consolidate_cmd = [
+            str(self.keel_swr_path()),
+            "supervisor",
+            "consolidate",
+            "--root",
+            str(self.root),
+            "--session",
+            session_id,
+            "--review-cycle",
+            cycle,
+            "--codex-review",
+            codex_review,
+            "--claude-review",
+            claude_review,
+            "--operator-review",
+            operator_review,
+            "--output",
+            str(consolidated.relative_to(self.root)),
+        ]
+        consolidate = self.runner.run(consolidate_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        if not consolidate.ok:
+            return consolidate
+
+        acceptance = review_dir / "operator_acceptance.json"
+        accept_cmd = [
+            str(self.keel_swr_path()),
+            "supervisor",
+            "accept",
+            "--root",
+            str(self.root),
+            "--session",
+            session_id,
+            "--review-cycle",
+            cycle,
+            "--consolidated-review",
+            str(consolidated.relative_to(self.root)),
+            "--output",
+            str(acceptance.relative_to(self.root)),
+        ]
+        accept = self.runner.run(accept_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        if not accept.ok:
+            return accept
+        acceptance_payload = read_json(acceptance, self.parse_json_stdout(accept, {}))
+        if not isinstance(acceptance_payload, dict) or acceptance_payload.get("approval_decision") != "approve":
+            failure = self.record_failure(
+                slice_["id"],
+                "audit_failure",
+                "high",
+                "SWR supervisor review did not approve next-stage progression.",
+                "Stopped before creating a review bundle or launching the next SWR stage.",
+                acceptance if acceptance.exists() else consolidated,
+            )
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="SWR stage review not approved")
+            return CommandResult(accept_cmd, 32, "", "SWR stage review not approved")
+
+        files = {
+            "operator_review": operator_review,
+            "codex_review": codex_review,
+            "claude_review": claude_review,
+            "consolidated_review": str(consolidated.relative_to(self.root)),
+            "operator_acceptance": str(acceptance.relative_to(self.root)),
+        }
+        reviewer_notes = self.write_swr_reviewer_notes(review_dir, payload, files)
+        artifacts = self.swr_stage_artifacts(payload)
+        bundle_path = review_dir / f"{stage_id}.review_bundle.json"
+        bundle_cmd = [
+            str(self.keel_swr_path()),
+            "supervisor",
+            "create-bundle",
+            "--root",
+            str(self.root),
+            "--session",
+            session_id,
+            "--output",
+            str(bundle_path.relative_to(self.root)),
+            "--workflow-id",
+            str(payload.get("workflow_id") or ""),
+            "--source-stage-id",
+            stage_id,
+            "--source-run-id",
+            str(payload.get("run_id") or ""),
+            "--primary-artifact-markdown",
+            artifacts["response_markdown"],
+            "--response-artifact-json",
+            artifacts["response_json"],
+            "--reviewer-notes",
+            str(reviewer_notes.relative_to(self.root)),
+            "--acceptance-record",
+            str(acceptance.relative_to(self.root)),
+        ]
+        bundle = self.runner.run(bundle_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        self.log_event(
+            "swr_stage_review_bundle_created" if bundle.ok else "swr_stage_review_bundle_failed",
+            {"stage_id": stage_id, "exit_code": bundle.exit_code, "stdout": bundle.stdout[-2000:], "stderr": bundle.stderr[-2000:]},
+            slice_id=slice_["id"],
+        )
+        if not bundle.ok:
+            return bundle
+        bundle_payload = self.parse_json_stdout(bundle, {})
+        bundle_rel = str(bundle_payload.get("bundle_path") or bundle_path.relative_to(self.root)) if isinstance(bundle_payload, dict) else str(bundle_path.relative_to(self.root))
+        continue_cmd = self.build_swr_continue_command(manifest_path, bundle_rel)
+        continued = self.runner.run(continue_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        return self.handle_swr_continue_result(slice_, manifest_path, continued)
+
+    def ensure_swr_playbook(self, slice_: dict[str, Any]) -> CommandResult:
+        playbook = self.root / slice_["playbook"]
+        if self.swr_evidence_matches_playbook(slice_, playbook):
+            return CommandResult(["test", "-f", str(self.swr_evidence_path(slice_))], 0, "SWR playbook evidence exists", "")
+
+        active_manifest = self.active_swr_manifest_from_state(slice_) or self.latest_swr_manifest_for_slice(slice_)
+        if active_manifest is not None:
+            active_payload = read_json(active_manifest, {})
+            if isinstance(active_payload, dict) and self.swr_waiting_for_review(active_payload):
+                return self.run_swr_review_lane(slice_, active_manifest)
+            if not self.dry_run and self.swr_remote_check_due(slice_):
+                resume_cmd = self.build_swr_resume_command(active_manifest)
+                result = self.runner.run(resume_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+                self.update_active_swr_remote_check(slice_["id"], result)
+                self.log_event(
+                    "swr_active_stage_resumed" if result.ok else "swr_active_stage_resume_waiting",
+                    {"exit_code": result.exit_code, "stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:]},
+                    slice_id=slice_["id"],
+                )
+                refreshed_payload = read_json(active_manifest, {})
+                if isinstance(refreshed_payload, dict) and self.swr_waiting_for_review(refreshed_payload):
+                    return self.run_swr_review_lane(slice_, active_manifest)
+                if isinstance(refreshed_payload, dict) and self.swr_final_stage_completed(refreshed_payload):
+                    swr_source = self.materialize_swr_playbook_from_manifest(slice_, active_manifest)
+                    if playbook.exists():
+                        self.record_swr_materialization(slice_, result.argv, swr_source)
+                        return result
+                if not result.ok and not self.swr_wait_timeout_in_progress(result):
+                    return result
+            self.record_active_swr_run(slice_, active_manifest, "SWR background run in progress")
+            return CommandResult(
+                ["test", "-f", str(active_manifest)],
+                31,
+                str(active_manifest.relative_to(self.root)),
+                "SWR background run is still in progress; do not relaunch",
+            )
+
+        repair_plan = slice_.get("swr_validation_repair")
+        if isinstance(repair_plan, dict):
+            return self.run_swr_validation_repair(slice_, repair_plan)
+
+        if playbook.exists():
+            if self.dry_run:
+                self.log_event(
+                    "dry_run_non_swr_playbook_archive_skipped",
+                    {"playbook": str(playbook.relative_to(self.root))},
+                    slice_id=slice_["id"],
+                )
+            else:
+                self.archive_swr_playbook_and_evidence(slice_, "existing playbook lacks matching SWR evidence")
+
+        autoplan_result = self.ensure_autoplan(slice_)
+        if not autoplan_result.ok:
+            return autoplan_result
+
+        task_pack = self.materialize_swr_task_pack()
+        if not task_pack.ok:
+            failure = self.record_failure(
+                slice_["id"],
+                "compile_failure",
+                "high",
+                "SWR task pack required for swr_preferred lane is missing.",
+                "Blocked S02 before compiler fallback; do not run PO until SWR can generate the playbook.",
+                None,
+            )
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason=task_pack.stderr)
+            return task_pack
+
+        cmd = self.build_swr_command(slice_)
+        if self.dry_run:
+            self.log_event("swr_playbook_generation_planned", {"command": " ".join(shlex.quote(part) for part in cmd)}, slice_id=slice_["id"])
+            return CommandResult(cmd, 0, "dry run SWR playbook generation planned", "")
+
+        result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        self.log_event(
+            "swr_playbook_generation_passed" if result.ok else "swr_playbook_generation_failed",
+            {"exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
+            slice_id=slice_["id"],
+        )
+        if not result.ok:
+            if self.swr_provider_auth_failure(result):
+                evidence = self.write_swr_provider_auth_evidence(slice_, cmd, result)
+                failure = self.record_failure(
+                    slice_["id"],
+                    "provider_auth_failure",
+                    "high",
+                    "SWR playbook generation could not start because OpenAI API credentials were missing.",
+                    "Blocked the slice before PO. Do not fall back to compiler or fabricate credentials; provide real local credentials and rerun.",
+                    evidence,
+                )
+                self.mark_slice_status(
+                    slice_["id"],
+                    "blocked_external",
+                    failure_path=str(failure.relative_to(self.root)),
+                    reason="missing OPENAI_API_KEY for keel-swr",
+                )
+                self.log_event(
+                    "swr_provider_auth_failed",
+                    {
+                        "evidence": str(evidence.relative_to(self.root)),
+                        "exit_code": result.exit_code,
+                        "stderr": result.stderr[-2000:],
+                    },
+                    slice_id=slice_["id"],
+                )
+                return CommandResult(cmd, 26, result.stdout, "missing OPENAI_API_KEY for keel-swr")
+            if self.swr_wait_timeout_in_progress(result):
+                manifest_path = self.extract_swr_manifest_path(result) or self.latest_swr_manifest_for_slice(slice_)
+                if manifest_path is not None:
+                    self.record_active_swr_run(slice_, manifest_path, "SWR background run in progress", observed_result=result)
+                    return CommandResult(
+                        cmd,
+                        31,
+                        str(manifest_path.relative_to(self.root)),
+                        "SWR background run is still in progress; do not relaunch",
+                    )
+            return result
+
+        swr_source: dict[str, str] | None = None
+        manifest_path = self.extract_swr_manifest_path(result)
+        if manifest_path is not None:
+            result_payload = read_json(manifest_path, {})
+            if isinstance(result_payload, dict) and self.swr_waiting_for_review(result_payload):
+                return self.run_swr_review_lane(slice_, manifest_path)
+        if manifest_path is not None and not playbook.exists():
+            swr_source = self.materialize_swr_playbook_from_manifest(slice_, manifest_path)
+
+        if not playbook.exists():
+            failure = self.record_failure(
+                slice_["id"],
+                "compile_failure",
+                "high",
+                "SWR run did not materialize the canonical markdown_playbook_v1 artifact.",
+                "Stopped before PO. Continue the SWR review-bundle flow and materialize the Stage 5 output as the canonical playbook.",
+                manifest_path or self.root / str(self.policy.get("swr", {}).get("output_root", ".local/autokeel/swr/runs")),
+            )
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="SWR playbook not materialized")
+            return CommandResult(cmd, 28, result.stdout, "SWR completed without materializing the canonical playbook")
+
+        self.record_swr_materialization(slice_, cmd, swr_source)
+        return result
+
     def ensure_playbook(self, slice_: dict[str, Any]) -> CommandResult:
         playbook = self.root / slice_["playbook"]
 
@@ -878,6 +2687,9 @@ Return only a Markdown autoplan suitable to save at:
                 )
             else:
                 self.archive_playbook_for_replan(slice_)
+
+        if self.swr_required(slice_):
+            return self.ensure_swr_playbook(slice_)
 
         if playbook.exists():
             return CommandResult(["test", "-f", str(playbook)], 0, "playbook exists", "")
@@ -1183,6 +2995,21 @@ Use local files and commands only. If evidence is missing, write a failing revie
         age_seconds = (datetime.now().astimezone() - started.astimezone()).total_seconds()
         return age_seconds > stale_minutes * 60
 
+    def active_run_playbook_mismatch(self, slice_: dict[str, Any], run_id: str) -> tuple[bool, Path | None, str]:
+        run_state_path = self.root / ".local/automation/plan_orchestrator/runs" / run_id / "run_state.json"
+        playbook_path = self.root / str(slice_.get("playbook", ""))
+        if not run_state_path.exists() or not playbook_path.exists():
+            return False, run_state_path if run_state_path.exists() else None, ""
+        try:
+            run_state = json.loads(run_state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return False, run_state_path, ""
+        snapshot_sha = str(run_state.get("playbook_source_sha256") or "")
+        current_sha = file_sha256(playbook_path)
+        if snapshot_sha and snapshot_sha != current_sha:
+            return True, run_state_path, f"{snapshot_sha} != {current_sha}"
+        return False, run_state_path, ""
+
     def clear_active_run(self) -> None:
         state = self.load_state()
         state["active_run"] = None
@@ -1214,6 +3041,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 str(evidence_dir),
                 "--max-wait-seconds",
                 str(self.po_supervisor_wait_seconds()),
+                "--max-auto-resume-attempts",
+                str(self.po_max_auto_resume_attempts()),
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
@@ -1249,6 +3078,20 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if not run_id:
             return CommandResult([], 50, "", "cannot resume active PO: missing run_id")
 
+        checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
+        if not checkpoint.ok:
+            self.log_event(
+                "po_resume_precheck_failed",
+                {
+                    "run_id": run_id,
+                    "exit_code": checkpoint.exit_code,
+                    "stdout": checkpoint.stdout[-2000:],
+                    "stderr": checkpoint.stderr[-2000:],
+                },
+                slice_id=slice_["id"],
+            )
+            return checkpoint
+
         result = self.runner.run(
             self.plan_orchestrator_command(
                 "supervise",
@@ -1257,6 +3100,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 str(run_id),
                 "--max-wait-seconds",
                 str(self.po_supervisor_wait_seconds()),
+                "--max-auto-resume-attempts",
+                str(self.po_max_auto_resume_attempts()),
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
@@ -1281,25 +3126,51 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if active.get("slice") == slice_["id"] and active.get("run_id") and slice_.get("status") == "evidence_ready":
             return self.resume_po_with_evidence(slice_, active)
         if active.get("slice") == slice_["id"] and active.get("run_id"):
-            if self.active_run_is_stale(active):
-                self.record_failure(
+            mismatch, run_state_path, mismatch_detail = self.active_run_playbook_mismatch(slice_, str(active.get("run_id")))
+            if mismatch:
+                failure = self.record_failure(
                     slice_["id"],
-                    "stale_run",
+                    "state_divergence",
                     "medium",
-                    "PO run exceeded the configured stale_run_minutes threshold.",
-                    "Cleared active_run and moved the slice to replan_required.",
-                    None,
+                    "Active PO run was based on a superseded playbook snapshot.",
+                    "Cleared active_run so the next launch starts from the current canonical playbook.",
+                    run_state_path,
                     run_id=active.get("run_id"),
                 )
                 self.clear_active_run()
-                self.mark_slice_status(slice_["id"], "replan_required", run_id=active.get("run_id"), reason="stale run")
-                return CommandResult([], 40, "", "active PO run is stale")
-            return self.resume_active_po(slice_, active)
+                self.mark_slice_status(
+                    slice_["id"],
+                    "pending",
+                    run_id=active.get("run_id"),
+                    failure_path=str(failure.relative_to(self.root)),
+                    reason=f"active run playbook snapshot superseded: {mismatch_detail}",
+                )
+                state = self.load_state()
+                active = {}
+            else:
+                if self.active_run_is_stale(active):
+                    self.record_failure(
+                        slice_["id"],
+                        "stale_run",
+                        "medium",
+                        "PO run exceeded the configured stale_run_minutes threshold.",
+                        "Cleared active_run and moved the slice to replan_required.",
+                        None,
+                        run_id=active.get("run_id"),
+                    )
+                    self.clear_active_run()
+                    self.mark_slice_status(slice_["id"], "replan_required", run_id=active.get("run_id"), reason="stale run")
+                    return CommandResult([], 40, "", "active PO run is stale")
+                return self.resume_active_po(slice_, active)
 
         playbook = self.root / slice_["playbook"]
         if not playbook.exists():
             self.log_event("playbook_missing", {"playbook": str(playbook.relative_to(self.root))}, slice_id=slice_["id"])
             return CommandResult([], 3, "", f"missing playbook: {playbook}")
+        swr_guard = self.require_swr_evidence_before_po(slice_, playbook)
+        if not swr_guard.ok:
+            return swr_guard
+
         checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
         if not checkpoint.ok:
             return checkpoint
@@ -1312,6 +3183,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 "--next",
                 "--max-wait-seconds",
                 str(self.po_supervisor_wait_seconds()),
+                "--max-auto-resume-attempts",
+                str(self.po_max_auto_resume_attempts()),
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
@@ -1335,35 +3208,60 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return CommandResult([], 0, "lane decision not required", "")
         policy = self.policy.get("lanes", {})
         mode = policy.get("swr_preferred", "compile_with_decision")
-        if mode != "compile_with_decision":
+        if mode not in {"compile_with_decision", "use_swr"}:
             return CommandResult([], 0, "lane decision mode not required", "")
         existing = slice_.get("lane_decision")
-        if existing and (self.root / str(existing)).exists():
-            return CommandResult(["test", "-f", str(existing)], 0, "lane decision exists", "")
-        if slice_.get("risk") == "high":
+        if existing or slice_.get("risk") == "high":
+            from scripts.lane_decision_policy import validate_lane_decision
+
+            errors = validate_lane_decision(self.root, slice_)
+            if not errors:
+                return CommandResult(["test", "-f", str(existing)], 0, "lane decision exists", "")
+
+            failure_class = "lane_decision_invalid"
+            if not existing or any("missing lane_decision artifact" in err or "artifact missing" in err for err in errors):
+                failure_class = "lane_decision_missing"
+            description = "; ".join(errors)
             failure = self.record_failure(
                 slice_["id"],
-                "compile_failure",
+                failure_class,
                 "high",
-                "High-risk swr_preferred slice is missing reviewed lane_decision evidence.",
-                "Blocked compilation instead of auto-downgrading the SWR-preferred lane.",
-                None,
+                description,
+                "Blocked compilation until a reviewed, schema-valid lane_decision artifact exists.",
+                self.root / str(existing) if existing else None,
             )
             self.mark_slice_status(
                 slice_["id"],
                 "blocked_compile_inputs",
                 failure_path=str(failure.relative_to(self.root)),
-                reason="missing reviewed lane_decision",
+                reason=description[:500],
             )
-            return CommandResult([], 25, "", "missing reviewed lane_decision for high-risk swr_preferred slice")
+            return CommandResult([], 25, "", description)
+        decision_value = "use_swr" if mode == "use_swr" else "compile_with_keel_compile"
+        reason = (
+            "SWR-preferred lane is enforced by policy; the staged-workflow-runner must generate the playbook."
+            if decision_value == "use_swr"
+            else "SWR-preferred lane is preserved as policy metadata; current AutoKeel milestone uses compiler path with explicit downgrade decision."
+        )
         decision = self.write_decision(
-            f"{slice_['id']}-swr-downgrade",
+            f"{slice_['id']}-swr-use" if decision_value == "use_swr" else f"{slice_['id']}-swr-downgrade",
             {
                 "status": "accepted",
                 "slice": slice_["id"],
                 "lane": lane,
-                "decision": "compile_with_keel_compile_for_now",
-                "reason": "SWR-preferred lane is preserved as policy metadata; current AutoKeel milestone uses compiler path with explicit downgrade decision.",
+                "decision": decision_value,
+                "risk": slice_.get("risk", "medium"),
+                "review_artifacts": slice_.get("review_artifacts", []),
+                "commands": [
+                    {
+                        "command": "AutoKeel non-high swr_preferred downgrade decision",
+                        "exit_code": 0,
+                        "stdout_tail": "policy permits non-high swr_preferred compiler-path decision",
+                        "stderr_tail": "",
+                    }
+                ],
+                "verdict": "pass",
+                "reason": reason,
             },
         )
         self.mark_slice_status(slice_["id"], slice_.get("status", "pending"), lane_decision=str(decision.relative_to(self.root)))
@@ -1723,7 +3621,9 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 {"exit_code": compiled.exit_code, "stderr": compiled.stderr[-2000:]},
                 slice_id=slice_["id"],
             )
-            if compiled.exit_code not in {20, 21, 22, 24}:
+            if compiled.exit_code == 31:
+                return 0
+            if compiled.exit_code not in {20, 21, 22, 24, 26, 27, 28, 31, 34}:
                 failure = self.record_failure(
                     slice_["id"],
                     "compile_failure",
@@ -1741,6 +3641,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
 
         validation = self.validate_playbook(slice_)
         if not validation.ok:
+            if self.swr_required(slice_):
+                return self.handle_swr_playbook_validation_failure(slice_, validation)
             evidence_path = self.archive_playbook_for_replan(slice_) or (self.root / slice_["playbook"])
             self.record_failure(
                 slice_["id"],
@@ -1752,6 +3654,15 @@ Use local files and commands only. If evidence is missing, write a failing revie
             )
             self.mark_slice_status(slice_["id"], "replan_required")
             return 3
+
+        if (
+            self.swr_required(slice_)
+            and (
+                slice_["id"] in self._swr_materializations
+                or not self.swr_evidence_matches_playbook(slice_, self.root / slice_["playbook"])
+            )
+        ):
+            self.write_swr_playbook_evidence(slice_, validation)
 
         if self.dry_run:
             self.log_event("dry_run_po_start_skipped", {"playbook": slice_.get("playbook")}, slice_id=slice_["id"])
@@ -1821,6 +3732,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--failures", action="store_true", help="Include failure ledger rows with --status.")
     parser.add_argument("--doctor", action="store_true", help="Run AutoKeel preflight checks and exit.")
     parser.add_argument("--strict", action="store_true", help="Use strict mode with --doctor.")
+    parser.add_argument("--readiness", choices=["S02"], help="Run a slice-specific pre-launch readiness check and exit.")
     parser.add_argument("--next-slice", action="store_true", help="Print the next actionable slice and exit.")
     parser.add_argument("--replay-events", action="store_true", help="Print event log rows and exit.")
     parser.add_argument("--unblock-evidence", nargs=2, metavar=("SLICE_ID", "EVIDENCE_DIR"), help="Mark a blocked slice evidence_ready with a local evidence dir.")
@@ -1847,6 +3759,12 @@ def main(argv: list[str] | None = None) -> int:
             if result.stderr:
                 print(result.stderr, file=sys.stderr, end="")
             return result.exit_code
+        if args.readiness == "S02":
+            from scripts.verify_s02_readiness import verify_s02_readiness
+
+            report = verify_s02_readiness(root)
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 0 if report["status"] == "ok" else 1
         if args.next_slice:
             print(json.dumps(autokeel.choose_next_slice(args.slice_id, force=args.force), indent=2, sort_keys=True))
             return 0

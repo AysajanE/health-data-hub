@@ -17,7 +17,16 @@ autoplan:
 lanes:
   compiler: keel-compile
   compiler_external_evidence: keel-compile
-  swr_preferred: compile_with_decision
+  swr_preferred: use_swr
+
+swr:
+  task_pack_source: tools/staged-workflow-runner/automation/task_packs/gstack_design_to_po_playbook
+  task_pack_workdir: automation/task_packs/gstack_design_to_po_playbook
+  workflow_file: automation/task_packs/gstack_design_to_po_playbook/workflows/gstack_design_to_po_playbook.workflow.json
+  output_root: .local/autokeel/swr/runs
+  max_wait_seconds: 5
+  monitor_min_interval_seconds: 300
+  skip_token_count: true
 
 slice_statuses:
   actionable:
@@ -148,6 +157,7 @@ loop:
   stale_run_minutes: 60
   po_timeout_seconds: 7200
   po_supervisor_wait_seconds: 5
+  po_max_auto_resume_attempts: 0
   heartbeat_path: ops/autonomy/heartbeats/latest.json
 
 commands:
