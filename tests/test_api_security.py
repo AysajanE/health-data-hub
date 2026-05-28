@@ -280,6 +280,17 @@ class MoodApiSecurityRouteTest(unittest.TestCase):
 
         self.assertNotIn("CORSMiddleware", middleware_names)
 
+    def test_docs_and_schema_routes_are_disabled(self) -> None:
+        for path in ("/docs", "/docs/oauth2-redirect", "/openapi.json", "/redoc"):
+            with self.subTest(path=path):
+                response = self.request(
+                    "GET",
+                    path,
+                    client_host="192.168.1.77",
+                )
+
+                self.assertEqual(response.status_code, 404)
+
     def test_placeholder_routes_stay_retrospective_only(self) -> None:
         insights_response = self.request(
             "GET",

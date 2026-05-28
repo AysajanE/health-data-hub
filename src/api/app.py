@@ -27,7 +27,11 @@ def create_app(
     persist_mood_entry: MoodEntryPersister | None = None,
     rate_limiter: InMemoryRateLimiter | None = None,
 ) -> FastAPI:
-    app = FastAPI()
+    app = FastAPI(
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     app.state.health_checks = 0
 
     def current_settings() -> ApiSettings:
