@@ -5,7 +5,7 @@
     "docs/playbooks/s02-mood-api.playbook.md"
   ],
   "playbook": "docs/playbooks/s02-mood-api.playbook.md",
-  "playbook_sha256": "b9d9a554f8b9dc86b61ef4c1a722aa7199361cb67237cb79a85c7fb89d620f6d",
+  "playbook_sha256": "3f2b64184e29fd4f88800bf69c5cb4257cfa22aa2a02f486d75dc31f747d80d9",
   "post_materialization_repairs": [
     {
       "reason": "plan-orchestrator normalization requires comma-separated prerequisite ids or numeric ranges",
@@ -20,6 +20,11 @@
     {
       "reason": "plan-orchestrator repo_surfaces are materialized inputs and must exist before the row runs",
       "change": "normalized repo_surfaces so row inputs are tracked paths or exact prior-row deliverables, not same-row future files",
+      "validation": "python scripts/validate_playbook_autonomous.py docs/playbooks/s02-mood-api.playbook.md --risk high --json"
+    },
+    {
+      "reason": "row 03 escalated repeatedly because it required an already-available in-memory limiter dependency that did not exist and forbade package-file edits",
+      "change": "normalized row 03 and source autoplan language to require local in-memory limiter code under S02 API write roots, with no new package dependency",
       "validation": "python scripts/validate_playbook_autonomous.py docs/playbooks/s02-mood-api.playbook.md --risk high --json"
     }
   ],

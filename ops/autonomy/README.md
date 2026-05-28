@@ -89,6 +89,11 @@ points at the installed Keel plan-orchestrator runtime. This lets the
 plan-orchestrator resolve this product checkout as the repo under execution,
 while still using the Keel runtime as the execution kernel.
 
+AutoKeel passes `--max-auto-resume-attempts 0` to supervised PO runs and
+resumes. Deterministic escalations must park for root-cause diagnosis rather
+than silently consuming repeated PO attempts. Fix the playbook, toolchain, or
+local evidence contract first, then relaunch through AutoKeel.
+
 ## Safety Rules
 
 - AutoKeel must never call `mark-manual-gate`.

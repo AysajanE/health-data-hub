@@ -194,3 +194,39 @@ Result:
 
 - Targeted high-water regression tests: `3 passed`.
 - Full autonomy suite: `116 passed`.
+
+## Root Cause Update: Row 03 Unavailable Limiter Dependency
+
+During the S02 PO run, rows 01 and 02 passed, but row 03 escalated repeatedly.
+The escalation manifests for item 03 attempts 1 and 2 both identified the same
+root cause: the playbook required POST rate limiting only through an
+already-available in-memory limiter dependency, but no such dependency existed
+in the repo and package-manifest edits were outside the row authority.
+
+Fixes implemented:
+
+- Stopped the active AutoKeel/PO resume to avoid spending more attempts on the
+  same deterministic blocker.
+- Normalized row 03 to require local in-memory limiter code under S02 API write
+  roots, with no new package dependency and no package-manifest edits.
+- Updated `docs/gstack/s02-mood-api-autoplan.md` so the source scaffold no
+  longer points agents toward `slowapi` or an unverified limiter package.
+- Added an autonomous validator guard that rejects the old unverified limiter
+  dependency contract.
+- Configured AutoKeel to pass `--max-auto-resume-attempts 0` to supervised PO
+  runs/resumes, so deterministic escalations park for root-cause diagnosis
+  instead of silently consuming repeated attempts.
+
+Verification:
+
+```bash
+python scripts/validate_playbook_autonomous.py docs/playbooks/s02-mood-api.playbook.md --risk high --json
+python automation/run_plan_orchestrator.py list-items --playbook docs/playbooks/s02-mood-api.playbook.md --format json
+python -m pytest tests/autonomy/test_validate_playbook_autonomous.py tests/autonomy/test_autokeel.py::AutoKeelTests::test_po_start_uses_product_local_runner_not_keel_run_wrapper tests/autonomy/test_autokeel.py::AutoKeelTests::test_active_same_slice_run_invokes_supervise_resume -q
+```
+
+Result:
+
+- S02 playbook validation: `status=ok`, `row_count=7`.
+- PO list-items parses row 03 with local in-memory limiter wording.
+- Targeted validator and AutoKeel supervisor-argument regressions: `19 passed`.

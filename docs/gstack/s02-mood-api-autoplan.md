@@ -34,7 +34,7 @@ Build the Health Data Hub v1 Mood API loop only. This slice ships the local-firs
 - Every endpoint validates `X-Mood-Token` via `secrets.compare_digest`. Defense in depth: the middleware and the token dependency must both be active on read endpoints. Tokens come from `MOOD_TOKEN` in `.env`; never log token values, headers, or request bodies.
 - Apply the mood-date attribution rule server-side: `mood_date = (logged_at_utc.astimezone(home_tz) - timedelta(hours=4)).date()`. Logs between 00:00 and 04:00 local time are attributed to the prior date. DST transitions must be handled by `zoneinfo`.
 - Insert mood corrections by appending a new `mood_entries` row with `supersedes_log_id` pointing at the prior row and updating `mood_current` to the new `log_id`. Never mutate or delete an existing `mood_entries` row.
-- CORS is disabled. Rate limit `POST /api/mood` to 10 requests/minute using an in-memory backend. Do not enable rate limits on `GET` endpoints in v1.
+- CORS is disabled. Rate limit `POST /api/mood` to 10 requests/minute using local in-memory code under `src/api/`; do not add a new package dependency or enable rate limits on `GET` endpoints in v1.
 - Keep raw payloads, tokens, secrets, snapshots, quarantine files, and DuckDB files out of git and out of general logs. Validation failures must reuse the S01 quarantine pathway under `data/quarantine/` with file mode `0600`.
 
 ## Implementation Tasks
@@ -47,7 +47,7 @@ Build the Health Data Hub v1 Mood API loop only. This slice ships the local-firs
 
 ### Token authentication and request gating
 
-- [ ] Implement `require_token` as a FastAPI dependency that validates `X-Mood-Token` against `MOOD_TOKEN` using `secrets.compare_digest`. Attach it to every `/api/*` route (POST and GET). Add the `slowapi` 10 req/min limiter on `POST /api/mood`. Never log the header value, the body, or the comparison result.
+- [ ] Implement `require_token` as a FastAPI dependency that validates `X-Mood-Token` against `MOOD_TOKEN` using `secrets.compare_digest`. Attach it to every `/api/*` route (POST and GET). Add a local in-memory 10 req/min limiter on `POST /api/mood` without package-manifest edits. Never log the header value, the body, or the comparison result.
   Files: `src/api/security.py`; `src/api/dependencies.py`; `src/api/app.py`; `tests/test_api_security.py`
   Verify: `python -m pytest tests/test_api_security.py -q`
 

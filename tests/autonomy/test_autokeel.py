@@ -216,6 +216,8 @@ Manual gates are forbidden.
             self.assertNotIn("keel-run", " ".join(argv))
             self.assertIn("--max-wait-seconds", argv)
             self.assertEqual(argv[argv.index("--max-wait-seconds") + 1], "5")
+            self.assertIn("--max-auto-resume-attempts", argv)
+            self.assertEqual(argv[argv.index("--max-auto-resume-attempts") + 1], "0")
             self.assertEqual(Path(seen["cwd"]).resolve(), root.resolve())
             self.assertEqual(seen["env"], {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"})
             self.assertEqual(seen["timeout"], 7200)
@@ -256,6 +258,8 @@ Manual gates are forbidden.
             self.assertIn("--run-id", argv)
             self.assertEqual(argv[argv.index("--run-id") + 1], "RUN_TEST")
             self.assertIn("--max-wait-seconds", argv)
+            self.assertIn("--max-auto-resume-attempts", argv)
+            self.assertEqual(argv[argv.index("--max-auto-resume-attempts") + 1], "0")
             self.assertEqual(seen["env"], {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"})
             self.assertEqual(seen["timeout"], 7200)
             active = op.load_state()["active_run"]

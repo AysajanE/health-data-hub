@@ -594,6 +594,9 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
     def po_supervisor_wait_seconds(self) -> int:
         return int(self.policy.get("loop", {}).get("po_supervisor_wait_seconds", 5))
 
+    def po_max_auto_resume_attempts(self) -> int:
+        return int(self.policy.get("loop", {}).get("po_max_auto_resume_attempts", 0))
+
     def checkpoint_allowed_pre_po_changes(self, slice_id: str) -> CommandResult:
         status = self._git_status_paths()
         if status is None or not status:
@@ -3038,6 +3041,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 str(evidence_dir),
                 "--max-wait-seconds",
                 str(self.po_supervisor_wait_seconds()),
+                "--max-auto-resume-attempts",
+                str(self.po_max_auto_resume_attempts()),
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
@@ -3095,6 +3100,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 str(run_id),
                 "--max-wait-seconds",
                 str(self.po_supervisor_wait_seconds()),
+                "--max-auto-resume-attempts",
+                str(self.po_max_auto_resume_attempts()),
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},
@@ -3176,6 +3183,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 "--next",
                 "--max-wait-seconds",
                 str(self.po_supervisor_wait_seconds()),
+                "--max-auto-resume-attempts",
+                str(self.po_max_auto_resume_attempts()),
             ),
             cwd=self.root,
             env={"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"},

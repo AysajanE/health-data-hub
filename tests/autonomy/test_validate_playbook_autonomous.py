@@ -208,6 +208,27 @@ S02 scope.
         report = self.validate_repo_high_risk_text(text)
         self.assertEqual(report["status"], "ok", report)
 
+    def test_unverified_limiter_dependency_contract_fails(self) -> None:
+        text = """# S02 Mood API Playbook
+
+Format: markdown_playbook_v1
+
+autonomous_gate_review evidence is required.
+
+## 1. Phase Overview
+
+S02 scope.
+
+## 2. Execution Items
+
+| step_id | phase | action | why_now | owner_type | prerequisites | repo_surfaces | deliverable | exit_criteria | allowed_write_roots | requires_red_green | required_verification_commands | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 01 | Security | Add POST rate limiting only through an already available in-memory limiter dependency. | now | autonomous_executor | none | docs/gstack/s02-mood-api-autoplan.md | src/api/security.py | If the limiter dependency is unavailable, block. | src/api/security.py | true | python -m pytest tests/test_api_security.py -q | none | none |
+"""
+        report = self.validate_high_risk_text(text)
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("unverified limiter dependency" in error for error in report["errors"]))
+
     def test_high_risk_old_swr_stage5_shape_fails(self) -> None:
         text = """# S02 Mood API Playbook
 

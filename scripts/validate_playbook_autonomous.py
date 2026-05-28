@@ -42,6 +42,11 @@ V2_SCOPE_PATTERNS = (
     r"\bzone4\b",
     r"\bdinner timing\b",
 )
+UNVERIFIED_DEPENDENCY_PATTERNS = (
+    r"\balready available in-memory limiter dependency\b",
+    r"\bplanned in-memory limiter dependency\b",
+    r"\blimiter dependency is unavailable\b",
+)
 CODE_PATH_PREFIXES = ("src/", "app/", "scripts/", "tests/")
 DEFAULT_REQUIRED_COLUMNS = {
     "action",
@@ -358,10 +363,18 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
                     errors.append(f"row {idx}: forbidden v1 UI language matched /{pattern}/")
 
         lower_row = row_text(row).lower()
+        for pattern in UNVERIFIED_DEPENDENCY_PATTERNS:
+            if re.search(pattern, lower_row, re.I):
+                errors.append(f"row {idx}: unverified limiter dependency contract matched /{pattern}/")
+
         for pattern in V2_SCOPE_PATTERNS:
             match = re.search(pattern, lower_row, re.I)
             if match and not allowed_v2_scope_context(lower_row, match):
                 errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
+
+    for pattern in UNVERIFIED_DEPENDENCY_PATTERNS:
+        if re.search(pattern, lowered, re.I):
+            errors.append(f"playbook unverified limiter dependency contract matched /{pattern}/")
 
     po_errors, po_plan = normalize_plan_orchestrator(path, text)
     errors.extend(po_errors)
