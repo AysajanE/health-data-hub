@@ -102,12 +102,14 @@
     ],
     "playbook": "docs/playbooks/s03-ingestion-provider.playbook.md",
     "required": true,
+    "retry_count": 1,
     "review_artifacts": [
       "docs/reviews/s03-autonomous-ingestion-evidence-review.md"
     ],
     "risk": "high",
     "slug": "s03-ingestion-provider",
-    "status": "pending"
+    "status": "replan_required",
+    "updated_at": "2026-05-29T17:17:03-04:00"
   },
   {
     "acceptance": [

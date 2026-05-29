@@ -5,8 +5,8 @@
     "S01",
     "S02"
   ],
-  "current_slice": null,
-  "last_event_id": 455,
+  "current_slice": "S03",
+  "last_event_id": 468,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [

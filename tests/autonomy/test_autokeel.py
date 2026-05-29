@@ -119,8 +119,9 @@ class AutoKeelTests(unittest.TestCase):
             copy_autonomy_fixture(root)
             op = AutoKeel(root=root, dry_run=True)
             slice_ = op.load_slices()[0]
-            text = """Write permission was denied. Here is the autoplan:
+            text = """The write wasn't approved. Here is the autoplan:
 
+```markdown
 # S01 Warehouse Foundation
 
 Deliverables: schema.
@@ -128,6 +129,7 @@ Verification: tests.
 Manual gates are forbidden.
 
 Let me know if you want changes.
+```
 """
             errors = op.validate_autoplan_text(slice_, text)
             self.assertIn("autoplan contains assistant wrapper/refusal text", errors)

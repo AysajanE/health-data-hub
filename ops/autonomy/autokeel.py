@@ -753,7 +753,16 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         lowered = text.lower()
         errors: list[str] = []
         slice_id = str(slice_.get("id", "")).lower()
-        if "write permission was denied" in lowered or "let me know if" in lowered:
+        wrapper_markers = (
+            "write permission was denied",
+            "write wasn't approved",
+            "write was not approved",
+            "here is the autoplan",
+            "i attempted to save",
+            "approve the write",
+            "let me know if",
+        )
+        if any(marker in lowered for marker in wrapper_markers) or "```" in text:
             errors.append("autoplan contains assistant wrapper/refusal text")
         if slice_id and slice_id not in lowered:
             errors.append(f"autoplan missing slice id {slice_.get('id')}")
