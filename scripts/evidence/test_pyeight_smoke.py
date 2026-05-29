@@ -10,11 +10,11 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from scripts.evidence.pyeight_smoke import main
+from scripts.evidence.pyeight_smoke import EightSleepConfig, ProviderIssue, collect, main
 
 
 class PyEightSmokeCollectorTests(unittest.TestCase):
-    def test_main_accept_fallback_records_decision_and_returns_success_when_env_missing(self) -> None:
+    def test_main_records_fallback_decision_and_returns_success_when_env_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             stdout = StringIO()
@@ -23,7 +23,7 @@ class PyEightSmokeCollectorTests(unittest.TestCase):
                 mock.patch("urllib.request.urlopen", side_effect=AssertionError("network should not run")),
                 redirect_stdout(stdout),
             ):
-                exit_code = main(["--root", str(root), "--accept-fallback", "--json"])
+                exit_code = main(["--root", str(root), "--json"])
 
             report = json.loads(stdout.getvalue())
             evidence_path = root / str(report["evidence"])
@@ -47,6 +47,89 @@ class PyEightSmokeCollectorTests(unittest.TestCase):
         self.assertEqual(decision_payload["slice"], "S03")
         self.assertEqual(decision_payload["tripwire"], "pyeight_smoke_failure")
         self.assertEqual(decision_payload["action"], "oura_only_v1")
+
+    def test_collect_records_fallback_when_provider_issue_occurs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            def failing_runner(_: Path, __: EightSleepConfig) -> dict[str, object]:
+                raise ProviderIssue("8 Sleep API unavailable", status="blocked_external")
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PYEIGHT_EMAIL": "user@example.com",
+                    "PYEIGHT_PASSWORD": "secret",
+                    "PYEIGHT_TIMEZONE": "America/Toronto",
+                    "PYEIGHT_CLIENT_ID": "client",
+                    "PYEIGHT_CLIENT_SECRET": "client-secret",
+                },
+                clear=True,
+            ):
+                report = collect(root, runner=failing_runner)
+
+            decisions = sorted((root / "ops/autonomy/decisions").glob("S03-pyeight-fallback-*.json"))
+            self.assertEqual(report["status"], "fallback_accepted")
+            self.assertEqual(report["errors"], [])
+            self.assertEqual(len(decisions), 1)
+            decision_payload = json.loads(decisions[0].read_text(encoding="utf-8"))
+            self.assertEqual(decision_payload["status"], "fallback_accepted")
+            self.assertEqual(decision_payload["evidence_status"], "blocked_external")
+            self.assertEqual(decision_payload["action"], "oura_only_v1")
+
+    def test_collect_records_fallback_when_summary_is_not_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            def blocked_runner(_: Path, __: EightSleepConfig) -> dict[str, object]:
+                return {"status": "blocked_external", "reason": "no recent sleep interval"}
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PYEIGHT_EMAIL": "user@example.com",
+                    "PYEIGHT_PASSWORD": "secret",
+                    "PYEIGHT_TIMEZONE": "America/Toronto",
+                    "PYEIGHT_CLIENT_ID": "client",
+                    "PYEIGHT_CLIENT_SECRET": "client-secret",
+                },
+                clear=True,
+            ):
+                report = collect(root, runner=blocked_runner)
+
+            decisions = sorted((root / "ops/autonomy/decisions").glob("S03-pyeight-fallback-*.json"))
+            self.assertEqual(report["status"], "fallback_accepted")
+            self.assertEqual(len(decisions), 1)
+            decision_payload = json.loads(decisions[0].read_text(encoding="utf-8"))
+            self.assertEqual(decision_payload["evidence_status"], "blocked_external")
+            self.assertIn("no recent sleep interval", decision_payload["reason"])
+
+    def test_existing_fallback_decision_short_circuits_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            decision_dir = root / "ops/autonomy/decisions"
+            decision_dir.mkdir(parents=True)
+            decision = decision_dir / "S03-pyeight-fallback-20260529T000000-0400.json"
+            decision.write_text(
+                json.dumps(
+                    {
+                        "created_at": "2026-05-29T00:00:00-04:00",
+                        "status": "fallback_accepted",
+                        "action": "oura_only_v1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("network should not run")),
+            ):
+                report = collect(root)
+
+            self.assertEqual(report["status"], "fallback_accepted")
+            self.assertEqual(report["errors"], [])
+            self.assertEqual(report["evidence"].startswith("private/evidence/S03/pyeight_smoke/"), True)
 
 
 if __name__ == "__main__":

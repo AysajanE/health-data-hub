@@ -514,7 +514,6 @@ def collect(
     root: Path,
     *,
     runner: Callable[[Path, EightSleepConfig], dict[str, Any]] = run_current_eight_sleep_summary,
-    accept_fallback: bool = False,
 ) -> dict[str, object]:
     decision = fallback_decision_exists(root)
     if decision:
@@ -522,28 +521,17 @@ def collect(
 
     missing_env = [key for key in REQUIRED_ENV if not os.environ.get(key)]
     if missing_env:
-        if accept_fallback:
-            decision = write_fallback_decision(
-                root,
-                evidence_status="blocked_external",
-                reason=f"missing optional 8 Sleep credentials: {', '.join(missing_env)}",
-            )
-            return write_fallback_report(
-                root,
-                decision=decision,
-                trigger_status="blocked_external",
-                reason="optional 8 Sleep credentials are absent; using Oura-only v1 fallback",
-            )
-        path = write_report(
+        decision = write_fallback_decision(
             root,
-            "pyeight_smoke",
-            {
-                "status": "blocked_external",
-                "missing_env": missing_env,
-                "legacy_pyeight_distribution_version": pyeight_distribution_version(),
-            },
+            evidence_status="blocked_external",
+            reason=f"missing optional 8 Sleep credentials: {', '.join(missing_env)}",
         )
-        return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": [f"missing {', '.join(missing_env)}"]}
+        return write_fallback_report(
+            root,
+            decision=decision,
+            trigger_status="blocked_external",
+            reason="optional 8 Sleep credentials are absent; using Oura-only v1 fallback",
+        )
 
     config = EightSleepConfig(
         email=os.environ["PYEIGHT_EMAIL"],
@@ -556,36 +544,15 @@ def collect(
         validate_timezone(config.timezone_name)
         summary = runner(root, config)
     except ProviderIssue as exc:
-        if accept_fallback:
-            decision = write_fallback_decision(root, evidence_status=exc.status, reason=exc.reason)
-            return write_fallback_report(root, decision=decision, trigger_status=exc.status, reason=exc.reason)
-        payload: dict[str, Any] = {
-            "status": exc.status,
-            "reason": exc.reason,
-            "legacy_pyeight_distribution_version": pyeight_distribution_version(),
-        }
-        if exc.http_status is not None:
-            payload["http_status"] = exc.http_status
-        if exc.error_type:
-            payload["error_type"] = exc.error_type
-        path = write_report(root, "pyeight_smoke", payload)
-        return {"status": exc.status, "evidence": str(path.relative_to(root)), "errors": [exc.reason]}
+        decision = write_fallback_decision(root, evidence_status=exc.status, reason=exc.reason)
+        return write_fallback_report(root, decision=decision, trigger_status=exc.status, reason=exc.reason)
     except Exception as exc:
         message = redact_text(
             str(exc) or type(exc).__name__,
             [config.email, config.password, config.client_id, config.client_secret],
         )
-        if accept_fallback:
-            decision = write_fallback_decision(root, evidence_status="error", reason=message)
-            return write_fallback_report(root, decision=decision, trigger_status="error", reason=message)
-        payload = {
-            "status": "error",
-            "error_type": type(exc).__name__,
-            "error": message,
-            "legacy_pyeight_distribution_version": pyeight_distribution_version(),
-        }
-        path = write_report(root, "pyeight_smoke", payload)
-        return {"status": "error", "evidence": str(path.relative_to(root)), "errors": [message]}
+        decision = write_fallback_decision(root, evidence_status="error", reason=message)
+        return write_fallback_report(root, decision=decision, trigger_status="error", reason=message)
 
     status = str(summary.get("status") or "error")
     if status not in {"ok", "blocked_external", "error"}:
@@ -597,7 +564,7 @@ def collect(
         "sanitization": "aggregate_counts_booleans_only_no_raw_payloads_or_identifiers",
         **summary,
     }
-    if status != "ok" and accept_fallback:
+    if status != "ok":
         decision = write_fallback_decision(root, evidence_status=status, reason=str(payload.get("reason") or "8 Sleep smoke evidence did not return ok"))
         return write_fallback_report(
             root,
@@ -615,10 +582,9 @@ def collect(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Collect 8 Sleep smoke evidence without logging secrets.")
     parser.add_argument("--root", default=".")
-    parser.add_argument("--accept-fallback", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    report = collect(Path(args.root).resolve(), accept_fallback=args.accept_fallback)
+    report = collect(Path(args.root).resolve())
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
