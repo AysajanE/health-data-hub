@@ -51,6 +51,7 @@ CLIENT_API_URL = "https://client-api.8slp.net/v1"
 REQUEST_TIMEOUT_SECONDS = 20
 RECENT_SLEEP_MAX_AGE_DAYS = 7
 CREDENTIAL_CACHE = Path("data/secrets/eight_sleep_auth_cache.json")
+FALLBACK_DECISION_PREFIX = "S03-pyeight-fallback"
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,54 @@ def fallback_decision_exists(root: Path) -> Path | None:
         if payload.get("status") == "fallback_accepted" and payload.get("action") == "oura_only_v1":
             return decision
     return None
+
+
+def write_fallback_decision(root: Path, *, evidence_status: str, reason: str) -> Path:
+    existing = fallback_decision_exists(root)
+    if existing:
+        return existing
+
+    decisions_dir = root / "ops/autonomy/decisions"
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+    path = decisions_dir / f"{FALLBACK_DECISION_PREFIX}-{timestamp}.json"
+    payload = {
+        "schema_version": "autokeel.provider_evidence_decision.v1",
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "slice": "S03",
+        "provider": "pyeight",
+        "status": "fallback_accepted",
+        "tripwire": "pyeight_smoke_failure",
+        "action": "oura_only_v1",
+        "source": "pyeight_smoke",
+        "reason": reason,
+        "evidence_status": evidence_status,
+        "fallback_active": True,
+        "sanitized": True,
+        "raw_payload_tracked": False,
+        "secret_values_tracked": False,
+    }
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(tmp_path, 0o600)
+    tmp_path.replace(path)
+    os.chmod(path, 0o600)
+    return path
+
+
+def write_fallback_report(root: Path, *, decision: Path, trigger_status: str, reason: str | None) -> dict[str, object]:
+    path = write_report(
+        root,
+        "pyeight_smoke",
+        {
+            "status": "fallback_accepted",
+            "decision": str(decision.relative_to(root)),
+            "fallback": "oura_only_v1",
+            "trigger_status": trigger_status,
+            "reason": reason,
+        },
+    )
+    return {"status": "fallback_accepted", "evidence": str(path.relative_to(root)), "errors": []}
 
 
 def validate_timezone(timezone_name: str) -> ZoneInfo:
@@ -465,22 +514,26 @@ def collect(
     root: Path,
     *,
     runner: Callable[[Path, EightSleepConfig], dict[str, Any]] = run_current_eight_sleep_summary,
+    accept_fallback: bool = False,
 ) -> dict[str, object]:
     decision = fallback_decision_exists(root)
     if decision:
-        path = write_report(
-            root,
-            "pyeight_smoke",
-            {
-                "status": "fallback_accepted",
-                "decision": str(decision.relative_to(root)),
-                "fallback": "oura_only_v1",
-            },
-        )
-        return {"status": "fallback_accepted", "evidence": str(path.relative_to(root)), "errors": []}
+        return write_fallback_report(root, decision=decision, trigger_status="fallback_accepted", reason="existing fallback decision in force")
 
     missing_env = [key for key in REQUIRED_ENV if not os.environ.get(key)]
     if missing_env:
+        if accept_fallback:
+            decision = write_fallback_decision(
+                root,
+                evidence_status="blocked_external",
+                reason=f"missing optional 8 Sleep credentials: {', '.join(missing_env)}",
+            )
+            return write_fallback_report(
+                root,
+                decision=decision,
+                trigger_status="blocked_external",
+                reason="optional 8 Sleep credentials are absent; using Oura-only v1 fallback",
+            )
         path = write_report(
             root,
             "pyeight_smoke",
@@ -503,6 +556,9 @@ def collect(
         validate_timezone(config.timezone_name)
         summary = runner(root, config)
     except ProviderIssue as exc:
+        if accept_fallback:
+            decision = write_fallback_decision(root, evidence_status=exc.status, reason=exc.reason)
+            return write_fallback_report(root, decision=decision, trigger_status=exc.status, reason=exc.reason)
         payload: dict[str, Any] = {
             "status": exc.status,
             "reason": exc.reason,
@@ -519,6 +575,9 @@ def collect(
             str(exc) or type(exc).__name__,
             [config.email, config.password, config.client_id, config.client_secret],
         )
+        if accept_fallback:
+            decision = write_fallback_decision(root, evidence_status="error", reason=message)
+            return write_fallback_report(root, decision=decision, trigger_status="error", reason=message)
         payload = {
             "status": "error",
             "error_type": type(exc).__name__,
@@ -538,6 +597,14 @@ def collect(
         "sanitization": "aggregate_counts_booleans_only_no_raw_payloads_or_identifiers",
         **summary,
     }
+    if status != "ok" and accept_fallback:
+        decision = write_fallback_decision(root, evidence_status=status, reason=str(payload.get("reason") or "8 Sleep smoke evidence did not return ok"))
+        return write_fallback_report(
+            root,
+            decision=decision,
+            trigger_status=status,
+            reason=str(payload.get("reason") or "8 Sleep smoke evidence did not return ok"),
+        )
     path = write_report(root, "pyeight_smoke", payload)
     errors: list[str] = []
     if status != "ok":
@@ -548,9 +615,10 @@ def collect(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Collect 8 Sleep smoke evidence without logging secrets.")
     parser.add_argument("--root", default=".")
+    parser.add_argument("--accept-fallback", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    report = collect(Path(args.root).resolve())
+    report = collect(Path(args.root).resolve(), accept_fallback=args.accept_fallback)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
