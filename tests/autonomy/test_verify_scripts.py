@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from ops.autonomy.autokeel import write_json_atomic
 from scripts.check_autonomous_review_exists import check_review
@@ -602,6 +603,48 @@ class VerifyScriptsTests(unittest.TestCase):
                 report["checks"]["pyeight_decision"],
                 "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
             )
+
+    def test_verify_s03_readiness_treats_blank_oura_token_as_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text(
+                "data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n",
+                encoding="utf-8",
+            )
+            (root / "ops/autonomy/decisions").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {"id": "S01", "required": True, "status": "complete"},
+                    {"id": "S02", "required": True, "status": "complete"},
+                    {
+                        "id": "S03",
+                        "required": True,
+                        "status": "pending",
+                        "review_artifacts": ["docs/reviews/s03-autonomous-ingestion-evidence-review.md"],
+                    },
+                ],
+            )
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
+            write_json_atomic(
+                root / "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
+                {
+                    "schema_version": "autokeel.provider_evidence_decision.v1",
+                    "slice": "S03",
+                    "provider": "pyeight",
+                    "status": "ok",
+                    "evidence_status": "ok",
+                    "fallback_active": False,
+                },
+            )
+
+            with patch.dict("os.environ", {"OURA_ACCESS_TOKEN": "   "}):
+                report = verify_s03_readiness(root)
+
+            self.assertEqual(report["status"], "error")
+            self.assertEqual(report["checks"]["missing_env"], ["OURA_ACCESS_TOKEN"])
+            self.assertIn("Oura evidence preflight", "\n".join(report["errors"]))
 
     def test_verify_s03_readiness_reports_newest_provider_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
