@@ -1,0 +1,19 @@
+{
+  "schema_version": "autokeel.provider_evidence_decision.v1",
+  "slice": "S03",
+  "provider": "pyeight",
+  "status": "ok",
+  "evidence_status": "ok",
+  "evidence_path": "private/evidence/S03/pyeight_smoke/pyeight_smoke-20260529T175729-0400.json",
+  "evidence_recorded_at": "2026-05-29T17:57:29-04:00",
+  "fallback_active": false,
+  "decision": "include_8_sleep_under_tripwire",
+  "sanitized": true,
+  "raw_payload_tracked": false,
+  "secret_values_tracked": false,
+  "notes": [
+    "This tracked decision records only the local evidence status and relative private evidence path.",
+    "The private evidence file remains gitignored and contains no tracked raw provider payload.",
+    "The pyeight fallback is not active for this decision."
+  ]
+}
