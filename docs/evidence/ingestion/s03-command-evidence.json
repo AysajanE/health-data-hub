@@ -1,0 +1,27 @@
+{
+  "schema_version": "autokeel_command_evidence_v1",
+  "created_at": "2026-05-29T19:46:43-0400",
+  "slice": "S03",
+  "status": "ok",
+  "commands": [
+    {
+      "command": "rg -n \"direct Oura API v2 periodic pull|oura_only_v1|private/evidence/S03\" docs/evidence/ingestion/s03-ingestion-evidence.md",
+      "exit_code": 0,
+      "stdout_tail": "4:- Scope: committed, fully redacted provider-decision summary only; runtime evidence remains under gitignored `private/evidence/S03/`\n12:- Decision: use direct Oura API v2 periodic pull for v1 (`direct_oura_api_v2_periodic_pull`)\n14:- Runtime evidence report path: `private/evidence/S03/oura_smoke/oura_smoke-20260529T101311-0400.json`\n19:- Current decision of record: `oura_only_v1`\n28:- Earlier runtime evidence report path: `private/evidence/S03/pyeight_smoke/pyeight_smoke-20260529T175729-0400.json`\n41:- Private runtime evidence remains outside git under `private/evidence/S03/`.\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "rg -n '\"status\": \"fallback_accepted\"|\"action\": \"oura_only_v1\"' ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json",
+      "exit_code": 0,
+      "stdout_tail": "2:  \"action\": \"oura_only_v1\",\n14:  \"status\": \"fallback_accepted\",\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    }
+  ],
+  "redaction": "Command tails are sanitized summaries. No raw health data, provider payloads, account identifiers, token values, DuckDB files, or private evidence contents are committed."
+}
