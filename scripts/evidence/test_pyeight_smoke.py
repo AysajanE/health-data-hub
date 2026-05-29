@@ -10,7 +10,7 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from scripts.evidence.pyeight_smoke import EightSleepConfig, ProviderIssue, collect, main
+from scripts.evidence.pyeight_smoke import EightSleepConfig, ProviderIssue, collect, main, run_self_checks
 
 
 class PyEightSmokeCollectorTests(unittest.TestCase):
@@ -186,6 +186,41 @@ class PyEightSmokeCollectorTests(unittest.TestCase):
             self.assertEqual(report["status"], "fallback_accepted")
             self.assertEqual(report["errors"], [])
             self.assertEqual(report["evidence"].startswith("private/evidence/S03/pyeight_smoke/"), True)
+
+    def test_existing_recorded_fallback_keeps_raw_status_for_library_callers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            decision_dir = root / "ops/autonomy/decisions"
+            decision_dir.mkdir(parents=True)
+            decision = decision_dir / "S03-pyeight-fallback-20260529T000000-0400.json"
+            decision.write_text(
+                json.dumps(
+                    {
+                        "created_at": "2026-05-29T00:00:00-04:00",
+                        "status": "fallback_accepted",
+                        "action": "oura_only_v1",
+                        "evidence_status": "blocked_external",
+                        "reason": "stored fallback still reflects missing local 8 Sleep credentials",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("network should not run")),
+            ):
+                report = collect(root)
+
+            evidence_path = root / str(report["evidence"])
+            evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "blocked_external")
+            self.assertEqual(report["errors"], ["stored fallback still reflects missing local 8 Sleep credentials"])
+            self.assertEqual(evidence_payload["status"], "blocked_external")
+            self.assertEqual(evidence_payload["decision"], str(decision.relative_to(root)))
+
+    def test_run_self_checks_exercises_documented_paths(self) -> None:
+        run_self_checks()
 
 
 if __name__ == "__main__":
