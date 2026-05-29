@@ -1,0 +1,25 @@
+{
+  "slice": "S03",
+  "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+  "old_run_branch_head": "eff475620f9fe19beb1067dfa76482e6aa50d734",
+  "new_target_commit": "75af17441b6b2822e4373676ac016ff769f8004b",
+  "merge_base": "eff475620f9fe19beb1067dfa76482e6aa50d734",
+  "new_run_branch": "orchestrator/run-refresh/RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864/4",
+  "item_checkpoint_ancestry_proof": "git merge-base old_run_branch_head new_target_commit equals old_run_branch_head; target is a descendant of the passed item 02 checkpoint and item 03 execute checkpoint, adding only the pyEight fallback contract repair.",
+  "terminal_counts_before": {
+    "passed": 2,
+    "none": 3,
+    "escalated": 1,
+    "blocked_external": 0,
+    "awaiting_human_gate": 0
+  },
+  "terminal_counts_after": {
+    "passed": 2,
+    "none": 3,
+    "escalated": 1,
+    "blocked_external": 0,
+    "awaiting_human_gate": 0
+  },
+  "reason": "Retarget S03 active run to a descendant branch carrying the item 03 pyEight fallback contract repair, and rebuild the normalized plan from the repaired saved playbook snapshot so the fallback decision artifact is conditional instead of unconditional.",
+  "closure_evidence": "docs/evidence/s03-item03-pyeight-contract-repair-20260529.md"
+}
