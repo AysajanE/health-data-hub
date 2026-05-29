@@ -68,9 +68,13 @@ class PyEightSmokeCollectorTests(unittest.TestCase):
             ):
                 report = collect(root, runner=failing_runner)
 
+            evidence_path = root / str(report["evidence"])
+            evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
             decisions = sorted((root / "ops/autonomy/decisions").glob("S03-pyeight-fallback-*.json"))
-            self.assertEqual(report["status"], "fallback_accepted")
-            self.assertEqual(report["errors"], [])
+            self.assertEqual(report["status"], "blocked_external")
+            self.assertEqual(report["errors"], ["8 Sleep API unavailable"])
+            self.assertEqual(evidence_payload["status"], "blocked_external")
+            self.assertEqual(evidence_payload["fallback"], "oura_only_v1")
             self.assertEqual(len(decisions), 1)
             decision_payload = json.loads(decisions[0].read_text(encoding="utf-8"))
             self.assertEqual(decision_payload["status"], "fallback_accepted")
@@ -97,12 +101,64 @@ class PyEightSmokeCollectorTests(unittest.TestCase):
             ):
                 report = collect(root, runner=blocked_runner)
 
+            evidence_path = root / str(report["evidence"])
+            evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
             decisions = sorted((root / "ops/autonomy/decisions").glob("S03-pyeight-fallback-*.json"))
-            self.assertEqual(report["status"], "fallback_accepted")
+            self.assertEqual(report["status"], "blocked_external")
+            self.assertEqual(report["errors"], ["no recent sleep interval"])
+            self.assertEqual(evidence_payload["status"], "blocked_external")
             self.assertEqual(len(decisions), 1)
             decision_payload = json.loads(decisions[0].read_text(encoding="utf-8"))
             self.assertEqual(decision_payload["evidence_status"], "blocked_external")
             self.assertIn("no recent sleep interval", decision_payload["reason"])
+
+    def test_collect_writes_success_decision_when_summary_is_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            def ok_runner(_: Path, __: EightSleepConfig) -> dict[str, object]:
+                return {
+                    "status": "ok",
+                    "auth_flow": "oauth_password_grant_current_api",
+                    "authenticated": True,
+                    "credential_cache_used": False,
+                    "user_present": True,
+                    "device_count": 1,
+                    "current_device_present": True,
+                    "query_window_days": 7,
+                    "trend_day_count": 3,
+                    "sleep_day_count": 2,
+                    "recent_complete_sleep_interval_present": True,
+                    "sleep_score_present": True,
+                    "sleep_stages_present": True,
+                    "heart_rate_signal_present": True,
+                    "resp_rate_signal_present": True,
+                    "hrv_signal_present": True,
+                    "freshness_bucket": "0-1d",
+                }
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PYEIGHT_EMAIL": "user@example.com",
+                    "PYEIGHT_PASSWORD": "secret",
+                    "PYEIGHT_TIMEZONE": "America/Toronto",
+                    "PYEIGHT_CLIENT_ID": "client",
+                    "PYEIGHT_CLIENT_SECRET": "client-secret",
+                },
+                clear=True,
+            ):
+                report = collect(root, runner=ok_runner)
+
+            decisions = sorted((root / "ops/autonomy/decisions").glob("S03-pyeight-evidence-*.json"))
+            self.assertEqual(report["status"], "ok")
+            self.assertEqual(report["errors"], [])
+            self.assertEqual(len(decisions), 1)
+            decision_payload = json.loads(decisions[0].read_text(encoding="utf-8"))
+            self.assertEqual(decision_payload["status"], "ok")
+            self.assertEqual(decision_payload["provider"], "pyeight")
+            self.assertEqual(decision_payload["decision"], "include_8_sleep_under_tripwire")
+            self.assertFalse(decision_payload["fallback_active"])
 
     def test_existing_fallback_decision_short_circuits_collection(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

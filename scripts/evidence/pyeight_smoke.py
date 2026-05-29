@@ -52,6 +52,7 @@ REQUEST_TIMEOUT_SECONDS = 20
 RECENT_SLEEP_MAX_AGE_DAYS = 7
 CREDENTIAL_CACHE = Path("data/secrets/eight_sleep_auth_cache.json")
 FALLBACK_DECISION_PREFIX = "S03-pyeight-fallback"
+SUCCESS_DECISION_PREFIX = "S03-pyeight-evidence"
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,14 @@ def fallback_decision_exists(root: Path) -> Path | None:
     return None
 
 
+def write_json_file(path: Path, payload: dict[str, Any], *, mode: int = 0o600) -> None:
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(tmp_path, mode)
+    tmp_path.replace(path)
+    os.chmod(path, mode)
+
+
 def write_fallback_decision(root: Path, *, evidence_status: str, reason: str) -> Path:
     existing = fallback_decision_exists(root)
     if existing:
@@ -127,11 +136,36 @@ def write_fallback_decision(root: Path, *, evidence_status: str, reason: str) ->
         "raw_payload_tracked": False,
         "secret_values_tracked": False,
     }
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(tmp_path, 0o600)
-    tmp_path.replace(path)
-    os.chmod(path, 0o600)
+    write_json_file(path, payload)
+    return path
+
+
+def write_success_decision(root: Path, *, evidence_path: Path) -> Path:
+    decisions_dir = root / "ops/autonomy/decisions"
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+    path = decisions_dir / f"{SUCCESS_DECISION_PREFIX}-{timestamp}.json"
+    payload = {
+        "schema_version": "autokeel.provider_evidence_decision.v1",
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "slice": "S03",
+        "provider": "pyeight",
+        "status": "ok",
+        "evidence_status": "ok",
+        "evidence_path": str(evidence_path.relative_to(root)),
+        "evidence_recorded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "fallback_active": False,
+        "decision": "include_8_sleep_under_tripwire",
+        "sanitized": True,
+        "raw_payload_tracked": False,
+        "secret_values_tracked": False,
+        "notes": [
+            "This tracked decision records only the local evidence status and relative private evidence path.",
+            "The private evidence file remains gitignored and contains no tracked raw provider payload.",
+            "The pyeight fallback is not active for this decision.",
+        ],
+    }
+    write_json_file(path, payload)
     return path
 
 
@@ -148,6 +182,28 @@ def write_fallback_report(root: Path, *, decision: Path, trigger_status: str, re
         },
     )
     return {"status": "fallback_accepted", "evidence": str(path.relative_to(root)), "errors": []}
+
+
+def write_status_report(
+    root: Path,
+    *,
+    status: str,
+    summary: dict[str, Any],
+    decision: Path | None = None,
+) -> dict[str, object]:
+    reason = summary.get("reason")
+    payload = {
+        **summary,
+        "status": status,
+        "legacy_pyeight_distribution_version": pyeight_distribution_version(),
+        "sanitization": "aggregate_counts_booleans_only_no_raw_payloads_or_identifiers",
+    }
+    if decision is not None:
+        payload["decision"] = str(decision.relative_to(root))
+        payload["fallback"] = "oura_only_v1"
+    path = write_report(root, "pyeight_smoke", payload)
+    errors = [str(reason)] if isinstance(reason, str) and reason else []
+    return {"status": status, "evidence": str(path.relative_to(root)), "errors": errors}
 
 
 def validate_timezone(timezone_name: str) -> ZoneInfo:
@@ -514,6 +570,7 @@ def collect(
     root: Path,
     *,
     runner: Callable[[Path, EightSleepConfig], dict[str, Any]] = run_current_eight_sleep_summary,
+    fallback_to_decision: bool = False,
 ) -> dict[str, object]:
     decision = fallback_decision_exists(root)
     if decision:
@@ -521,16 +578,24 @@ def collect(
 
     missing_env = [key for key in REQUIRED_ENV if not os.environ.get(key)]
     if missing_env:
+        reason = f"missing optional 8 Sleep credentials: {', '.join(missing_env)}"
         decision = write_fallback_decision(
             root,
             evidence_status="blocked_external",
-            reason=f"missing optional 8 Sleep credentials: {', '.join(missing_env)}",
+            reason=reason,
         )
-        return write_fallback_report(
+        if fallback_to_decision:
+            return write_fallback_report(
+                root,
+                decision=decision,
+                trigger_status="blocked_external",
+                reason="optional 8 Sleep credentials are absent; using Oura-only v1 fallback",
+            )
+        return write_status_report(
             root,
+            status="blocked_external",
+            summary={"reason": reason},
             decision=decision,
-            trigger_status="blocked_external",
-            reason="optional 8 Sleep credentials are absent; using Oura-only v1 fallback",
         )
 
     config = EightSleepConfig(
@@ -545,38 +610,52 @@ def collect(
         summary = runner(root, config)
     except ProviderIssue as exc:
         decision = write_fallback_decision(root, evidence_status=exc.status, reason=exc.reason)
-        return write_fallback_report(root, decision=decision, trigger_status=exc.status, reason=exc.reason)
+        if fallback_to_decision:
+            return write_fallback_report(root, decision=decision, trigger_status=exc.status, reason=exc.reason)
+        return write_status_report(
+            root,
+            status=exc.status,
+            summary={"reason": exc.reason},
+            decision=decision,
+        )
     except Exception as exc:
         message = redact_text(
             str(exc) or type(exc).__name__,
             [config.email, config.password, config.client_id, config.client_secret],
         )
         decision = write_fallback_decision(root, evidence_status="error", reason=message)
-        return write_fallback_report(root, decision=decision, trigger_status="error", reason=message)
+        if fallback_to_decision:
+            return write_fallback_report(root, decision=decision, trigger_status="error", reason=message)
+        return write_status_report(
+            root,
+            status="error",
+            summary={"reason": message},
+            decision=decision,
+        )
 
     status = str(summary.get("status") or "error")
     if status not in {"ok", "blocked_external", "error"}:
         status = "error"
         summary = {**summary, "reason": "collector runner returned invalid status"}
-    payload = {
-        "status": status,
-        "legacy_pyeight_distribution_version": pyeight_distribution_version(),
-        "sanitization": "aggregate_counts_booleans_only_no_raw_payloads_or_identifiers",
-        **summary,
-    }
     if status != "ok":
-        decision = write_fallback_decision(root, evidence_status=status, reason=str(payload.get("reason") or "8 Sleep smoke evidence did not return ok"))
-        return write_fallback_report(
+        reason = str(summary.get("reason") or "8 Sleep smoke evidence did not return ok")
+        decision = write_fallback_decision(root, evidence_status=status, reason=reason)
+        if fallback_to_decision:
+            return write_fallback_report(
+                root,
+                decision=decision,
+                trigger_status=status,
+                reason=reason,
+            )
+        return write_status_report(
             root,
+            status=status,
+            summary={**summary, "reason": reason},
             decision=decision,
-            trigger_status=status,
-            reason=str(payload.get("reason") or "8 Sleep smoke evidence did not return ok"),
         )
-    path = write_report(root, "pyeight_smoke", payload)
-    errors: list[str] = []
-    if status != "ok":
-        errors.append(str(payload.get("reason") or "8 Sleep smoke evidence did not return ok"))
-    return {"status": status, "evidence": str(path.relative_to(root)), "errors": errors}
+    report = write_status_report(root, status=status, summary=summary)
+    write_success_decision(root, evidence_path=root / str(report["evidence"]))
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -584,7 +663,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    report = collect(Path(args.root).resolve())
+    report = collect(Path(args.root).resolve(), fallback_to_decision=True)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
