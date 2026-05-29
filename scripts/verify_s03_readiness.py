@@ -94,7 +94,7 @@ def verify_s03_readiness(root: Path) -> dict[str, Any]:
 
     oura_ok, oura_path = evidence_report_exists(root, "private/evidence/S03/oura_smoke")
     checks["oura_evidence"] = oura_path
-    missing_env = [name for name in ("OURA_ACCESS_TOKEN",) if not os.environ.get(name)]
+    missing_env = [name for name in ("OURA_ACCESS_TOKEN",) if not (os.environ.get(name) or "").strip()]
     checks["required_token_env_present"] = not missing_env
     checks["missing_env"] = missing_env
     checks["secret_values_logged"] = False
