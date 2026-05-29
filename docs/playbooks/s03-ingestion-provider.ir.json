@@ -20,7 +20,7 @@
     "scripts/check_no_tracked_data.py",
     "scripts/check_autonomous_review_exists.py"
   ],
-  "compiled_at": "2026-05-29T21:21:25+00:00",
+  "compiled_at": "2026-05-29T21:27:29+00:00",
   "constraints": [
     "**Personal use first.** No multi-tenant infra, no compliance gates, no scale concerns.",
     "**Local-first / user-owned data.** No cloud lock-in, no third-party data brokers. DuckDB on the user's Mac. Backups to iCloud Drive (encrypted with `age`, or via Advanced Data Protection).",
