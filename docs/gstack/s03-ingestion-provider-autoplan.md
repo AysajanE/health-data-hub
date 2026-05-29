@@ -47,7 +47,7 @@ Runtime, non-committed evidence is written under `private/evidence/S03/{oura_smo
 ### 8 Sleep optional smoke and week-2 tripwire fallback
 
 - [ ] Provide the optional 8 Sleep (`pyEight`) smoke collector. It authenticates via the current 8 Sleep token flow using `PYEIGHT_*` env, confirms recent sleep-trend reachability, and writes an aggregate-only, `0600` report under `private/evidence/S03/pyeight_smoke/` emitting only `ok`, `blocked_external`, `error`, or `fallback_accepted` — never raw payloads or identifiers. When `pyEight` is not stable, write the explicit `oura_only_v1` fallback decision file so the week-2 tripwire is recorded, after which the collector reports `fallback_accepted` (exit 0).
-  Files: `scripts/evidence/pyeight_smoke.py`; `ops/autonomy/decisions/S03-pyeight-fallback-<timestamp>.json`
+  Files: `scripts/evidence/pyeight_smoke.py`; `ops/autonomy/decisions/` (fallback decision file written only when the week-2 tripwire fires)
   Verify: `python scripts/evidence/pyeight_smoke.py --json`
 
 ### Committed redacted ingestion evidence summary and command evidence
