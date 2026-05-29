@@ -226,11 +226,11 @@ Manual gates are forbidden.
             self.assertEqual(op.load_state()["active_run"]["run_id"], "RUN_TEST")
 
     def test_pre_po_contract_runs_real_po_list_items_and_doctor(self) -> None:
-        calls: list[list[str]] = []
+        calls: list[tuple[list[str], dict[str, str]]] = []
 
         class ContractRunner:
             def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
-                calls.append(list(argv))
+                calls.append((list(argv), dict(env or {})))
                 joined = " ".join(str(part) for part in argv)
                 if "list-items" in joined or "doctor" in joined:
                     return CommandResult(list(argv), 0, '{"status":"ok"}', "")
@@ -249,10 +249,74 @@ Manual gates are forbidden.
             result = op.start_or_resume_po(op.load_slices()[0])
 
             self.assertTrue(result.ok)
-            joined_calls = [" ".join(call) for call in calls]
+            joined_calls = [" ".join(call) for call, _env in calls]
             self.assertTrue(any("list-items" in call for call in joined_calls))
             self.assertTrue(any("doctor" in call for call in joined_calls))
             self.assertTrue(any("supervise run" in call for call in joined_calls))
+            contract_env = {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"}
+            contract_envs = [
+                env
+                for call, env in calls
+                if "list-items" in " ".join(call) or "doctor" in " ".join(call)
+            ]
+            self.assertEqual(contract_envs, [contract_env, contract_env])
+
+    def test_po_start_checkpoints_allowed_changes_before_contract_doctor(self) -> None:
+        statuses: dict[str, str] = {}
+        envs: dict[str, dict[str, str]] = {}
+
+        class CleanCheckoutRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                joined = " ".join(str(part) for part in argv)
+                stage = None
+                if "list-items" in joined:
+                    stage = "list-items"
+                elif "doctor" in joined:
+                    stage = "doctor"
+                elif "supervise run" in joined:
+                    stage = "supervise"
+
+                if stage:
+                    status = subprocess.run(
+                        ["git", "status", "--short"],
+                        cwd=root,
+                        text=True,
+                        capture_output=True,
+                        check=True,
+                    ).stdout
+                    statuses[stage] = status
+                    envs[stage] = dict(env or {})
+                    if status:
+                        return CommandResult(list(argv), 99, "", f"{stage} saw dirty checkout:\n{status}")
+
+                if stage in {"list-items", "doctor"}:
+                    return CommandResult(list(argv), 0, '{"status":"ok"}', "")
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_TEST"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            bootstrap = AutoKeel(root=root, dry_run=False)
+            bootstrap.ensure_plan_orchestrator_product_shim()
+            init_git_repo(root)
+            playbook = root / "docs/playbooks/s01-warehouse.playbook.md"
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text("playbook", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.log_event("dirty_before_contract", {"ok": True}, slice_id="S01")
+            op.runner = CleanCheckoutRunner()
+
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(result.ok, result.stderr)
+            self.assertEqual(statuses["list-items"], "")
+            self.assertEqual(statuses["doctor"], "")
+            self.assertEqual(statuses["supervise"], "")
+            expected_env = {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"}
+            self.assertEqual(envs["list-items"], expected_env)
+            self.assertEqual(envs["doctor"], expected_env)
+            self.assertEqual(envs["supervise"], expected_env)
 
     def test_pre_po_contract_rejects_po_doctor_failure(self) -> None:
         class ContractRejectRunner:

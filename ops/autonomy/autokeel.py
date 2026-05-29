@@ -3168,6 +3168,7 @@ Additional validator requirements:
         return result
 
     def validate_po_contract_before_start(self, playbook: Path) -> CommandResult:
+        contract_env = {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"}
         list_items = self.runner.run(
             self.plan_orchestrator_command(
                 "list-items",
@@ -3177,6 +3178,7 @@ Additional validator requirements:
                 "json",
             ),
             cwd=self.root,
+            env=contract_env,
             execute_in_dry_run=True,
         )
         if not list_items.ok:
@@ -3190,6 +3192,7 @@ Additional validator requirements:
                 "json",
             ),
             cwd=self.root,
+            env=contract_env,
             execute_in_dry_run=True,
         )
         if not doctor.ok:
@@ -3852,6 +3855,13 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if not failure_guard.ok:
             return failure_guard
 
+        # PO doctor enforces a clean tracked checkout. Commit only the allowed
+        # AutoKeel launch artifacts before asking the real PO parser/doctor to
+        # accept the playbook contract.
+        checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
+        if not checkpoint.ok:
+            return checkpoint
+
         po_contract = self.validate_po_contract_before_start(playbook)
         self.log_event(
             "po_contract_validated" if po_contract.ok else "po_contract_rejected",
@@ -3875,6 +3885,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
             self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="PO contract validation failed")
             return po_contract
 
+        # The contract-validation event itself mutates the AutoKeel log; checkpoint
+        # that audit trail before handing control to supervised PO execution.
         checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
         if not checkpoint.ok:
             return checkpoint

@@ -91,6 +91,7 @@
       "private/evidence/S03",
       "docs/evidence/ingestion"
     ],
+    "failure_path": "ops/autonomy/failures/S03-compile_failure-20260529T172127-0400-c035d4ea.md",
     "fallbacks": {
       "pyeight_smoke_failure": "oura_only_v1"
     },
@@ -102,14 +103,14 @@
     ],
     "playbook": "docs/playbooks/s03-ingestion-provider.playbook.md",
     "required": true,
-    "retry_count": 1,
+    "retry_count": 0,
     "review_artifacts": [
       "docs/reviews/s03-autonomous-ingestion-evidence-review.md"
     ],
     "risk": "high",
     "slug": "s03-ingestion-provider",
     "status": "replan_required",
-    "updated_at": "2026-05-29T17:17:03-04:00"
+    "updated_at": "2026-05-29T17:25:45-04:00"
   },
   {
     "acceptance": [

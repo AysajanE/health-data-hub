@@ -1,0 +1,175 @@
+{
+  "candidate_repo_paths": [
+    "/",
+    "data/warehouse.duckdb",
+    "models/eval.jsonl",
+    "Library/Logs/healthhub.log",
+    "data/secrets/oura_tokens.json",
+    "scripts/oura_auth.py",
+    "data/secrets/eight_session.json",
+    "data/.healthhub.lock",
+    "scripts/setup_permissions.py",
+    "scripts/evidence/oura_smoke.py",
+    "scripts/evidence/pyeight_smoke.py",
+    "scripts/evidence/_collector_common.py",
+    "docs/evidence/ingestion/s03-ingestion-evidence.md",
+    "docs/evidence/ingestion/s03-command-evidence.json",
+    "docs/reviews/s03-autonomous-ingestion-evidence-review.md",
+    "ops/autonomy/failure_ledger.jsonl",
+    "scripts/verify_s03_readiness.py",
+    "scripts/check_no_tracked_data.py",
+    "scripts/check_autonomous_review_exists.py"
+  ],
+  "compiled_at": "2026-05-29T21:21:25+00:00",
+  "constraints": [
+    "**Personal use first.** No multi-tenant infra, no compliance gates, no scale concerns.",
+    "**Local-first / user-owned data.** No cloud lock-in, no third-party data brokers. DuckDB on the user's Mac. Backups to iCloud Drive (encrypted with `age`, or via Advanced Data Protection).",
+    "**Reuse plumbing.** Use Open Wearables (`github.com/the-momentum/open-wearables`) for device ingestion where supported; use community-built `pyEight` for 8 Sleep. Don't reinvent OAuth and provider adapters.",
+    "**Sleep stack MVP first.** **Oura + mood log are required for v1.** 8 Sleep is included if `pyEight` ingestion is stable by end of week 2 (per Tripwires); if not, ship Oura-only as a first-class path, not a disappointing exception. Garmin / Withings / chest HRM deferred to v2.",
+    "**Mood-log UX must be sustainable.** A daily mood log that takes >30 seconds will not survive. Target: one tap on phone home screen via iOS Shortcut. **MVP frequency: 1x/day (evening reflection).** Multi-daily logging deferred to v2 once the once-a-day discipline is proven sustainable for 30 consecutive days.",
+    "**Network access:** v1 default is **home Wi-Fi only** for the mood-log iOS Shortcut. Simplest possible path; eliminates Tailscale + Shortcut + iOS-sleep fragility from the critical path. If 30-day usage proves it's too constraining (mood-logging missed because you weren't home in the evening), upgrade to Tailscale post-v1. Single decision saves an entire category of debugging.",
+    "**Statistical floor:** with `N_model` < 30 model-ready days (see \"N_model definition\" below), ridge will overfit. v1 model uses exactly **4 features**: `total_sleep_min`, `hrv_z` (z-score against prior-only baseline; `hrv_avg_ms` is display metadata only), `deep_sleep_pct`, `prior_day_feeling`. Workout zone time / training load deferred to v2 (requires Garmin). Feature expansion deferred until `N_model` \u226560.",
+    "**`N_model` definition (CRITICAL \u2014 used by all gates):**",
+    "**Honest uncertainty.** Counterfactuals must surface confidence intervals; predictions must avoid false precision. A \"your sleep score will be 73 tomorrow\" claim with no uncertainty erodes trust the first time it's wrong.",
+    "**Solo build, weekends + evenings.** No team, no full-time hours. **~6-10 hours per week realistically available, ~96-160 hours total over the 16-week plan** (low end = 6\u00d716, high end = 10\u00d716). All \"X weeks\" references in this doc are calendar weeks on that solo schedule, not full-time equivalents. **Honest acknowledgment:** the external expert review estimated 140-210 hours for this scope. The doc's 96-160 range is at the optimistic end of that. The mitigation isn't \"less work\" \u2014 it's \"if week 9 baseline gate fails, halt feature work and let data accumulate,\" which defers ~30 hours of UI polish work into the contingency window.",
+    "Manual gates are forbidden; no `manual_gate` rows and no `keel-run mark-manual-gate`.",
+    "Use `docs/reviews/s03-autonomous-ingestion-evidence-review.md` as the `autonomous_gate_review` artifact in lieu of human approval. It must reference the deterministic collector runs and committed command evidence, and must never represent itself as human signoff.",
+    "Write only under narrow repo-relative roots: `scripts/evidence/`, `docs/evidence/ingestion/`, `docs/reviews/`, `ops/autonomy/decisions/`, and `ops/autonomy/failure_ledger.jsonl`. Runtime collector output goes only to `private/evidence/S03/` (gitignored). Do not touch `src/warehouse/`, `src/api/`, `src/db/`, model or UI code, `data/`, `private/` (except as collector output), `.env`, or any secrets file.",
+    "**Fail closed.** When required external credentials are absent (`OURA_ACCESS_TOKEN`), the Oura collector must return `status: blocked_external` and exit non-zero, and the run must append an **open** `blocked_external_missing_evidence` failure row for S03 to `ops/autonomy/failure_ledger.jsonl`. Never fabricate an `ok` status, never simulate a gate, and never mark the slice complete on the blocked path.",
+    "Keep raw provider payloads, bearer/refresh tokens, 8 Sleep email/password/session cookies, account identifiers, device IDs, exact dates, and exact metric values out of git and out of general logs. Collector reports may contain only aggregate counts, booleans, and coarse freshness buckets; environment values are redacted via the `SECRET_KEYS` markers; every report file is written with mode `0600`.",
+    "Preserve Health Data Hub v1 ingestion scope: **periodic-pull only, no webhooks**; Oura + (optional) 8 Sleep only. No Garmin, Withings, or chest-strap HRM ingestion. No prospective predictions, recommendations, Autopilot, or Coach surfaces.",
+    "Resolve the two pre-committed tripwires explicitly and record the resolution:"
+  ],
+  "external_dependency_hints": [
+    "open wearables",
+    "oura",
+    "8 sleep",
+    "icloud",
+    "tailscale",
+    "external evidence"
+  ],
+  "implementation_tasks": [
+    {
+      "files": [
+        "scripts/evidence/oura_smoke.py",
+        "scripts/evidence/_collector_common.py"
+      ],
+      "notes": "",
+      "phase": "Oura smoke evidence collector and provider-path decision",
+      "task": "Provide the Oura sleep smoke collector and its shared redaction/report helper. The collector pulls a 7-day sleep window from the live local Oura API v2 using `OURA_ACCESS_TOKEN`, writes a redacted, `0600`, aggregate-only report under `private/evidence/S03/oura_smoke/`, and returns `status: ok` (exit 0) only when a non-empty `data` list is returned. Record the resolved Oura provider path (direct Oura API v2 periodic pull) as the week-1 tripwire decision in the committed evidence summary. Never log the token or raw payload.",
+      "verify": [
+        "python scripts/evidence/oura_smoke.py --json"
+      ]
+    },
+    {
+      "files": [
+        "scripts/evidence/oura_smoke.py",
+        "ops/autonomy/failure_ledger.jsonl"
+      ],
+      "notes": "",
+      "phase": "Fail-closed handling for missing Oura credentials",
+      "task": "Ensure the collector returns `status: blocked_external` and exits non-zero when `OURA_ACCESS_TOKEN` is absent or offline mode is requested, writing only redacted env markers (no secret values). On this path the run appends an **open** failure row `{\"slice\": \"S03\", \"failure_class\": \"blocked_external_missing_evidence\", \"open\": true}` to the failure ledger so the readiness gate accepts the controlled-degraded state without a fabricated pass.",
+      "verify": [
+        "python scripts/verify_s03_readiness.py --json"
+      ]
+    },
+    {
+      "files": [
+        "scripts/evidence/pyeight_smoke.py",
+        "ops/autonomy/decisions/S03-pyeight-fallback-<timestamp>.json"
+      ],
+      "notes": "",
+      "phase": "8 Sleep optional smoke and week-2 tripwire fallback",
+      "task": "Provide the optional 8 Sleep (`pyEight`) smoke collector. It authenticates via the current 8 Sleep token flow using `PYEIGHT_*` env, confirms recent sleep-trend reachability, and writes an aggregate-only, `0600` report under `private/evidence/S03/pyeight_smoke/` emitting only `ok`, `blocked_external`, `error`, or `fallback_accepted` \u2014 never raw payloads or identifiers. When `pyEight` is not stable, write the explicit `oura_only_v1` fallback decision file so the week-2 tripwire is recorded, after which the collector reports `fallback_accepted` (exit 0).",
+      "verify": [
+        "python scripts/evidence/pyeight_smoke.py --json"
+      ]
+    },
+    {
+      "files": [
+        "docs/evidence/ingestion/s03-ingestion-evidence.md",
+        "docs/evidence/ingestion/s03-command-evidence.json"
+      ],
+      "notes": "",
+      "phase": "Committed redacted ingestion evidence summary and command evidence",
+      "task": "Author the committed, fully redacted ingestion evidence summary that records the provider decision-of-record (Oura path; 8 Sleep included vs `oura_only_v1` fallback) and points at the runtime evidence reports by relative path. Author the machine-checked command-evidence JSON: a single object with a non-empty `commands` list, each row carrying the exact command string, an integer `exit_code` of `0`, and redacted `stdout_tail`/`stderr_tail` containing no secret markers. These are the only S03 artifacts that may be committed to git.",
+      "verify": [
+        "python scripts/check_no_tracked_data.py"
+      ]
+    },
+    {
+      "files": [
+        "docs/reviews/s03-autonomous-ingestion-evidence-review.md"
+      ],
+      "notes": "",
+      "phase": "Autonomous ingestion evidence review",
+      "task": "Generate the S03 autonomous review artifact. It must state autonomous-reviewer provenance, carry `Verdict: pass` (and no failing verdict), list the evidence files checked, list the exact commands run, include at least one `Command evidence: docs/evidence/ingestion/s03-command-evidence.json` line, and explicitly state `Blocking findings: none`. The review certifies the provider decision and the tripwire resolutions; it must not claim human approval.",
+      "verify": [
+        "python scripts/check_autonomous_review_exists.py S03"
+      ]
+    },
+    {
+      "files": [
+        "docs/evidence/ingestion/s03-ingestion-evidence.md"
+      ],
+      "notes": "",
+      "phase": "Data-hygiene and S03 readiness gate",
+      "task": "Confirm no health data, tokens, raw payloads, snapshots, or DuckDB/Parquet files are tracked, that `private/evidence/S03/` stays gitignored, and that the full S03 readiness contract holds (S01/S02 complete; Oura evidence present or `blocked_external_missing_evidence` recorded; pyEight `ok` or explicit fallback; review artifact path planned in `slices.json`).",
+      "verify": [
+        "python scripts/check_no_tracked_data.py",
+        "python scripts/verify_s03_readiness.py --json"
+      ]
+    }
+  ],
+  "manual_gate_hints": [
+    "approval",
+    "signoff",
+    "manual gate",
+    "reviewer"
+  ],
+  "non_goals": [
+    "S01 warehouse schema and inserts; S02 FastAPI mood endpoint and iOS Shortcut transport.",
+    "S04 sleep-source reconciliation, `merge_sleep_sources()`, `hrv_z` computation, and full feature engineering (the ingestion *pipeline* that writes `sleep_nights`/`daily_features` lives downstream of this decision slice).",
+    "S05 model training, baseline gates, sign-stability bootstrap, and SHAP.",
+    "S06 counterfactual generation; S07 Streamlit UI; S08 launchd schedules, snapshot encryption, and restore.",
+    "Webhook ingestion, Open Wearables adoption for v1 Oura, Garmin / Withings / chest-strap HRM, nutrition logging, Tailscale transport.",
+    "Prospective predictions, recommendations, Autopilot, Coach, or any v2 feature columns and forward-looking guidance."
+  ],
+  "product_goal": "Aysajan is hyper-health-conscious and owns five separate connected devices that each generate rich health analytics in isolated silos:",
+  "recommended_approach": "### Approach A: Weekend MVP (Codex's pragmatic plan)\n\nSingle Streamlit page showing yesterday's mood, top SHAP contributors, one retrospective counterfactual, confidence warning. iOS Shortcut for mood logging. launchd cron pulls Oura + 8 Sleep data daily. Built in 1-2 weekends. No FastAPI initially; no autopilot; no coach. Retrospective explainer only.\n\n- Effort: S (1-2 weekends, ~25-40 hours)\n- Risk: Low\n- Pros: Ships fast, validates the whole loop cheaply, easy to iterate\n- Cons: No coach or autopilot; Streamlit ceiling is real; harder to evolve into the hybrid 10x without a refactor\n\n### Approach B: Layered Backend + Streamlit (selected)\n\nSix-layer architecture from day 1: Ingestion \u2192 Warehouse \u2192 Feature Store \u2192 Model \u2192 API \u2192 UI. FastAPI is real (not vestigial); Streamlit consumes it. Polars for feature engineering. Pydantic models for the API contract. Pluggable model layer so SHAP attribution + counterfactual search can evolve independently. Architecture explicitly designed so the Autopilot tier (scheduled jobs reading from the API and delivering interventions) and the Coach tier (LLM-with-tools agent calling the API) can be added in v2/v3 without rewrites.\n\n- Effort: M (~96-160 hours total over 16 calendar weeks of solo evenings/weekends, at 6-10 hr/wk)\n- Risk: Medium\n- Pros: Architecture supports the full hybrid 10x; API surface is reusable for mobile companion later; clean layer separation enables independent evolution\n- Cons: 2-3x build time vs A; risk of over-engineering before validating loop; \"ideal architecture\" trap of polishing forever\n\n### Approach C: Daily Health Newsletter (calm-tech lateral)\n\n\"The app you don't open.\" Every morning at 6am, an email arrives: yesterday's feeling + counterfactual, today's predicted feeling, today's one experimental nudge, weekly trends as embedded charts. Mood logging via iOS Shortcut. Backend is cron + Python + Jinja + smtplib + DuckDB. No web UI at all.\n\n- Effort: S-M (2-3 weeks, ~30-50 hours)\n- Risk: Low-Medium\n- Pros: Zero app fatigue; calm-tech ethos; lowest UX surface area; the email is shareable with a doctor by definition\n- Cons: No bidirectional interaction beyond mood logging; not a \"product\" you can demo; bolting on a conversational coach later requires a different surface",
+  "risk_hints": [],
+  "schema_version": "gstack_plan_ir_v1",
+  "source_artifacts": [
+    {
+      "byte_size": 97733,
+      "kind": "office_hours",
+      "path": "docs/gstack/health-data-hub-office-hours.md",
+      "sha256": "548af49f81b7063427df5bd1758ac6c0d5a38d985d04ca5a3c23120eb605229e"
+    },
+    {
+      "byte_size": 10287,
+      "kind": "autoplan",
+      "path": "docs/gstack/s03-ingestion-provider-autoplan.md",
+      "sha256": "f17f0e60a7486f902fd152f58e0ac97d6a5389e79f5ebe1bdbcabb43dea3c2a6"
+    },
+    {
+      "byte_size": 715,
+      "kind": "approved_brief",
+      "path": "docs/briefs/s03-ingestion-provider.autonomous-brief.md",
+      "sha256": "e62d7ef98ecfe651d4a2e3096d46bac079713719b002f65c2bdef4f1b38e28b3"
+    }
+  ],
+  "stack_profile": {
+    "build_tools": [],
+    "languages": [
+      "python"
+    ],
+    "package_managers": [
+      "pip"
+    ],
+    "test_runners": [
+      "pytest"
+    ]
+  },
+  "verification_hints": []
+}
