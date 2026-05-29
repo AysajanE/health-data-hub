@@ -53,6 +53,30 @@ def evidence_report_exists(root: Path, rel: str) -> tuple[bool, str | None]:
     return False, None
 
 
+def pyeight_decision_state(root: Path) -> tuple[bool, bool, str | None]:
+    decisions_dir = root / "ops/autonomy/decisions"
+    if not decisions_dir.exists():
+        return False, False, None
+    for path in sorted(decisions_dir.glob("*.json"), key=lambda item: item.name, reverse=True):
+        if "pyeight" not in path.name.lower():
+            continue
+        payload = load_json(path, {})
+        if not isinstance(payload, dict):
+            continue
+        provider = str(payload.get("provider") or payload.get("service") or "").lower()
+        status = str(payload.get("status") or "").lower()
+        action = str(payload.get("action") or payload.get("decision") or "").lower()
+        fallback_active = bool(payload.get("fallback_active")) or status == "fallback_accepted" or action == "oura_only_v1"
+        evidence_ok = (
+            provider in {"pyeight", "8sleep", "eight_sleep"}
+            and status in {"ok", "evidence_ok", "accepted"}
+            and str(payload.get("evidence_status") or "ok").lower() == "ok"
+        )
+        if fallback_active or evidence_ok:
+            return True, fallback_active, str(path.relative_to(root))
+    return False, False, None
+
+
 def verify_s03_readiness(root: Path) -> dict[str, Any]:
     root = root.resolve()
     errors: list[str] = []
@@ -86,12 +110,13 @@ def verify_s03_readiness(root: Path) -> dict[str, Any]:
             errors.append("Oura evidence preflight is missing and OURA_ACCESS_TOKEN is absent")
 
     pyeight_ok, pyeight_path = evidence_report_exists(root, "private/evidence/S03/pyeight_smoke")
-    decisions_dir = root / "ops/autonomy/decisions"
-    fallback = any("pyeight" in path.name and "fallback" in path.read_text(encoding="utf-8", errors="replace") for path in decisions_dir.glob("*.json")) if decisions_dir.exists() else False
+    decision_ok, fallback, decision_path = pyeight_decision_state(root)
     checks["pyeight_evidence"] = pyeight_path
-    checks["pyeight_fallback_explicit"] = pyeight_ok or fallback
-    if not pyeight_ok and not fallback:
-        errors.append("pyEight fallback/tripwire state is not explicit")
+    checks["pyeight_decision"] = decision_path
+    checks["pyeight_fallback_explicit"] = fallback
+    checks["pyeight_provider_state_explicit"] = pyeight_ok or decision_ok
+    if not pyeight_ok and not decision_ok:
+        errors.append("pyEight evidence/fallback/tripwire state is not explicit")
 
     tracked = check_no_tracked_data(root)
     if tracked["status"] != "ok":

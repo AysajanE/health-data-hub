@@ -1,6 +1,6 @@
 {
   "active_run": {
-    "last_seen_at": "2026-05-29T18:02:48-04:00",
+    "last_seen_at": "2026-05-29T18:23:53-04:00",
     "restored_after_failure": "S03-STATE-DIVERGENCE",
     "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
     "slice": "S03",
@@ -12,7 +12,7 @@
     "S02"
   ],
   "current_slice": "S03",
-  "last_event_id": 512,
+  "last_event_id": 518,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [

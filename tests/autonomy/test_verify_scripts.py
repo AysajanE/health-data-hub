@@ -541,7 +541,7 @@ class VerifyScriptsTests(unittest.TestCase):
             self.assertEqual(report["status"], "error")
             joined = "\n".join(report["errors"])
             self.assertIn("Oura evidence preflight", joined)
-            self.assertIn("pyEight fallback", joined)
+            self.assertIn("pyEight evidence/fallback", joined)
 
             evidence = root / "private/evidence/S03/oura_smoke/report.json"
             evidence.parent.mkdir(parents=True)
@@ -551,6 +551,57 @@ class VerifyScriptsTests(unittest.TestCase):
             decision.write_text(json.dumps({"status": "fallback_accepted", "action": "oura_only_v1"}), encoding="utf-8")
             report = verify_s03_readiness(root)
             self.assertEqual(report["status"], "ok", report)
+            self.assertTrue(report["checks"]["pyeight_provider_state_explicit"])
+            self.assertTrue(report["checks"]["pyeight_fallback_explicit"])
+
+    def test_verify_s03_readiness_accepts_sanitized_pyeight_evidence_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text(
+                "data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n",
+                encoding="utf-8",
+            )
+            (root / "ops/autonomy/decisions").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {"id": "S01", "required": True, "status": "complete"},
+                    {"id": "S02", "required": True, "status": "complete"},
+                    {
+                        "id": "S03",
+                        "required": True,
+                        "status": "pending",
+                        "review_artifacts": ["docs/reviews/s03-autonomous-ingestion-evidence-review.md"],
+                    },
+                ],
+            )
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
+            oura = root / "private/evidence/S03/oura_smoke/report.json"
+            oura.parent.mkdir(parents=True)
+            oura.write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
+            write_json_atomic(
+                root / "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
+                {
+                    "schema_version": "autokeel.provider_evidence_decision.v1",
+                    "slice": "S03",
+                    "provider": "pyeight",
+                    "status": "ok",
+                    "evidence_status": "ok",
+                    "evidence_path": "private/evidence/S03/pyeight_smoke/pyeight_smoke-20260529T175729-0400.json",
+                    "fallback_active": False,
+                },
+            )
+
+            report = verify_s03_readiness(root)
+
+            self.assertEqual(report["status"], "ok", report)
+            self.assertTrue(report["checks"]["pyeight_provider_state_explicit"])
+            self.assertFalse(report["checks"]["pyeight_fallback_explicit"])
+            self.assertEqual(
+                report["checks"]["pyeight_decision"],
+                "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
+            )
 
     def test_verify_s03_readiness_reports_newest_provider_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
