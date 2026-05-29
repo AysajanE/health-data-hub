@@ -549,7 +549,10 @@ class VerifyScriptsTests(unittest.TestCase):
             evidence.write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
             decision = root / "ops/autonomy/decisions/pyeight-fallback.json"
             decision.parent.mkdir(parents=True)
-            decision.write_text(json.dumps({"status": "fallback_accepted", "action": "oura_only_v1"}), encoding="utf-8")
+            decision.write_text(
+                json.dumps({"created_at": "2026-05-29T00:00:00-04:00", "status": "fallback_accepted", "action": "oura_only_v1"}),
+                encoding="utf-8",
+            )
             report = verify_s03_readiness(root)
             self.assertEqual(report["status"], "ok", report)
             self.assertTrue(report["checks"]["pyeight_provider_state_explicit"])
@@ -585,6 +588,7 @@ class VerifyScriptsTests(unittest.TestCase):
                 root / "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
                 {
                     "schema_version": "autokeel.provider_evidence_decision.v1",
+                    "created_at": "2026-05-29T00:00:00-04:00",
                     "slice": "S03",
                     "provider": "pyeight",
                     "status": "ok",
@@ -631,6 +635,7 @@ class VerifyScriptsTests(unittest.TestCase):
                 root / "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
                 {
                     "schema_version": "autokeel.provider_evidence_decision.v1",
+                    "created_at": "2026-05-29T00:00:00-04:00",
                     "slice": "S03",
                     "provider": "pyeight",
                     "status": "ok",
