@@ -1,12 +1,16 @@
 {
-  "active_run": null,
+  "active_run": {
+    "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+    "slice": "S03",
+    "started_at": "2026-05-29T17:42:58-04:00"
+  },
   "active_swr_run": null,
   "completed_slices": [
     "S01",
     "S02"
   ],
   "current_slice": "S03",
-  "last_event_id": 491,
+  "last_event_id": 495,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [
@@ -31,6 +35,11 @@
       "run_id": "RUN_20260528T012206Z_d1a034d3e30d4b26a26273e07597d115",
       "slice": "S02",
       "started_at": "2026-05-27T21:28:59-04:00"
+    },
+    {
+      "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+      "slice": "S03",
+      "started_at": "2026-05-29T17:42:58-04:00"
     }
   ],
   "schema_version": 1,
