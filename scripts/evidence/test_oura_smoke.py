@@ -91,6 +91,30 @@ class OuraSmokeCollectorTests(unittest.TestCase):
         self.assertTrue(rows[0]["open"])
         self.assertEqual(rows[0]["evidence_path"], report["evidence"])
 
+    def test_main_blank_token_treated_as_missing_and_skips_network(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stdout = StringIO()
+            with (
+                mock.patch.dict(os.environ, {"OURA_ACCESS_TOKEN": "   "}, clear=True),
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("network should not run")),
+                redirect_stdout(stdout),
+            ):
+                exit_code = main(["--root", str(root), "--json"])
+
+            report = json.loads(stdout.getvalue())
+            evidence_path = root / str(report["evidence"])
+            payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+            rows = load_jsonl(root / "ops/autonomy/failure_ledger.jsonl")
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(report["status"], "blocked_external")
+        self.assertEqual(payload["status"], "blocked_external")
+        self.assertEqual(payload["env"], {"OURA_ACCESS_TOKEN": "[UNSET]"})
+        self.assertEqual(payload["missing_env"], ["OURA_ACCESS_TOKEN"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["failure_class"], "blocked_external_missing_evidence")
+
     def test_main_offline_mode_redacts_token_and_records_failure_once(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

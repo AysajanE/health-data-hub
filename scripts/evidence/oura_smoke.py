@@ -76,7 +76,7 @@ def _blocked_external_result(root: Path, path: Path, errors: list[str]) -> dict[
 
 
 def collect(root: Path, offline: bool = False) -> dict[str, object]:
-    token = os.environ.get("OURA_ACCESS_TOKEN")
+    token = (os.environ.get("OURA_ACCESS_TOKEN") or "").strip()
     window_days = DEFAULT_WINDOW_DAYS
     try:
         start, end = _resolve_query_window()
@@ -91,7 +91,7 @@ def collect(root: Path, offline: bool = False) -> dict[str, object]:
                 "blocked_external",
                 window_days=window_days,
                 extra={
-                    "env": env_presence_markers(("OURA_ACCESS_TOKEN",)),
+                    "env": env_presence_markers(("OURA_ACCESS_TOKEN",), {"OURA_ACCESS_TOKEN": token}),
                     "missing_env": ["OURA_ACCESS_TOKEN"],
                     "reason": "missing OURA_ACCESS_TOKEN",
                 },
