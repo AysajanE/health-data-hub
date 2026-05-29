@@ -35,7 +35,7 @@
   ],
   "schema_version": "compiler_validation_report_v1",
   "status": "pass",
-  "validated_at": "2026-05-29T21:27:29+00:00",
+  "validated_at": "2026-05-29T21:57:29+00:00",
   "warnings": [
     {
       "code": "UNKNOWN_VERIFICATION_COMMAND",
