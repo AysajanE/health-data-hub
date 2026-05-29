@@ -17,6 +17,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.evidence._collector_common import coarse_freshness_bucket
+from scripts.evidence._collector_common import ensure_open_failure
 from scripts.evidence._collector_common import env_presence_markers
 from scripts.evidence._collector_common import sanitize_text
 from scripts.evidence._collector_common import write_report
@@ -28,6 +29,8 @@ PROVIDER_PATH = "direct_oura_api_v2_periodic_pull"
 SANITIZATION_NOTE = "aggregate_counts_booleans_and_freshness_buckets_only"
 REQUEST_TIMEOUT_SECONDS = 20
 SLEEP_DATE_KEYS = ("day", "date", "bedtime_end", "bedtime_start")
+SLICE_ID = "S03"
+BLOCKED_EXTERNAL_FAILURE_CLASS = "blocked_external_missing_evidence"
 
 
 def _window_days(start: date, end: date) -> int:
@@ -59,6 +62,19 @@ def _report_payload(
     return payload
 
 
+def _blocked_external_result(root: Path, path: Path, errors: list[str]) -> dict[str, object]:
+    ensure_open_failure(
+        root,
+        slice_id=SLICE_ID,
+        failure_class=BLOCKED_EXTERNAL_FAILURE_CLASS,
+        severity="medium",
+        description="Required Oura smoke evidence is missing or blocked.",
+        action_taken="Recorded blocked-external Oura evidence without logging secrets or fabricating provider success.",
+        evidence_path=str(path.relative_to(root)),
+    )
+    return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": errors}
+
+
 def collect(root: Path, offline: bool = False) -> dict[str, object]:
     token = os.environ.get("OURA_ACCESS_TOKEN")
     window_days = DEFAULT_WINDOW_DAYS
@@ -81,7 +97,7 @@ def collect(root: Path, offline: bool = False) -> dict[str, object]:
                 },
             ),
         )
-        return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": ["missing OURA_ACCESS_TOKEN"]}
+        return _blocked_external_result(root, path, ["missing OURA_ACCESS_TOKEN"])
 
     if offline:
         path = write_report(
@@ -98,7 +114,7 @@ def collect(root: Path, offline: bool = False) -> dict[str, object]:
                 },
             ),
         )
-        return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": ["offline mode cannot satisfy tripwire evidence"]}
+        return _blocked_external_result(root, path, ["offline mode cannot satisfy tripwire evidence"])
 
     try:
         start, end = _resolve_query_window()
@@ -154,7 +170,7 @@ def collect(root: Path, offline: bool = False) -> dict[str, object]:
                     },
                 ),
             )
-            return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": ["no recent Oura sleep records returned"]}
+            return _blocked_external_result(root, path, ["no recent Oura sleep records returned"])
         path = write_report(
             root,
             COLLECTOR,
@@ -198,6 +214,8 @@ def collect(root: Path, offline: bool = False) -> dict[str, object]:
                 extra={"error_type": type(exc).__name__, "http_status": exc.code, "reason": reason},
             ),
         )
+        if status == "blocked_external":
+            return _blocked_external_result(root, path, [reason])
         return {"status": status, "evidence": str(path.relative_to(root)), "errors": [reason]}
     except urllib.error.URLError as exc:
         message = sanitize_text(str(exc.reason) or type(exc).__name__, secret_values=[token])
@@ -210,7 +228,7 @@ def collect(root: Path, offline: bool = False) -> dict[str, object]:
                 extra={"error_type": type(exc).__name__, "reason": message},
             ),
         )
-        return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": [message]}
+        return _blocked_external_result(root, path, [message])
     except Exception as exc:
         message = sanitize_text(str(exc) or type(exc).__name__, secret_values=[token])
         path = write_report(

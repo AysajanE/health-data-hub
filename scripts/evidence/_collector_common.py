@@ -11,6 +11,7 @@ from typing import Iterable
 
 
 SECRET_KEYS = ("TOKEN", "SECRET", "PASSWORD", "AUTHORIZATION", "API_KEY")
+FAILURE_LEDGER_SCHEMA = "autokeel.failure_ledger.v2"
 REPORT_SCHEMA = "s03_evidence.v1"
 
 
@@ -98,3 +99,55 @@ def write_report(root: Path, collector: str, payload: dict[str, Any]) -> Path:
     path.write_text(json.dumps(safe_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(path, 0o600)
     return path
+
+
+def iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            yield json.loads(line)
+
+
+def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def ensure_open_failure(
+    root: Path,
+    *,
+    slice_id: str,
+    failure_class: str,
+    severity: str,
+    description: str,
+    action_taken: str,
+    evidence_path: str,
+    failure_origin: str = "external_provider",
+) -> bool:
+    ledger_path = root / "ops" / "autonomy" / "failure_ledger.jsonl"
+    existing = list(iter_jsonl(ledger_path) or [])
+    for row in reversed(existing):
+        if row.get("slice") == slice_id and row.get("failure_class") == failure_class and row.get("open", True):
+            return False
+    payload = {
+        "schema_version": FAILURE_LEDGER_SCHEMA,
+        "ts": now_iso(),
+        "slice": slice_id,
+        "run_id": None,
+        "failure_class": failure_class,
+        "severity": severity,
+        "description": description,
+        "action_taken": action_taken,
+        "evidence_path": evidence_path,
+        "root_cause_id": f"{slice_id}-{failure_class}".upper().replace("_", "-"),
+        "failure_origin": failure_origin,
+        "supersedes": [],
+        "superseded_by": None,
+        "false_positive": False,
+        "closure_validation_command": "",
+        "open": True,
+    }
+    append_jsonl(ledger_path, payload)
+    return True
