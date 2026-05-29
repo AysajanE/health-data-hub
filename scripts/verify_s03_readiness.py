@@ -46,10 +46,10 @@ def evidence_report_exists(root: Path, rel: str) -> tuple[bool, str | None]:
         candidates.append(path)
     elif path.is_dir():
         candidates.extend(path.rglob("*.json"))
-    for candidate in sorted(candidates):
+    for candidate in sorted(candidates, key=lambda item: (item.stat().st_mtime_ns, item.name), reverse=True):
         payload = load_json(candidate, {})
-        if isinstance(payload, dict) and payload.get("status") in {"ok", "blocked_external", "error", "fallback_accepted"}:
-            return True, str(candidate.relative_to(root))
+        if isinstance(payload, dict):
+            return payload.get("status") in {"ok", "blocked_external", "error", "fallback_accepted"}, str(candidate.relative_to(root))
     return False, None
 
 

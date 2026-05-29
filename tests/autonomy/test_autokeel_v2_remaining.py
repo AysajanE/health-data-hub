@@ -138,6 +138,76 @@ CREATE TABLE IF NOT EXISTS sleep_merge_diagnostics (
                 report = collect_pyeight(root)
             self.assertEqual(report["status"], "fallback_accepted", report)
 
+    def test_pyeight_authenticated_smoke_writes_only_sanitized_summary(self) -> None:
+        from types import SimpleNamespace
+
+        from scripts.evidence.pyeight_smoke import collect as collect_pyeight
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            def runner(email: str, password: str, timezone_name: str) -> dict[str, object]:
+                self.assertEqual(email, "user@example.test")
+                self.assertEqual(password, "local-password")
+                self.assertEqual(timezone_name, "America/Toronto")
+                return {
+                    "status": "ok",
+                    "pyeight_version": "0.3.2",
+                    "authenticated": True,
+                    "device_seen": True,
+                    "user_side_count": 1,
+                    "has_sleep_interval": True,
+                    "users": [
+                        {
+                            "side": "left",
+                            "interval_count": 2,
+                            "trend_count": 3,
+                            "last_session_date_present": True,
+                            "last_sleep_score_present": True,
+                        }
+                    ],
+                }
+
+            with mock.patch("importlib.util.find_spec", return_value=SimpleNamespace(origin="/tmp/pyeight/__init__.py")):
+                with mock.patch.dict(
+                    os.environ,
+                    {
+                        "PYEIGHT_EMAIL": "user@example.test",
+                        "PYEIGHT_PASSWORD": "local-password",
+                        "PYEIGHT_TIMEZONE": "America/Toronto",
+                    },
+                    clear=False,
+                ):
+                    report = collect_pyeight(root, runner=runner)
+
+            self.assertEqual(report["status"], "ok", report)
+            evidence = root / str(report["evidence"])
+            payload_text = evidence.read_text(encoding="utf-8")
+            payload = json.loads(payload_text)
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["sanitization"], "counts_booleans_only_no_raw_payloads_or_identifiers")
+            self.assertNotIn("user@example.test", payload_text)
+            self.assertNotIn("local-password", payload_text)
+            self.assertNotIn("token", payload_text.lower())
+
+    def test_pyeight_authenticated_smoke_requires_timezone(self) -> None:
+        from types import SimpleNamespace
+
+        from scripts.evidence.pyeight_smoke import collect as collect_pyeight
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with mock.patch("importlib.util.find_spec", return_value=SimpleNamespace(origin="/tmp/pyeight/__init__.py")):
+                with mock.patch.dict(
+                    os.environ,
+                    {"PYEIGHT_EMAIL": "user@example.test", "PYEIGHT_PASSWORD": "local-password"},
+                    clear=True,
+                ):
+                    report = collect_pyeight(root)
+
+            self.assertEqual(report["status"], "blocked_external", report)
+            self.assertIn("PYEIGHT_TIMEZONE", " ".join(report["errors"]))
+
     def test_acceptance_allowlist_reads_policy(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

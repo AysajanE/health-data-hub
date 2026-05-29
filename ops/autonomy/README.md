@@ -132,6 +132,27 @@ python scripts/verify_s03_readiness.py --json
 python -m ops.autonomy.autokeel --once --dry-run --slice S03
 ```
 
+S03 provider evidence is collected by explicit evidence collectors, not hidden
+verification calls. Load local credentials only into the shell process that
+runs the collector:
+
+```bash
+chmod 600 .env.local
+set -a; source .env.local; set +a
+python scripts/evidence/oura_smoke.py --json
+python scripts/evidence/pyeight_smoke.py --json
+python scripts/verify_s03_readiness.py --json
+```
+
+For positive pyEight evidence, `.env.local` must contain
+`PYEIGHT_EMAIL`, `PYEIGHT_PASSWORD`, and `PYEIGHT_TIMEZONE`. The pyEight
+collector authenticates against 8 Sleep and writes only sanitized booleans and
+counts under `private/evidence/S03/pyeight_smoke/`; it must not persist raw
+provider payloads, session tokens, account email, password, full user IDs,
+full device IDs, or exact sleep metrics. If pyEight cannot authenticate or
+return sleep intervals reliably, record that evidence and use the documented
+Oura-only v1 fallback instead of weakening the provider gate.
+
 Only if those pass should a real bounded S03 tick run:
 
 ```bash

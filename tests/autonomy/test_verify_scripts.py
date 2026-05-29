@@ -14,7 +14,7 @@ from scripts.verify_failure_ledger import verify_failure_ledger
 from scripts.verify_run_retarget_evidence import verify_run_retarget_evidence
 from scripts.verify_ship_invariants import verify_ship_invariants
 from scripts.verify_s02_readiness import verify_s02_readiness
-from scripts.verify_s03_readiness import verify_s03_readiness
+from scripts.verify_s03_readiness import evidence_report_exists, verify_s03_readiness
 from scripts.verify_v1 import verify_v1
 
 
@@ -551,6 +551,21 @@ class VerifyScriptsTests(unittest.TestCase):
             decision.write_text(json.dumps({"status": "fallback_accepted", "action": "oura_only_v1"}), encoding="utf-8")
             report = verify_s03_readiness(root)
             self.assertEqual(report["status"], "ok", report)
+
+    def test_verify_s03_readiness_reports_newest_provider_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            evidence_dir = root / "private/evidence/S03/pyeight_smoke"
+            evidence_dir.mkdir(parents=True)
+            older = evidence_dir / "pyeight_smoke-20260101T000000-0000.json"
+            newer = evidence_dir / "pyeight_smoke-20260102T000000-0000.json"
+            older.write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
+            newer.write_text(json.dumps({"status": "error"}), encoding="utf-8")
+
+            ok, path = evidence_report_exists(root, "private/evidence/S03/pyeight_smoke")
+
+            self.assertTrue(ok)
+            self.assertEqual(path, "private/evidence/S03/pyeight_smoke/pyeight_smoke-20260102T000000-0000.json")
 
     def test_ship_invariants_require_detached_worktree_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
