@@ -144,14 +144,21 @@ python scripts/evidence/pyeight_smoke.py --json
 python scripts/verify_s03_readiness.py --json
 ```
 
-For positive pyEight evidence, `.env.local` must contain
-`PYEIGHT_EMAIL`, `PYEIGHT_PASSWORD`, and `PYEIGHT_TIMEZONE`. The pyEight
-collector authenticates against 8 Sleep and writes only sanitized booleans and
-counts under `private/evidence/S03/pyeight_smoke/`; it must not persist raw
-provider payloads, session tokens, account email, password, full user IDs,
-full device IDs, or exact sleep metrics. If pyEight cannot authenticate or
-return sleep intervals reliably, record that evidence and use the documented
-Oura-only v1 fallback instead of weakening the provider gate.
+For positive 8 Sleep/pyEight evidence, `.env.local` must contain
+`PYEIGHT_EMAIL`, `PYEIGHT_PASSWORD`, `PYEIGHT_TIMEZONE`,
+`PYEIGHT_CLIENT_ID`, and `PYEIGHT_CLIENT_SECRET`. `PYEIGHT_TIMEZONE` must be
+an explicit IANA timezone such as `America/Toronto`; do not use `local`.
+The PyPI `pyEight==0.3.2` package still calls the retired 8 Sleep `/login`
+flow, so the collector uses the current token + bearer + trends flow directly
+and stores any short-lived credential cache only under ignored `data/secrets/`
+with mode `0600`. The evidence file under
+`private/evidence/S03/pyeight_smoke/` contains only sanitized aggregate
+booleans, counts, and a coarse freshness bucket; it must not persist raw
+provider payloads, credentials, account email, password, full user IDs, full
+device IDs, exact sleep dates, or exact sleep metrics. If 8 Sleep cannot
+authenticate or return recent sleep intervals reliably, record that evidence
+and use the documented Oura-only v1 fallback instead of weakening the provider
+gate.
 
 Only if those pass should a real bounded S03 tick run:
 
