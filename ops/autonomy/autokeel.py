@@ -4361,6 +4361,31 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return end_invariants.exit_code or 38
         return code
 
+    def run_po_and_handle_status(self, slice_: dict[str, Any], run: CommandResult) -> int:
+        if not run.ok:
+            self.record_failure(
+                slice_["id"],
+                "test_failure",
+                "medium",
+                "PO did not start or resume successfully.",
+                "Recorded failure and left slice pending for diagnosis.",
+                None,
+            )
+            return run.exit_code or 4
+
+        state = self.load_state()
+        run_id = (state.get("active_run") or {}).get("run_id") or self._extract_run_id(run.stdout)
+        if not run_id:
+            self.log_event("po_run_id_missing", {"stdout": run.stdout, "stderr": run.stderr}, slice_id=slice_["id"])
+            return 5
+
+        status = self.inspect_po_status(run_id)
+        self.handle_po_status(slice_["id"], run_id, status)
+        end_invariants = self.run_autokeel_invariants("end")
+        if not end_invariants.ok:
+            return end_invariants.exit_code or 38
+        return 0
+
     def _run_once_impl(self, requested_slice: str | None = None, force_slice: bool = False) -> int:
         self.log_heartbeat()
 
@@ -4420,6 +4445,15 @@ Use local files and commands only. If evidence is missing, write a failing revie
             status = self.inspect_po_status(run_id)
             self.handle_po_status(slice_["id"], run_id, status)
             return 0
+
+        state = self.load_state()
+        active = state.get("active_run") or {}
+        if active.get("slice") == slice_["id"] and active.get("run_id"):
+            # Active PO runs are bound to the playbook snapshot captured at
+            # launch. Resume them before lane/evidence/compiler steps can
+            # rewrite the canonical playbook and create false divergence.
+            run = self.start_or_resume_po(slice_)
+            return self.run_po_and_handle_status(slice_, run)
 
         lane_decision = self.ensure_lane_decision(slice_)
         if not lane_decision.ok:
@@ -4490,29 +4524,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return 0
 
         run = self.start_or_resume_po(slice_)
-        if not run.ok:
-            self.record_failure(
-                slice_["id"],
-                "test_failure",
-                "medium",
-                "PO did not start or resume successfully.",
-                "Recorded failure and left slice pending for diagnosis.",
-                None,
-            )
-            return run.exit_code or 4
-
-        state = self.load_state()
-        run_id = (state.get("active_run") or {}).get("run_id") or self._extract_run_id(run.stdout)
-        if not run_id:
-            self.log_event("po_run_id_missing", {"stdout": run.stdout, "stderr": run.stderr}, slice_id=slice_["id"])
-            return 5
-
-        status = self.inspect_po_status(run_id)
-        self.handle_po_status(slice_["id"], run_id, status)
-        end_invariants = self.run_autokeel_invariants("end")
-        if not end_invariants.ok:
-            return end_invariants.exit_code or 38
-        return 0
+        return self.run_po_and_handle_status(slice_, run)
 
     def run_loop(self, max_loops: int | None = None, requested_slice: str | None = None, force_slice: bool = False) -> int:
         loops = 0

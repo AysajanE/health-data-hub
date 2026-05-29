@@ -775,6 +775,50 @@ Manual gates are forbidden.
             self.assertEqual(result, 0)
             self.assertEqual(handled, [("S01", "RUN_TEST", {"terminal_state": "passed"})])
 
+    def test_run_once_resumes_active_run_before_recompile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            state_path = root / "ops/autonomy/autonomy_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["active_run"] = {"slice": "S01", "run_id": "RUN_ACTIVE", "started_at": "2026-05-29T17:00:00-04:00"}
+            state["current_slice"] = "S01"
+            write_json_atomic(state_path, state)
+
+            op = AutoKeel(root=root, dry_run=False)
+            handled: list[tuple[str, str, dict[str, str]]] = []
+
+            op.run_autokeel_invariants = lambda phase: CommandResult([], 0, '{"status": "ok"}', "")
+            op.run_verify_v1 = lambda: CommandResult([], 1, '{"status": "error"}', "")
+            op.evaluate_tripwires = lambda: CommandResult([], 0, '{"status": "ok"}', "")
+
+            def start_or_resume(slice_):
+                return CommandResult([], 0, '{"run_id": "RUN_ACTIVE"}', "")
+
+            def inspect(run_id):
+                return {"terminal_state": "running"}
+
+            def handle(slice_id, run_id, status):
+                handled.append((slice_id, run_id, status))
+                return "running"
+
+            def should_not_compile(slice_):
+                raise AssertionError("active PO run must resume before lane/evidence/playbook compilation")
+
+            op.start_or_resume_po = start_or_resume
+            op.inspect_po_status = inspect
+            op.handle_po_status = handle
+            op.ensure_lane_decision = should_not_compile
+            op.required_external_evidence_ready = should_not_compile
+            op.run_optional_evidence = should_not_compile
+            op.ensure_playbook = should_not_compile
+            op.validate_playbook = should_not_compile
+
+            result = op.run_once(requested_slice="S01")
+
+            self.assertEqual(result, 0)
+            self.assertEqual(handled, [("S01", "RUN_ACTIVE", {"terminal_state": "running"})])
+
     def test_run_once_runs_end_invariants_after_early_return(self) -> None:
         class TripwireFailureRunner:
             def __init__(self):
