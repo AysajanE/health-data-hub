@@ -1,0 +1,25 @@
+{
+  "slice": "S03",
+  "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+  "old_run_branch_head": "b428c1fe4d5f8b0a23e4a1a6f9bfaea6535a203f",
+  "new_target_commit": "324f54d6b9148f0e52ae80abddd8fb1037d1da54",
+  "merge_base": "b428c1fe4d5f8b0a23e4a1a6f9bfaea6535a203f",
+  "new_run_branch": "orchestrator/run-refresh/RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864/2",
+  "item_checkpoint_ancestry_proof": "git merge-base old_run_branch_head new_target_commit equals old_run_branch_head; target is a descendant of the item 02 passed checkpoint and only adds the S03 readiness blank-token hardening repair.",
+  "terminal_counts_before": {
+    "passed": 2,
+    "none": 4,
+    "escalated": 0,
+    "blocked_external": 0,
+    "awaiting_human_gate": 0
+  },
+  "terminal_counts_after": {
+    "passed": 2,
+    "none": 4,
+    "escalated": 0,
+    "blocked_external": 0,
+    "awaiting_human_gate": 0
+  },
+  "reason": "Retarget S03 active run to a descendant branch carrying the readiness verifier fix that treats blank or whitespace-only OURA_ACCESS_TOKEN values as missing before resuming remaining S03 items.",
+  "closure_evidence": "docs/evidence/s03-readiness-token-hardening-20260529.md"
+}
