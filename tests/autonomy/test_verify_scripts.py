@@ -15,7 +15,7 @@ from scripts.verify_failure_ledger import verify_failure_ledger
 from scripts.verify_run_retarget_evidence import verify_run_retarget_evidence
 from scripts.verify_ship_invariants import verify_ship_invariants
 from scripts.verify_s02_readiness import verify_s02_readiness
-from scripts.verify_s03_readiness import evidence_report_exists, verify_s03_readiness
+from scripts.verify_s03_readiness import evidence_report_exists, evidence_report_state, verify_s03_readiness
 from scripts.verify_v1 import verify_v1
 
 
@@ -546,7 +546,7 @@ class VerifyScriptsTests(unittest.TestCase):
 
             evidence = root / "private/evidence/S03/oura_smoke/report.json"
             evidence.parent.mkdir(parents=True)
-            evidence.write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
+            evidence.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
             decision = root / "ops/autonomy/decisions/pyeight-fallback.json"
             decision.parent.mkdir(parents=True)
             decision.write_text(
@@ -583,7 +583,7 @@ class VerifyScriptsTests(unittest.TestCase):
             (root / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
             oura = root / "private/evidence/S03/oura_smoke/report.json"
             oura.parent.mkdir(parents=True)
-            oura.write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
+            oura.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
             write_json_atomic(
                 root / "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
                 {
@@ -607,6 +607,81 @@ class VerifyScriptsTests(unittest.TestCase):
                 report["checks"]["pyeight_decision"],
                 "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
             )
+
+    def test_verify_s03_readiness_rejects_token_without_oura_evidence_or_blocked_row(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text(
+                "data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n",
+                encoding="utf-8",
+            )
+            (root / "ops/autonomy/decisions").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {"id": "S01", "required": True, "status": "complete"},
+                    {"id": "S02", "required": True, "status": "complete"},
+                    {
+                        "id": "S03",
+                        "required": True,
+                        "status": "pending",
+                        "review_artifacts": ["docs/reviews/s03-autonomous-ingestion-evidence-review.md"],
+                    },
+                ],
+            )
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
+            write_json_atomic(
+                root / "ops/autonomy/decisions/S03-pyeight-fallback-test.json",
+                {"created_at": "2026-05-29T00:00:00-04:00", "status": "fallback_accepted", "action": "oura_only_v1"},
+            )
+
+            with patch.dict("os.environ", {"OURA_ACCESS_TOKEN": "token"}, clear=False):
+                report = verify_s03_readiness(root)
+
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(report["checks"]["required_token_env_present"])
+            self.assertIsNone(report["checks"]["oura_evidence"])
+            self.assertFalse(report["checks"]["oura_blocked_external_open"])
+            self.assertIn("Oura evidence preflight", "\n".join(report["errors"]))
+
+    def test_verify_s03_readiness_accepts_open_blocked_external_row_for_missing_oura_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / ".gitignore").write_text(
+                "data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n",
+                encoding="utf-8",
+            )
+            (root / "ops/autonomy/decisions").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {"id": "S01", "required": True, "status": "complete"},
+                    {"id": "S02", "required": True, "status": "complete"},
+                    {
+                        "id": "S03",
+                        "required": True,
+                        "status": "pending",
+                        "review_artifacts": ["docs/reviews/s03-autonomous-ingestion-evidence-review.md"],
+                    },
+                ],
+            )
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(
+                json.dumps({"slice": "S03", "failure_class": "blocked_external_missing_evidence", "open": True}) + "\n",
+                encoding="utf-8",
+            )
+            write_json_atomic(
+                root / "ops/autonomy/decisions/S03-pyeight-fallback-test.json",
+                {"created_at": "2026-05-29T00:00:00-04:00", "status": "fallback_accepted", "action": "oura_only_v1"},
+            )
+
+            with patch.dict("os.environ", {"OURA_ACCESS_TOKEN": "token"}, clear=False):
+                report = verify_s03_readiness(root)
+
+            self.assertEqual(report["status"], "ok", report)
+            self.assertIsNone(report["checks"]["oura_evidence"])
+            self.assertTrue(report["checks"]["oura_blocked_external_open"])
 
     def test_verify_s03_readiness_treats_blank_oura_token_as_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -650,6 +725,23 @@ class VerifyScriptsTests(unittest.TestCase):
             self.assertEqual(report["status"], "error")
             self.assertEqual(report["checks"]["missing_env"], ["OURA_ACCESS_TOKEN"])
             self.assertIn("Oura evidence preflight", "\n".join(report["errors"]))
+
+    def test_s03_private_evidence_can_be_resolved_from_plan_orchestrator_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            primary = root / "health-data-hub"
+            worktree = primary / ".local/automation/plan_orchestrator/worktrees/RUN_TEST/item-06-attempt-1"
+            report = primary / "private/evidence/S03/oura_smoke/oura_smoke.json"
+            report.parent.mkdir(parents=True)
+            worktree.mkdir(parents=True)
+            (primary / "ops/autonomy").mkdir(parents=True)
+            report.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+
+            ok, path, status = evidence_report_state(worktree, "private/evidence/S03/oura_smoke", accepted_statuses={"ok"})
+
+            self.assertTrue(ok)
+            self.assertEqual(path, "private/evidence/S03/oura_smoke/oura_smoke.json")
+            self.assertEqual(status, "ok")
 
     def test_verify_s03_readiness_reports_newest_provider_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

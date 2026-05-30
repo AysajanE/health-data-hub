@@ -39,18 +39,69 @@ def git_check_ignore(root: Path, rel: str) -> bool:
     return proc.returncode == 0
 
 
-def evidence_report_exists(root: Path, rel: str) -> tuple[bool, str | None]:
-    path = root / rel
+DEFAULT_EVIDENCE_STATUSES = {"ok", "blocked_external", "error", "fallback_accepted"}
+
+
+def plan_orchestrator_primary_root(root: Path) -> Path | None:
+    parts = root.resolve().parts
+    marker = (".local", "automation", "plan_orchestrator", "worktrees")
+    for index in range(0, len(parts) - len(marker) + 1):
+        if tuple(parts[index : index + len(marker)]) == marker and index > 0:
+            candidate = Path(*parts[:index])
+            if (candidate / "ops/autonomy").exists():
+                return candidate
+    return None
+
+
+def evidence_search_roots(root: Path, rel: str) -> list[Path]:
+    roots = [root]
+    if rel.startswith("private/evidence/"):
+        primary = plan_orchestrator_primary_root(root)
+        if primary is not None and primary != root:
+            roots.append(primary)
+    return roots
+
+
+def evidence_report_state(
+    root: Path,
+    rel: str,
+    *,
+    accepted_statuses: set[str] | None = None,
+) -> tuple[bool, str | None, str | None]:
+    statuses = accepted_statuses or DEFAULT_EVIDENCE_STATUSES
     candidates = []
-    if path.is_file():
-        candidates.append(path)
-    elif path.is_dir():
-        candidates.extend(path.rglob("*.json"))
-    for candidate in sorted(candidates, key=lambda item: (item.stat().st_mtime_ns, item.name), reverse=True):
+    for base in evidence_search_roots(root, rel):
+        path = base / rel
+        if path.is_file():
+            candidates.append((base, path))
+        elif path.is_dir():
+            candidates.extend((base, item) for item in path.rglob("*.json"))
+    for base, candidate in sorted(candidates, key=lambda item: (item[1].stat().st_mtime_ns, item[1].name), reverse=True):
         payload = load_json(candidate, {})
         if isinstance(payload, dict):
-            return payload.get("status") in {"ok", "blocked_external", "error", "fallback_accepted"}, str(candidate.relative_to(root))
-    return False, None
+            status = str(payload.get("status") or "")
+            return status in statuses, str(candidate.relative_to(base)), status
+    return False, None, None
+
+
+def evidence_report_exists(
+    root: Path,
+    rel: str,
+    *,
+    accepted_statuses: set[str] | None = None,
+) -> tuple[bool, str | None]:
+    ok, path, _status = evidence_report_state(root, rel, accepted_statuses=accepted_statuses)
+    return ok, path
+
+
+def has_open_blocked_external_missing_evidence(root: Path, slice_id: str) -> bool:
+    failures = list(iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl") or [])
+    return any(
+        row.get("slice") == slice_id
+        and row.get("failure_class") == "blocked_external_missing_evidence"
+        and row.get("open", True)
+        for row in failures
+    )
 
 
 def pyeight_decision_state(root: Path) -> tuple[bool, bool, str | None]:
@@ -92,26 +143,26 @@ def verify_s03_readiness(root: Path) -> dict[str, Any]:
         if status != "complete":
             errors.append(f"{slice_id} must be complete before S03 readiness: {status}")
 
-    oura_ok, oura_path = evidence_report_exists(root, "private/evidence/S03/oura_smoke")
+    oura_ok, oura_path, oura_status = evidence_report_state(root, "private/evidence/S03/oura_smoke", accepted_statuses={"ok"})
+    blocked_oura = has_open_blocked_external_missing_evidence(root, "S03")
     checks["oura_evidence"] = oura_path
+    checks["oura_evidence_status"] = oura_status
+    checks["oura_blocked_external_open"] = blocked_oura
     missing_env = [name for name in ("OURA_ACCESS_TOKEN",) if not (os.environ.get(name) or "").strip()]
     checks["required_token_env_present"] = not missing_env
     checks["missing_env"] = missing_env
     checks["secret_values_logged"] = False
-    if not oura_ok and missing_env:
-        failures = list(iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl") or [])
-        blocked = any(
-            row.get("slice") == "S03"
-            and row.get("failure_class") == "blocked_external_missing_evidence"
-            and row.get("open", True)
-            for row in failures
-        )
-        if not blocked:
-            errors.append("Oura evidence preflight is missing and OURA_ACCESS_TOKEN is absent")
+    if not oura_ok and not blocked_oura:
+        errors.append("Oura evidence preflight is missing or not ok and no open blocked_external_missing_evidence failure is recorded")
 
-    pyeight_ok, pyeight_path = evidence_report_exists(root, "private/evidence/S03/pyeight_smoke")
+    pyeight_ok, pyeight_path, pyeight_status = evidence_report_state(
+        root,
+        "private/evidence/S03/pyeight_smoke",
+        accepted_statuses={"ok", "fallback_accepted"},
+    )
     decision_ok, fallback, decision_path = pyeight_decision_state(root)
     checks["pyeight_evidence"] = pyeight_path
+    checks["pyeight_evidence_status"] = pyeight_status
     checks["pyeight_decision"] = decision_path
     checks["pyeight_fallback_explicit"] = fallback
     checks["pyeight_provider_state_explicit"] = pyeight_ok or decision_ok
