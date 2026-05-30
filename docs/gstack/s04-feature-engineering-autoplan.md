@@ -26,6 +26,12 @@ The active S03 provider decision is Oura-only v1. Feature engineering must read 
 - Mood labels are never imputed.
 - 8 Sleep values must not be averaged, blended, or reconciled into v1 features.
 
+## Deliverables
+
+- `src/warehouse/features.py`
+- `tests/test_features.py`
+- `docs/evidence/s04-feature-engineering-command-evidence.json` if sanitized command evidence is recorded
+
 ## Implementation Tasks
 
 ### S04 readiness and provider-decision guard
