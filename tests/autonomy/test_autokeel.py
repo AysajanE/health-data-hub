@@ -487,6 +487,122 @@ Manual gates are forbidden.
             events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
             self.assertIn("po_escalated_resume_after_repair_authorized", events)
 
+    def test_failure_budget_counts_only_unresolved_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence = root / "docs/evidence/root-cause.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Root cause fixed.\n", encoding="utf-8")
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            rows = [
+                {
+                    "ts": now,
+                    "slice": "S01",
+                    "run_id": "RUN_TEST",
+                    "failure_class": "audit_failure",
+                    "severity": "high",
+                    "open": False,
+                    "closure_evidence": "docs/evidence/root-cause.md",
+                    "closure_note": "Fixed with local evidence.",
+                }
+                for _ in range(3)
+            ]
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            op = AutoKeel(root=root, dry_run=True)
+
+            result = op.failure_budget_exceeded(op.load_slices()[0])
+
+            self.assertTrue(result.ok)
+            self.assertIn("unresolved=0", result.stdout)
+            self.assertIn("resolved=3", result.stdout)
+
+    def test_failure_budget_blocks_closed_failures_without_local_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            rows = [
+                {
+                    "ts": now,
+                    "slice": "S01",
+                    "run_id": "RUN_TEST",
+                    "failure_class": "audit_failure",
+                    "severity": "high",
+                    "open": False,
+                    "closure_evidence": "docs/evidence/missing.md",
+                    "closure_note": "Claims a fix without retained evidence.",
+                }
+                for _ in range(3)
+            ]
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            op = AutoKeel(root=root, dry_run=True)
+
+            result = op.failure_budget_exceeded(op.load_slices()[0])
+
+            self.assertFalse(result.ok)
+            self.assertEqual(result.exit_code, 37)
+            self.assertIn("audit_failure=3", result.stderr)
+
+    def test_repaired_escalated_run_can_be_restored_from_slice_run_id(self) -> None:
+        seen: dict[str, object] = {}
+
+        class CapturingRunner:
+            def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                if list(argv)[:3] == ["python", "-m", "scripts.keel_status_digest"]:
+                    return CommandResult(list(argv), 0, '{"terminal_state": "escalated"}', "")
+                seen["argv"] = list(argv)
+                seen["cwd"] = cwd
+                seen["env"] = dict(env or {})
+                seen["timeout"] = timeout
+                return CommandResult(list(argv), 0, '{"run_id": "RUN_TEST"}', "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            configure_fake_po_root(root)
+            evidence = root / "docs/evidence/root-cause.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Root cause fixed.\n", encoding="utf-8")
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            slices[0]["status"] = "replan_required"
+            slices[0]["run_id"] = "RUN_TEST"
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            failure = {
+                "ts": now,
+                "slice": "S01",
+                "run_id": "RUN_TEST",
+                "failure_class": "audit_failure",
+                "severity": "high",
+                "description": "PO escalated the slice.",
+                "action_taken": "Recorded escalation for root-cause diagnosis.",
+                "evidence_path": "ops/autonomy/failures/S01-audit_failure.md",
+                "open": False,
+                "closure_evidence": "docs/evidence/root-cause.md",
+                "closure_note": "Root cause fixed.",
+            }
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(json.dumps(failure) + "\n", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = CapturingRunner()
+
+            restored = op.restore_repaired_escalated_slice_run(op.load_slices()[0])
+            result = op.start_or_resume_po(op.load_slices()[0])
+
+            self.assertTrue(restored)
+            self.assertTrue(result.ok)
+            self.assertEqual(seen["argv"][2:4], ["supervise", "resume"])
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["active_run"]["run_id"], "RUN_TEST")
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("po_escalated_run_recovered_for_repaired_resume", events)
+
     def test_superseded_active_run_snapshot_starts_new_po_run(self) -> None:
         seen: dict[str, object] = {}
 

@@ -622,6 +622,45 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
                 rows.append(row)
         return rows
 
+    def failure_closure_evidence_valid(self, row: dict[str, Any]) -> bool:
+        evidence = str(row.get("closure_evidence") or "")
+        note = str(row.get("closure_note") or "")
+        if not evidence or not note:
+            return False
+
+        evidence_path = Path(evidence)
+        if evidence_path.is_absolute():
+            candidate = evidence_path.resolve()
+        else:
+            candidate = (self.root / evidence).resolve()
+        try:
+            candidate.relative_to(self.root.resolve())
+        except ValueError:
+            return False
+        return candidate.exists()
+
+    def failure_counts_against_budget(self, row: dict[str, Any]) -> bool:
+        if row.get("open", True):
+            return True
+        # Safety invariant: a closed ledger row stops consuming retry budget
+        # only when local closure evidence still exists and explains the repair.
+        return not self.failure_closure_evidence_valid(row)
+
+    def evidence_closed_failures(self, slice_id: str, failure_class: str | None = None, run_id: str | None = None) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for row in iter_jsonl(self.failure_path):
+            if row.get("slice") != slice_id:
+                continue
+            if failure_class and row.get("failure_class") != failure_class:
+                continue
+            if run_id and row.get("run_id") != run_id:
+                continue
+            if row.get("open", True):
+                continue
+            if self.failure_closure_evidence_valid(row):
+                rows.append(row)
+        return rows
+
     def high_or_critical_open_failures(self, slice_id: str | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for row in iter_jsonl(self.failure_path):
@@ -649,7 +688,8 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         loop = self.policy.get("loop", {})
         max_total = int(loop.get("max_total_failures_per_slice", 8))
         max_same = int(loop.get("max_same_failure_class_per_slice", 2))
-        rows = [row for row in iter_jsonl(self.failure_path) if row.get("slice") == slice_["id"]]
+        all_rows = [row for row in iter_jsonl(self.failure_path) if row.get("slice") == slice_["id"]]
+        rows = [row for row in all_rows if self.failure_counts_against_budget(row)]
         if len(rows) > max_total:
             return CommandResult([], 37, "", f"failure budget exceeded for {slice_['id']}: {len(rows)} > {max_total}")
         counts: dict[str, int] = {}
@@ -659,7 +699,8 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         repeated = sorted(f"{key}={value}" for key, value in counts.items() if value > max_same)
         if repeated:
             return CommandResult([], 37, "", f"same failure class budget exceeded for {slice_['id']}: {', '.join(repeated)}")
-        return CommandResult([], 0, "failure budgets ok", "")
+        resolved = len(all_rows) - len(rows)
+        return CommandResult([], 0, f"failure budgets ok; unresolved={len(rows)} resolved={resolved}", "")
 
     def checkpoint_allowed_pre_po_changes(self, slice_id: str) -> CommandResult:
         status = self._git_status_paths()
@@ -3756,6 +3797,50 @@ Use local files and commands only. If evidence is missing, write a failing revie
         )
         return CommandResult([], 0, json.dumps({"run_id": run_id, "terminal_state": terminal}), "")
 
+    def restore_repaired_escalated_slice_run(self, slice_: dict[str, Any]) -> bool:
+        run_id = str(slice_.get("run_id") or "")
+        if not run_id:
+            return False
+
+        state = self.load_state()
+        active = state.get("active_run") or {}
+        if active.get("slice") or active.get("run_id"):
+            return False
+
+        open_for_run = self.open_failures(slice_["id"], run_id=run_id)
+        if open_for_run:
+            self.log_event(
+                "po_escalated_recovery_blocked_open_failure",
+                {"run_id": run_id, "open_failures": len(open_for_run)},
+                slice_id=slice_["id"],
+            )
+            return False
+
+        closed_audit = self.evidence_closed_failures(slice_["id"], "audit_failure", run_id)
+        if not closed_audit:
+            return False
+
+        status = self.inspect_po_status(run_id)
+        terminal = str(status.get("terminal_state") or status.get("state") or "unknown")
+        if terminal != "escalated":
+            return False
+
+        state["active_run"] = {
+            "slice": slice_["id"],
+            "run_id": run_id,
+            "started_at": now_iso(),
+            "last_seen_at": now_iso(),
+            "restored_after_failure": "evidence_closed_escalation",
+        }
+        state["current_slice"] = slice_["id"]
+        self.save_state(state)
+        self.log_event(
+            "po_escalated_run_recovered_for_repaired_resume",
+            {"run_id": run_id, "closed_audit_failures": len(closed_audit), "terminal_state": terminal},
+            slice_id=slice_["id"],
+        )
+        return True
+
     def start_or_resume_po(self, slice_: dict[str, Any]) -> CommandResult:
         state = self.load_state()
         active = state.get("active_run") or {}
@@ -4445,6 +4530,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
             status = self.inspect_po_status(run_id)
             self.handle_po_status(slice_["id"], run_id, status)
             return 0
+
+        self.restore_repaired_escalated_slice_run(slice_)
 
         state = self.load_state()
         active = state.get("active_run") or {}
