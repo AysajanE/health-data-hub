@@ -129,14 +129,18 @@
       "S02",
       "S03"
     ],
+    "failure_path": "ops/autonomy/failures/S04-audit_failure-20260530T153932-0400-eb9cc5de.md",
     "id": "S04",
     "lane": "compiler",
     "name": "Feature engineering",
     "playbook": "docs/playbooks/s04-feature-engineering.playbook.md",
     "required": true,
+    "retry_count": 0,
     "risk": "medium",
+    "run_id": "RUN_20260530T191329Z_40064d103fdf412db1150e69ef247613",
     "slug": "s04-feature-engineering",
-    "status": "pending"
+    "status": "pending",
+    "updated_at": "2026-05-30T15:39:32-04:00"
   },
   {
     "acceptance": [
