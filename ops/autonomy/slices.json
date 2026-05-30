@@ -102,7 +102,6 @@
       "python scripts/evidence/pyeight_smoke.py --json"
     ],
     "playbook": "docs/playbooks/s03-ingestion-provider.playbook.md",
-    "reason": "same failure class budget exceeded for S03: audit_failure=3",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -111,8 +110,8 @@
     "risk": "high",
     "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
     "slug": "s03-ingestion-provider",
-    "status": "blocked",
-    "updated_at": "2026-05-29T20:36:39-04:00"
+    "status": "replan_required",
+    "updated_at": "2026-05-29T20:42:10-04:00"
   },
   {
     "acceptance": [
