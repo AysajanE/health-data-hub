@@ -87,11 +87,11 @@
     ],
     "autoplan": "docs/gstack/s03-ingestion-provider-autoplan.md",
     "brief": "docs/briefs/s03-ingestion-provider.autonomous-brief.md",
+    "completed_at": "2026-05-29T20:56:13-04:00",
     "evidence_dirs": [
       "private/evidence/S03",
       "docs/evidence/ingestion"
     ],
-    "failure_path": "ops/autonomy/failures/S03-failure_budget_exceeded-20260529T203639-0400-d2674b20.md",
     "fallbacks": {
       "pyeight_smoke_failure": "oura_only_v1"
     },
@@ -109,9 +109,11 @@
     ],
     "risk": "high",
     "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+    "ship_branch": "ship/s03",
+    "ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
     "slug": "s03-ingestion-provider",
-    "status": "replan_required",
-    "updated_at": "2026-05-29T20:42:10-04:00"
+    "status": "complete",
+    "updated_at": "2026-05-29T20:56:13-04:00"
   },
   {
     "acceptance": [
