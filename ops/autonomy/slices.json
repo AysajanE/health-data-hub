@@ -91,7 +91,7 @@
       "private/evidence/S03",
       "docs/evidence/ingestion"
     ],
-    "failure_path": "ops/autonomy/failures/S03-audit_failure-20260529T190543-0400-c3de3eae.md",
+    "failure_path": "ops/autonomy/failures/S03-audit_failure-20260529T203004-0400-071c6a89.md",
     "fallbacks": {
       "pyeight_smoke_failure": "oura_only_v1"
     },
@@ -111,7 +111,7 @@
     "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
     "slug": "s03-ingestion-provider",
     "status": "pending",
-    "updated_at": "2026-05-29T19:05:43-04:00"
+    "updated_at": "2026-05-29T20:30:04-04:00"
   },
   {
     "acceptance": [
