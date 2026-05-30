@@ -14,13 +14,13 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.evidence._collector_common import write_report
+from scripts.evidence._collector_common import env_present, write_report
 
 
 def collect(root: Path) -> dict[str, object]:
-    url = os.environ.get("MOOD_SHORTCUT_TEST_URL")
-    token = os.environ.get("MOOD_SHORTCUT_TOKEN")
-    if url and token:
+    url = (os.environ.get("MOOD_SHORTCUT_TEST_URL") or "").strip()
+    token = (os.environ.get("MOOD_SHORTCUT_TOKEN") or "").strip()
+    if env_present("MOOD_SHORTCUT_TEST_URL") and env_present("MOOD_SHORTCUT_TOKEN"):
         payload = json.dumps({
             "feeling": 3,
             "energy": 3,
@@ -36,7 +36,7 @@ def collect(root: Path) -> dict[str, object]:
             path = write_report(root, "mood_shortcut_smoke", {"status": "error", "error_type": type(exc).__name__, "error": str(exc)})
             return {"status": "error", "evidence": str(path.relative_to(root)), "errors": [str(exc)]}
 
-        db_rel = os.environ.get("MOOD_SHORTCUT_VERIFY_SQLITE")
+        db_rel = (os.environ.get("MOOD_SHORTCUT_VERIFY_SQLITE") or "").strip()
         db_checked = False
         if db_rel:
             db_path = Path(db_rel)
@@ -46,7 +46,7 @@ def collect(root: Path) -> dict[str, object]:
                 with sqlite3.connect(db_path) as connection:
                     count = connection.execute("select count(*) from mood_entries").fetchone()[0]
                 db_checked = count > 0
-        duckdb_rel = os.environ.get("MOOD_SHORTCUT_VERIFY_DUCKDB")
+        duckdb_rel = (os.environ.get("MOOD_SHORTCUT_VERIFY_DUCKDB") or "").strip()
         duckdb_checked = False
         duckdb_check_error = ""
         if duckdb_rel:
@@ -65,7 +65,7 @@ def collect(root: Path) -> dict[str, object]:
         path = write_report(root, "mood_shortcut_smoke", {"status": "ok", "http_status": status_code, "response_chars": len(body), "sqlite_db_checked": db_checked, "duckdb_db_checked": duckdb_checked, "duckdb_check_error": duckdb_check_error, "db_check_note": "SQLite check is optional smoke metadata only; Health Data Hub canonical warehouse is DuckDB."})
         return {"status": "ok", "evidence": str(path.relative_to(root)), "errors": []}
 
-    rel = os.environ.get("MOOD_SHORTCUT_EVIDENCE_FILE")
+    rel = (os.environ.get("MOOD_SHORTCUT_EVIDENCE_FILE") or "").strip()
     if not rel:
         path = write_report(root, "mood_shortcut_smoke", {"status": "blocked_external", "missing_env": ["MOOD_SHORTCUT_EVIDENCE_FILE"]})
         return {"status": "blocked_external", "evidence": str(path.relative_to(root)), "errors": ["missing MOOD_SHORTCUT_EVIDENCE_FILE"]}

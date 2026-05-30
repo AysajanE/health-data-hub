@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import tempfile
 import unittest
@@ -16,7 +17,54 @@ from scripts.verify_run_retarget_evidence import verify_run_retarget_evidence
 from scripts.verify_ship_invariants import verify_ship_invariants
 from scripts.verify_s02_readiness import verify_s02_readiness
 from scripts.verify_s03_readiness import evidence_report_exists, evidence_report_state, verify_s03_readiness
+from scripts.verify_s04_readiness import verify_s04_readiness
+from scripts.validate_provider_decisions import validate_provider_decisions
 from scripts.verify_v1 import verify_v1
+
+
+def sha256_text(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write_public_evidence(root: Path, rel: str = "docs/evidence/provider-decision.md") -> Path:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("sanitized provider evidence\n", encoding="utf-8")
+    return path
+
+
+def provider_decision_payload(
+    root: Path,
+    *,
+    status: str = "fallback_accepted",
+    fallback_active: bool = True,
+    evidence_rel: str = "docs/evidence/provider-decision.md",
+    supersedes: list[str] | None = None,
+    superseded_by: str | None = None,
+) -> dict:
+    evidence = write_public_evidence(root, evidence_rel)
+    payload = {
+        "schema_version": "autokeel.provider_evidence_decision.v1",
+        "created_at": "2026-05-29T00:00:00-04:00",
+        "slice": "S03",
+        "provider": "pyeight",
+        "status": status,
+        "evidence_status": "ok" if status == "ok" else "blocked_external",
+        "evidence_path": evidence_rel,
+        "fallback_active": fallback_active,
+        "supersedes": supersedes or [],
+        "superseded_by": superseded_by,
+        "sanitized": True,
+        "raw_payload_tracked": False,
+        "secret_values_tracked": False,
+        "evidence_sha256": sha256_text(evidence),
+        "evidence_size_bytes": evidence.stat().st_size,
+    }
+    if status == "fallback_accepted":
+        payload["action"] = "oura_only_v1"
+    else:
+        payload["decision"] = "include_8_sleep_under_tripwire"
+    return payload
 
 
 def write_s02_readiness_fixture(root: Path, *, active_run: dict | None = None, with_policy: bool = False) -> None:
@@ -550,7 +598,7 @@ class VerifyScriptsTests(unittest.TestCase):
             decision = root / "ops/autonomy/decisions/pyeight-fallback.json"
             decision.parent.mkdir(parents=True)
             decision.write_text(
-                json.dumps({"created_at": "2026-05-29T00:00:00-04:00", "status": "fallback_accepted", "action": "oura_only_v1"}),
+                json.dumps(provider_decision_payload(root)),
                 encoding="utf-8",
             )
             report = verify_s03_readiness(root)
@@ -584,6 +632,10 @@ class VerifyScriptsTests(unittest.TestCase):
             oura = root / "private/evidence/S03/oura_smoke/report.json"
             oura.parent.mkdir(parents=True)
             oura.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+            pyeight = root / "private/evidence/S03/pyeight_smoke/pyeight_smoke-20260529T175729-0400.json"
+            pyeight.parent.mkdir(parents=True)
+            pyeight.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+            pyeight.chmod(0o600)
             write_json_atomic(
                 root / "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
                 {
@@ -595,6 +647,14 @@ class VerifyScriptsTests(unittest.TestCase):
                     "evidence_status": "ok",
                     "evidence_path": "private/evidence/S03/pyeight_smoke/pyeight_smoke-20260529T175729-0400.json",
                     "fallback_active": False,
+                    "private_evidence_sha256": sha256_text(pyeight),
+                    "private_evidence_size_bytes": pyeight.stat().st_size,
+                    "private_evidence_mode": "0o600",
+                    "supersedes": [],
+                    "superseded_by": None,
+                    "sanitized": True,
+                    "raw_payload_tracked": False,
+                    "secret_values_tracked": False,
                 },
             )
 
@@ -633,7 +693,7 @@ class VerifyScriptsTests(unittest.TestCase):
             (root / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
             write_json_atomic(
                 root / "ops/autonomy/decisions/S03-pyeight-fallback-test.json",
-                {"created_at": "2026-05-29T00:00:00-04:00", "status": "fallback_accepted", "action": "oura_only_v1"},
+                provider_decision_payload(root),
             )
 
             with patch.dict("os.environ", {"OURA_ACCESS_TOKEN": "token"}, clear=False):
@@ -673,7 +733,7 @@ class VerifyScriptsTests(unittest.TestCase):
             )
             write_json_atomic(
                 root / "ops/autonomy/decisions/S03-pyeight-fallback-test.json",
-                {"created_at": "2026-05-29T00:00:00-04:00", "status": "fallback_accepted", "action": "oura_only_v1"},
+                provider_decision_payload(root),
             )
 
             with patch.dict("os.environ", {"OURA_ACCESS_TOKEN": "token"}, clear=False):
@@ -706,6 +766,10 @@ class VerifyScriptsTests(unittest.TestCase):
                 ],
             )
             (root / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
+            pyeight = root / "private/evidence/S03/pyeight_smoke/pyeight_smoke-20260529T175729-0400.json"
+            pyeight.parent.mkdir(parents=True)
+            pyeight.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+            pyeight.chmod(0o600)
             write_json_atomic(
                 root / "ops/autonomy/decisions/S03-pyeight-evidence-20260529.json",
                 {
@@ -715,7 +779,16 @@ class VerifyScriptsTests(unittest.TestCase):
                     "provider": "pyeight",
                     "status": "ok",
                     "evidence_status": "ok",
+                    "evidence_path": "private/evidence/S03/pyeight_smoke/pyeight_smoke-20260529T175729-0400.json",
                     "fallback_active": False,
+                    "private_evidence_sha256": sha256_text(pyeight),
+                    "private_evidence_size_bytes": pyeight.stat().st_size,
+                    "private_evidence_mode": "0o600",
+                    "supersedes": [],
+                    "superseded_by": None,
+                    "sanitized": True,
+                    "raw_payload_tracked": False,
+                    "secret_values_tracked": False,
                 },
             )
 
@@ -757,6 +830,147 @@ class VerifyScriptsTests(unittest.TestCase):
 
             self.assertTrue(ok)
             self.assertEqual(path, "private/evidence/S03/pyeight_smoke/pyeight_smoke-20260102T000000-0000.json")
+
+    def test_evidence_state_returns_newest_accepted_status_before_newer_blocked_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            evidence_dir = root / "private/evidence/S03/oura_smoke"
+            evidence_dir.mkdir(parents=True)
+            older_ok = evidence_dir / "oura_smoke-20260101T000000-0000.json"
+            newer_blocked = evidence_dir / "oura_smoke-20260102T000000-0000.json"
+            older_ok.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+            newer_blocked.write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
+
+            ok, path, status = evidence_report_state(root, "private/evidence/S03/oura_smoke", accepted_statuses={"ok"})
+
+            self.assertTrue(ok)
+            self.assertEqual(path, "private/evidence/S03/oura_smoke/oura_smoke-20260101T000000-0000.json")
+            self.assertEqual(status, "ok")
+
+    def test_provider_decision_validator_rejects_conflicting_active_pyeight_states(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "ops/autonomy/decisions").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/decisions/S03-pyeight-evidence.json",
+                provider_decision_payload(root, status="ok", fallback_active=False),
+            )
+            write_json_atomic(
+                root / "ops/autonomy/decisions/S03-pyeight-fallback.json",
+                provider_decision_payload(root, status="fallback_accepted", fallback_active=True),
+            )
+
+            report = validate_provider_decisions(root, "S03")
+
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("active fallback must supersede" in error for error in report["errors"]))
+
+    def test_run_retarget_evidence_requires_no_skips_and_repaired_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            old_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, stdout=subprocess.PIPE, check=True).stdout.strip()
+            (root / "repair.txt").write_text("repair\n", encoding="utf-8")
+            subprocess.run(["git", "add", "repair.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "repair"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            new_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, stdout=subprocess.PIPE, check=True).stdout.strip()
+            closure = root / "docs/evidence/closure.md"
+            closure.parent.mkdir(parents=True)
+            closure.write_text("closure\n", encoding="utf-8")
+            evidence = root / "docs/evidence/S04-run-retarget-test.json"
+            payload = {
+                "slice": "S04",
+                "run_id": "RUN_TEST",
+                "old_run_branch_head": old_head,
+                "new_target_commit": new_head,
+                "merge_base": old_head,
+                "item_checkpoint_ancestry_proof": "merge-base equals old head",
+                "terminal_counts_before": {"passed": 1},
+                "terminal_counts_after": {"passed": 1},
+                "skipped_item_count": 0,
+                "repaired_files": ["repair.txt"],
+                "reason": "test retarget",
+                "closure_evidence": "docs/evidence/closure.md",
+            }
+            write_json_atomic(evidence, payload)
+
+            report = verify_run_retarget_evidence(evidence, root=root)
+
+            self.assertEqual(report["status"], "ok", report)
+            payload["skipped_item_count"] = 1
+            write_json_atomic(evidence, payload)
+            report = verify_run_retarget_evidence(evidence, root=root)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("skipped_item_count" in error for error in report["errors"]))
+
+    def test_verify_s04_readiness_requires_s03_provider_consumption(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / ".gitignore").write_text("private/\ndata/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+            (root / "ops/autonomy/decisions").mkdir(parents=True)
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {"id": "S01", "status": "complete", "required": True},
+                    {"id": "S02", "status": "complete", "required": True},
+                    {
+                        "id": "S03",
+                        "status": "complete",
+                        "required": True,
+                        "ship_branch": "ship/s03",
+                        "ship_commit": "",
+                        "review_artifacts": ["docs/reviews/s03-autonomous-ingestion-evidence-review.md"],
+                    },
+                    {"id": "S04", "status": "pending", "required": True},
+                ],
+            )
+            (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            ship_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, stdout=subprocess.PIPE, check=True).stdout.strip()
+            subprocess.run(["git", "branch", "ship/s03", ship_commit], cwd=root, check=True)
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            slices[2]["ship_commit"] = ship_commit
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            oura = root / "private/evidence/S03/oura_smoke/report.json"
+            oura.parent.mkdir(parents=True)
+            oura.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+            write_json_atomic(
+                root / "ops/autonomy/decisions/S03-pyeight-fallback.json",
+                provider_decision_payload(root),
+            )
+            summary = root / "docs/evidence/ingestion/s03-ingestion-evidence.md"
+            summary.parent.mkdir(parents=True)
+            summary.write_text("direct_oura_api_v2_periodic_pull\noura_only_v1\n", encoding="utf-8")
+            brief = root / "docs/briefs/s04-feature-engineering.autonomous-brief.md"
+            brief.parent.mkdir(parents=True)
+            brief.write_text(
+                "active S03 provider decision\nOura-only v1\nmust not require pyEight evidence\n8 Sleep must remain absent/fallback\n",
+                encoding="utf-8",
+            )
+            autoplan = root / "docs/gstack/s04-feature-engineering-autoplan.md"
+            autoplan.parent.mkdir(parents=True)
+            autoplan.write_text(
+                "active S03 provider decision\nOura-only v1\nmust not require pyEight evidence\n8 Sleep must remain absent/fallback\n",
+                encoding="utf-8",
+            )
+
+            report = verify_s04_readiness(root)
+
+            self.assertEqual(report["status"], "ok", report)
+            brief.write_text("missing contract\n", encoding="utf-8")
+            report = verify_s04_readiness(root)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("S04 brief" in error for error in report["errors"]))
 
     def test_ship_invariants_require_detached_worktree_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -814,6 +1028,8 @@ class VerifyScriptsTests(unittest.TestCase):
                         "item_checkpoint_ancestry_proof": "checkpoint commit is ancestor",
                         "terminal_counts_before": {"passed": 6},
                         "terminal_counts_after": {"passed": 6},
+                        "skipped_item_count": 0,
+                        "repaired_files": ["new.txt"],
                         "reason": "repair item 07 only",
                         "closure_evidence": str(closure.relative_to(root)),
                     }

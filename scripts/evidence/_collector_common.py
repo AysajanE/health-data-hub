@@ -29,9 +29,14 @@ def redact_env(env: dict[str, str]) -> dict[str, str]:
     return redacted
 
 
+def env_present(name: str, env: dict[str, str] | None = None) -> bool:
+    source = os.environ if env is None else env
+    return bool(str(source.get(name, "")).strip())
+
+
 def env_presence_markers(names: Iterable[str], env: dict[str, str] | None = None) -> dict[str, str]:
     source = os.environ if env is None else env
-    return {name: "[REDACTED]" if source.get(name) else "[UNSET]" for name in names}
+    return {name: "[REDACTED]" if env_present(name, source) else "[UNSET]" for name in names}
 
 
 def sanitize_text(text: str, *, secret_values: Iterable[str] = ()) -> str:

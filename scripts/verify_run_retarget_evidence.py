@@ -20,6 +20,8 @@ REQUIRED_FIELDS = {
     "item_checkpoint_ancestry_proof",
     "terminal_counts_before",
     "terminal_counts_after",
+    "skipped_item_count",
+    "repaired_files",
     "reason",
     "closure_evidence",
 }
@@ -46,7 +48,7 @@ def verify_run_retarget_evidence(path: Path, root: Path | None = None) -> dict[s
     if not isinstance(evidence, dict):
         return {"status": "error", "errors": [f"retarget evidence is not a JSON object: {path}"], "warnings": []}
     for field in sorted(REQUIRED_FIELDS):
-        if not evidence.get(field):
+        if field not in evidence or evidence.get(field) in (None, "", [], {}):
             errors.append(f"missing required field: {field}")
     old_head = str(evidence.get("old_run_branch_head") or "")
     new_commit = str(evidence.get("new_target_commit") or "")
@@ -66,6 +68,19 @@ def verify_run_retarget_evidence(path: Path, root: Path | None = None) -> dict[s
         )
         if proc.returncode != 0 or proc.stdout.strip() != merge_base:
             errors.append("merge_base does not match old/new commit ancestry")
+        if proc.returncode == 0 and proc.stdout.strip() != old_head:
+            errors.append("old_run_branch_head must be the merge-base of the retargeted descendant")
+    if evidence.get("terminal_counts_before") != evidence.get("terminal_counts_after"):
+        errors.append("terminal_counts_before must equal terminal_counts_after")
+    if evidence.get("skipped_item_count") != 0:
+        errors.append("skipped_item_count must be 0")
+    repaired_files = evidence.get("repaired_files")
+    if not isinstance(repaired_files, list) or not repaired_files:
+        errors.append("repaired_files must be a non-empty list")
+    else:
+        for rel in repaired_files:
+            if not isinstance(rel, str) or not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
+                errors.append(f"repaired_files entry must be repo-relative and contained: {rel}")
     closure = str(evidence.get("closure_evidence") or "")
     if closure and not (root / closure).exists():
         errors.append(f"closure_evidence path missing: {closure}")

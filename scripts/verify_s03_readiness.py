@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +14,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_no_tracked_data import check_no_tracked_data
+from scripts.evidence._collector_common import env_present
+from scripts.validate_provider_decisions import validate_provider_decisions
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -76,11 +77,18 @@ def evidence_report_state(
             candidates.append((base, path))
         elif path.is_dir():
             candidates.extend((base, item) for item in path.rglob("*.json"))
+    newest_status: tuple[str, str] | None = None
     for base, candidate in sorted(candidates, key=lambda item: (item[1].stat().st_mtime_ns, item[1].name), reverse=True):
         payload = load_json(candidate, {})
         if isinstance(payload, dict):
             status = str(payload.get("status") or "")
-            return status in statuses, str(candidate.relative_to(base)), status
+            if newest_status is None:
+                newest_status = (str(candidate.relative_to(base)), status)
+            if status in statuses:
+                return True, str(candidate.relative_to(base)), status
+    if newest_status is not None:
+        path, status = newest_status
+        return False, path, status
     return False, None, None
 
 
@@ -148,7 +156,7 @@ def verify_s03_readiness(root: Path) -> dict[str, Any]:
     checks["oura_evidence"] = oura_path
     checks["oura_evidence_status"] = oura_status
     checks["oura_blocked_external_open"] = blocked_oura
-    missing_env = [name for name in ("OURA_ACCESS_TOKEN",) if not (os.environ.get(name) or "").strip()]
+    missing_env = [name for name in ("OURA_ACCESS_TOKEN",) if not env_present(name)]
     checks["required_token_env_present"] = not missing_env
     checks["missing_env"] = missing_env
     checks["secret_values_logged"] = False
@@ -161,6 +169,11 @@ def verify_s03_readiness(root: Path) -> dict[str, Any]:
         accepted_statuses={"ok", "fallback_accepted"},
     )
     decision_ok, fallback, decision_path = pyeight_decision_state(root)
+    provider_decisions = validate_provider_decisions(root, "S03")
+    checks["provider_decision_validation"] = provider_decisions["status"]
+    checks["provider_decision_count"] = provider_decisions["decision_count"]
+    if provider_decisions["status"] != "ok":
+        errors.extend(f"provider decision validation failed: {error}" for error in provider_decisions["errors"])
     checks["pyeight_evidence"] = pyeight_path
     checks["pyeight_evidence_status"] = pyeight_status
     checks["pyeight_decision"] = decision_path

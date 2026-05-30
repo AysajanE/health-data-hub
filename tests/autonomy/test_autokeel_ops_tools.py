@@ -136,11 +136,69 @@ class AutoKeelOpsToolTests(unittest.TestCase):
             rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(rows[0]["closure_note"], "access_token=[REDACTED]")
 
+    def test_close_failure_rejects_invalid_retarget_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, stdout=subprocess.PIPE, check=True).stdout.strip()
+            evidence = root / "docs/evidence/S01-run-retarget-test.json"
+            evidence.parent.mkdir(parents=True)
+            write_json_atomic(
+                evidence,
+                {
+                    "slice": "S01",
+                    "run_id": "RUN_TEST",
+                    "old_run_branch_head": head,
+                    "new_target_commit": head,
+                    "merge_base": head,
+                    "item_checkpoint_ancestry_proof": "test",
+                    "terminal_counts_before": {"passed": 1},
+                    "terminal_counts_after": {"passed": 1},
+                    "skipped_item_count": 1,
+                    "repaired_files": ["seed.txt"],
+                    "reason": "invalid skipped item test",
+                    "closure_evidence": "docs/evidence/S01-run-retarget-test.json",
+                },
+            )
+            ledger = root / "ops/autonomy/failure_ledger.jsonl"
+            ledger.write_text(
+                json.dumps({"slice": "S01", "failure_class": "audit_failure", "severity": "high", "open": True}) + "\n",
+                encoding="utf-8",
+            )
+
+            report = close_failure(root, "S01", "audit_failure", "docs/evidence/S01-run-retarget-test.json", "closed in test")
+
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("retarget closure evidence invalid" in error for error in report["errors"]))
+
     def test_tripwires_future_deadlines_do_not_fire(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_autonomy_fixture(root)
+            evidence = root / "private/evidence/S03/oura_smoke/report.json"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
             report = evaluate_tripwires(root)
+            self.assertEqual(report["status"], "ok", report)
+            self.assertEqual(report["fired"], [])
+
+    def test_tripwires_use_newest_ok_report_before_newer_blocked_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence_dir = root / "private/evidence/S03/oura_smoke"
+            evidence_dir.mkdir(parents=True)
+            (evidence_dir / "older-ok.json").write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+            (evidence_dir / "newer-blocked.json").write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
+
+            report = evaluate_tripwires(root)
+
             self.assertEqual(report["status"], "ok", report)
             self.assertEqual(report["fired"], [])
 

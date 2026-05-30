@@ -150,6 +150,8 @@ python scripts/verify_autonomy_preflight.py --json
 python scripts/verify_failure_ledger.py --json
 python scripts/verify_autokeel_invariants.py --json
 python scripts/verify_s03_readiness.py --json
+python scripts/validate_provider_decisions.py S03 --json
+python scripts/verify_s04_readiness.py --json
 ```
 
 One dry-run iteration:
@@ -197,12 +199,25 @@ python scripts/validate_swr_review_bundle.py <bundle>.json --json
 python scripts/verify_run_retarget_evidence.py docs/evidence/<slice>-run-retarget-<timestamp>.json --json
 ```
 
+Provider decisions and retarget evidence:
+
+```bash
+python scripts/validate_provider_decisions.py S03 --json
+python scripts/verify_run_retarget_evidence.py docs/evidence/S03-run-retarget-20260529T1824.json --json
+python scripts/verify_s04_readiness.py --json
+```
+
 Slice verification:
 
 ```bash
 python scripts/verify_slice.py S01 --json
 python scripts/verify_ship_invariants.py S01 --json
 ```
+
+S04 must not start unless `python scripts/verify_s04_readiness.py --json`
+passes. S04 must consume the active S03 provider decision, treat Oura-only v1
+as first-class, and must not require pyEight evidence unless a future explicit
+slice supersedes the S03 fallback decision.
 
 Close a failure only with local evidence:
 

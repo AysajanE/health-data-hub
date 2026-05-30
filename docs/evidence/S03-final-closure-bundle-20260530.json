@@ -1,0 +1,29 @@
+{
+  "slice": "S03",
+  "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+  "ship_branch": "ship/s03",
+  "ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
+  "commands": [
+    {
+      "command": "python scripts/verify_slice.py S03 --json",
+      "exit_code": 0
+    },
+    {
+      "command": "python scripts/verify_ship_invariants.py S03 --json",
+      "exit_code": 0
+    },
+    {
+      "command": "python scripts/verify_s03_readiness.py --json",
+      "exit_code": 0
+    },
+    {
+      "command": "python scripts/verify_failure_ledger.py --slice S03 --json",
+      "exit_code": 0
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py --json",
+      "exit_code": 0
+    }
+  ],
+  "redaction": "no raw health data, tokens, provider payloads, private evidence contents, DuckDB files, snapshots, or quarantine payloads"
+}

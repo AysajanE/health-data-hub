@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutoKeel provider evidence decision",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "created_at",
+    "slice",
+    "provider",
+    "status",
+    "evidence_status",
+    "evidence_path",
+    "fallback_active",
+    "supersedes",
+    "sanitized",
+    "raw_payload_tracked",
+    "secret_values_tracked"
+  ],
+  "properties": {
+    "schema_version": {"const": "autokeel.provider_evidence_decision.v1"},
+    "created_at": {"type": "string"},
+    "slice": {"type": "string"},
+    "provider": {"enum": ["oura", "pyeight", "8sleep", "eight_sleep"]},
+    "status": {"enum": ["ok", "blocked_external", "fallback_accepted", "error"]},
+    "evidence_status": {"enum": ["ok", "blocked_external", "fallback_accepted", "error"]},
+    "evidence_path": {"type": "string"},
+    "fallback_active": {"type": "boolean"},
+    "supersedes": {"type": "array", "items": {"type": "string"}},
+    "superseded_by": {"type": ["string", "null"]},
+    "sanitized": {"const": true},
+    "raw_payload_tracked": {"const": false},
+    "secret_values_tracked": {"const": false}
+  }
+}

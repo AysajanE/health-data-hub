@@ -63,6 +63,39 @@ class ValidatePlaybookTests(unittest.TestCase):
         report = self.validate_text(VALID_PLAYBOOK)
         self.assertEqual(report["status"], "ok", report)
 
+    def test_future_artifact_in_verification_requires_prerequisite(self) -> None:
+        text = """# Playbook
+
+## Ordered Execution Plan
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Verify early | docs/evidence/early.md | docs/evidence | true | python scripts/check_schema_contract.py docs/evidence/future.md | early verified | none | none |
+| 02 | Produce future | docs/evidence/future.md | docs/evidence | true | python scripts/check_no_tracked_data.py | future produced | none | none |
+"""
+        report = self.validate_text(text)
+
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("future row 2 artifact" in error for error in report["errors"]))
+
+    def test_final_s03_readiness_gate_allowed_only_on_final_item(self) -> None:
+        text = """# S03 Playbook
+
+## Ordered Execution Plan
+
+| item | action | deliverable | allowed_write_roots | requires_red_green | required_verification_commands | exit_criteria | manual_gate | external_check |
+|---|---|---|---|---|---|---|---|---|
+| 01 | Oura check | docs/evidence/oura.md | docs/evidence | true | python scripts/verify_s03_readiness.py --json | early readiness | none | docs/evidence/oura.md |
+| 02 | Final review | docs/reviews/s03.md | docs/reviews | true | python scripts/check_no_tracked_data.py | final review | none | none |
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "s03-ingestion-provider.playbook.md"
+            path.write_text(text, encoding="utf-8")
+            report = validate_playbook(path)
+
+        self.assertEqual(report["status"], "error")
+        self.assertTrue(any("final S03 readiness gate" in error for error in report["errors"]))
+
     def test_active_manual_gate_fails(self) -> None:
         report = self.validate_text(VALID_PLAYBOOK.replace("| none | none |", "| signoff | none |"))
         self.assertEqual(report["status"], "error")

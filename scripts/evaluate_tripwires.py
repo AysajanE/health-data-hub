@@ -30,14 +30,18 @@ def latest_json_report(path: Path) -> dict[str, Any] | None:
         return None
 
     reports = sorted(path.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    newest: dict[str, Any] | None = None
     for report in reports:
         try:
             payload = json.loads(report.read_text(encoding="utf-8"))
             payload["_report_path"] = str(report)
-            return payload
+            if newest is None:
+                newest = payload
+            if str(payload.get("status", "unknown")) in OK_STATUSES:
+                return payload
         except Exception:
             continue
-    return None
+    return newest
 
 
 def evidence_status(root: Path, evidence_rel: str | None) -> dict[str, Any]:

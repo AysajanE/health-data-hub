@@ -20,6 +20,13 @@
     "blocked_external": 0,
     "awaiting_human_gate": 0
   },
+  "skipped_item_count": 0,
+  "repaired_files": [
+    "scripts/evidence/pyeight_smoke.py",
+    "scripts/evidence/test_pyeight_smoke.py",
+    "docs/gstack/s03-ingestion-provider-autoplan.md",
+    "docs/playbooks/s03-ingestion-provider.playbook.md"
+  ],
   "reason": "Retarget S03 active run to a descendant branch carrying the item 03 pyEight fallback contract repair, and rebuild the normalized plan from the repaired saved playbook snapshot so the fallback decision artifact is conditional instead of unconditional.",
   "closure_evidence": "docs/evidence/s03-item03-pyeight-contract-repair-20260529.md"
 }

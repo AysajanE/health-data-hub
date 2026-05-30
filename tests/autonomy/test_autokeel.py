@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from ops.autonomy.autokeel import AutoKeel, CommandResult, CommandRunner, PolicyError, write_json_atomic
 from scripts.autokeel_row_author import row_for_card
@@ -155,6 +156,43 @@ Manual gates are forbidden.
   Verify: `python -m pytest tests/warehouse/test_schema.py -q`
 """
             self.assertEqual(op.validate_autoplan_text(slice_, text), [])
+
+    def test_generated_autoplan_must_be_committed_before_compile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            init_git_repo(root)
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = op.load_slices()[0]
+            autoplan = root / str(slice_["autoplan"])
+            autoplan.parent.mkdir(parents=True, exist_ok=True)
+            autoplan.write_text("# generated autoplan\n", encoding="utf-8")
+
+            result = op.assert_autoplan_tracked_at_head(slice_)
+
+            self.assertEqual(result.exit_code, 41)
+            self.assertIn("autoplan must be tracked at HEAD before compile", result.stderr)
+
+    def test_blank_openai_key_is_missing_for_strict_swr_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            policy = root / "ops/autonomy/policy.yaml"
+            policy.write_text(
+                "lanes:\n"
+                "  swr_preferred: use_swr\n"
+                "swr:\n"
+                "  provider_auth_preflight: true\n"
+                "  required_env:\n"
+                "    - OPENAI_API_KEY\n",
+                encoding="utf-8",
+            )
+            op = AutoKeel(root=root, dry_run=False)
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "   "}):
+                result = op.strict_swr_provider_preflight({"id": "S02", "lane": "swr_preferred"})
+
+            self.assertEqual(result.exit_code, 26)
+            self.assertIn("OPENAI_API_KEY", result.stdout)
 
     def test_plan_orchestrator_root_matches_keel_tool_layout(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -505,8 +543,9 @@ Manual gates are forbidden.
                     "open": False,
                     "closure_evidence": "docs/evidence/root-cause.md",
                     "closure_note": "Fixed with local evidence.",
+                    "root_cause_id": f"S01-AUDIT-{index}",
                 }
-                for _ in range(3)
+                for index in range(3)
             ]
             (root / "ops/autonomy/failure_ledger.jsonl").write_text(
                 "".join(json.dumps(row) + "\n" for row in rows),
@@ -549,6 +588,54 @@ Manual gates are forbidden.
             self.assertFalse(result.ok)
             self.assertEqual(result.exit_code, 37)
             self.assertIn("audit_failure=3", result.stderr)
+
+    def test_repeated_closed_same_root_cause_exceeds_repair_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence = root / "docs/evidence/root-cause.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Root cause fixed.\n", encoding="utf-8")
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            rows = [
+                {
+                    "ts": now,
+                    "slice": "S01",
+                    "run_id": "RUN_TEST",
+                    "failure_class": "audit_failure",
+                    "severity": "high",
+                    "open": False,
+                    "closure_evidence": "docs/evidence/root-cause.md",
+                    "closure_note": "Fixed with local evidence.",
+                    "root_cause_id": "S01-SAME-ROOT",
+                }
+                for _ in range(3)
+            ]
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            op = AutoKeel(root=root, dry_run=True)
+
+            result = op.failure_budget_exceeded(op.load_slices()[0])
+
+            self.assertFalse(result.ok)
+            self.assertIn("root-cause repair budget exceeded", result.stderr)
+
+    def test_run_retarget_budget_blocks_third_retarget(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence_dir = root / "docs/evidence"
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            for index in range(3):
+                (evidence_dir / f"S01-run-retarget-{index}.json").write_text("{}", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=True)
+
+            result = op.failure_budget_exceeded(op.load_slices()[0])
+
+            self.assertFalse(result.ok)
+            self.assertIn("run retarget budget exceeded", result.stderr)
 
     def test_repaired_escalated_run_can_be_restored_from_slice_run_id(self) -> None:
         seen: dict[str, object] = {}
@@ -1065,6 +1152,9 @@ Manual gates are forbidden.
 """,
                 encoding="utf-8",
             )
+            oura_tripwire = root / "private/evidence/S03/oura_smoke/report.json"
+            oura_tripwire.parent.mkdir(parents=True)
+            oura_tripwire.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
             tracked = [
                 root / "ops/autonomy/autonomy_state.json",
                 root / "ops/autonomy/events.jsonl",
@@ -1095,6 +1185,9 @@ Manual gates are forbidden.
 """,
                 encoding="utf-8",
             )
+            oura_tripwire = root / "private/evidence/S03/oura_smoke/report.json"
+            oura_tripwire.parent.mkdir(parents=True)
+            oura_tripwire.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
             slices_path = root / "ops/autonomy/slices.json"
             slices = json.loads(slices_path.read_text(encoding="utf-8"))
             slices[0]["status"] = "replan_required"

@@ -68,6 +68,7 @@ POLICY_NOTE_FIELDS = {
 }
 EXECUTABLE_FIELD_NAMES = {"required_verification_commands", "verification", "command", "commands"}
 STRICT_FORBIDDEN_ROW_FIELDS = {"action", "deliverable", "deliverables", "exit_criteria"}
+REPO_PATH_RE = re.compile(r"\b(?:app|docs|ops|scripts|src|tests)/[A-Za-z0-9._/\-]+\b")
 
 
 def load_validation_policy(playbook_path: Path, explicit_policy: Path | None = None) -> dict[str, Any]:
@@ -283,6 +284,68 @@ def is_executable_command_field(field_name: str, value: str) -> bool:
     if field_name not in EXECUTABLE_FIELD_NAMES:
         return False
     return not is_empty(value)
+
+
+def extract_repo_paths(value: str) -> set[str]:
+    paths: set[str] = set()
+    for match in REPO_PATH_RE.finditer(value or ""):
+        paths.add(match.group(0).rstrip(".,);:"))
+    return paths
+
+
+def row_step_id(row: dict[str, str], index: int) -> str:
+    for key in ("step_id", "id", "item", "item_id"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    return str(index)
+
+
+def row_prerequisite_text(row: dict[str, str]) -> str:
+    fields = ("prerequisites", "prerequisite", "depends_on", "dependencies", "requires")
+    return " ".join(str(row.get(field) or "") for field in fields)
+
+
+def temporal_dependency_errors(playbook_path: Path, rows: list[dict[str, str]]) -> list[str]:
+    errors: list[str] = []
+    deliverables_by_row = [
+        extract_repo_paths(f"{row.get('deliverable', '')} {row.get('deliverables', '')}")
+        for row in rows
+    ]
+    final_index = len(rows)
+    available_paths: set[str] = set()
+    for index, row in enumerate(rows, start=1):
+        verification = row.get("required_verification_commands", "") or row.get("verification", "")
+        current_deliverables = deliverables_by_row[index - 1]
+        if not verification:
+            available_paths.update(current_deliverables)
+            continue
+        if (
+            playbook_path.name.startswith("s03-")
+            and "python scripts/verify_s03_readiness.py --json" in verification
+            and index != final_index
+        ):
+            errors.append(f"row {index}: final S03 readiness gate is only allowed on the final S03 item")
+        prereq_text = row_prerequisite_text(row)
+        prereq_paths = extract_repo_paths(prereq_text)
+        for future_index in range(index + 1, final_index + 1):
+            future_row = rows[future_index - 1]
+            future_step = row_step_id(future_row, future_index)
+            future_deliverables = deliverables_by_row[future_index - 1]
+            if not future_deliverables:
+                continue
+            prerequisite_declared = future_step in prereq_text or bool(future_deliverables & prereq_paths)
+            if prerequisite_declared:
+                continue
+            for future_path in sorted(future_deliverables):
+                if future_path in available_paths or future_path in current_deliverables:
+                    continue
+                if future_path in verification:
+                    errors.append(
+                        f"row {index}: verification command depends on future row {future_index} artifact without prerequisite: {future_path}"
+                    )
+        available_paths.update(current_deliverables)
+    return errors
 
 
 def allowed_v2_scope_context(text: str, match: re.Match[str]) -> bool:
@@ -502,6 +565,8 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
                         errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
                 elif not allowed_v2_scope_context(value_lower, match):
                     errors.append(f"row {idx}: v2 scope creep matched /{pattern}/")
+
+    errors.extend(temporal_dependency_errors(path, candidate_rows))
 
     for pattern in UNVERIFIED_DEPENDENCY_PATTERNS:
         if re.search(pattern, lowered, re.I):

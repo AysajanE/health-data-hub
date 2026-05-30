@@ -31,6 +31,10 @@ SECRET_RE = re.compile(
     r"([\"']?\s*[:=]\s*[\"']?)([^\"'\s,}]{8,})"
 )
 
+REQUIRED_ACCEPTANCE_COMMANDS = {
+    "S03": {"python scripts/verify_s03_readiness.py --json"},
+}
+
 
 def redact_text(text: str) -> str:
     return SECRET_RE.sub(r"\1\2[REDACTED]", text)
@@ -142,6 +146,11 @@ def verify_slice(
     for rel in target.get("deliverables", []):
         if not (root / rel).exists():
             errors.append(f"missing deliverable: {rel}")
+
+    required_acceptance = REQUIRED_ACCEPTANCE_COMMANDS.get(slice_id, set())
+    configured_acceptance = set(str(command) for command in target.get("acceptance", []))
+    for command in sorted(required_acceptance - configured_acceptance):
+        errors.append(f"missing required acceptance command: {command}")
 
     tracked = check_no_tracked_data(root)
     errors.extend(tracked["errors"])

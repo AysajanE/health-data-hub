@@ -12,6 +12,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.verify_run_retarget_evidence import verify_run_retarget_evidence
+
 
 SECRET_RE = re.compile(
     r"(?i)(access_token|refresh_token|mood_token|x-mood-token|client_secret|password|authorization|api[_-]?key)"
@@ -115,6 +120,10 @@ def close_failure(
         errors.append(f"closure evidence missing: {evidence}")
     if evidence_path.is_absolute() and not evidence_path.resolve().is_relative_to(root):
         errors.append(f"closure evidence must be under repo root: {evidence}")
+    if evidence_path.name.startswith(f"{slice_id}-run-retarget") and evidence_path.suffix == ".json":
+        retarget = verify_run_retarget_evidence(evidence_path, root=root)
+        if retarget["status"] != "ok":
+            errors.extend(f"retarget closure evidence invalid: {error}" for error in retarget["errors"])
     if errors:
         return {"status": "error", "errors": errors, "closed": 0}
 

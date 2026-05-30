@@ -14,10 +14,12 @@ python -m ops.autonomy.autokeel --doctor --strict
 python -m ops.autonomy.autokeel --doctor --strict-swr S05
 python -m ops.autonomy.autokeel --readiness S02
 python -m ops.autonomy.autokeel --readiness S03
+python -m ops.autonomy.autokeel --readiness S04
 python scripts/verify_failure_ledger.py --json
 python scripts/verify_autokeel_invariants.py --json
 python scripts/verify_ship_invariants.py S02 --json
 python scripts/verify_run_retarget_evidence.py docs/evidence/<slice>-run-retarget-<timestamp>.json --json
+python scripts/validate_provider_decisions.py S03 --json
 python scripts/validate_swr_review_bundle.py .local/autokeel/swr/review_lane/<bundle>.json --json
 python -m ops.autonomy.autokeel --once --dry-run
 python -m ops.autonomy.autokeel --next-slice
@@ -165,6 +167,54 @@ Only if those pass should a real bounded S03 tick run:
 ```bash
 python -m ops.autonomy.autokeel --once --slice S03
 ```
+
+S03 posthoc acceptance is the cumulative readiness contract, not a fresh live
+provider collection. The S03 slice acceptance must run
+`python scripts/verify_s03_readiness.py --json`,
+`python scripts/validate_provider_decisions.py S03 --json`, autonomous review
+validation, and tracked-data hygiene. The final closure bundle is
+`docs/evidence/S03-final-closure-bundle-20260530.json`. It records only command
+exit codes and redacted command surfaces; it does not commit private evidence
+contents.
+
+Provider decisions under `ops/autonomy/decisions/` must validate against
+`autokeel.provider_evidence_decision.v1`. Private evidence references require
+tracked hashes, sizes, and file modes so the decision proves the ignored local
+evidence artifact without committing raw provider data. pyEight fallback may
+not coexist with an active positive include decision unless the fallback
+explicitly supersedes the include decision and the include records
+`superseded_by`.
+
+Run-branch retargeting is a high-risk recovery operation. Every
+`docs/evidence/<slice>-run-retarget-*.json` file must pass
+`scripts/verify_run_retarget_evidence.py`, including descendant ancestry,
+unchanged terminal counts, `skipped_item_count: 0`, explicit `repaired_files`,
+and local closure evidence. AutoKeel validates retarget evidence before ship
+and enforces per-slice retarget and root-cause repair budgets.
+
+## S04 Guarded Zero-Supervision Runbook
+
+S04 may run as a single guarded zero-supervision slice only after S03 closure
+and S04 readiness pass. It must not continue automatically into S05.
+
+Before launching S04:
+
+```bash
+python scripts/verify_s03_readiness.py --json
+python scripts/validate_provider_decisions.py S03 --json
+python scripts/verify_s04_readiness.py --json
+python -m ops.autonomy.autokeel --once --dry-run --slice S04
+```
+
+The S04 brief must consume the active S03 provider decision. S04 treats
+Oura-only v1 as the first-class sleep source, must not require pyEight
+evidence, and must keep 8 Sleep absent/fallback unless a future explicit slice
+supersedes S03. Feature engineering may not write provider-evidence or
+ingestion-decision files except as read-only consult references.
+
+If a S04 run retarget, provider-decision conflict, high/critical open failure,
+or readiness failure appears, stop the zero-supervision launch and return to
+controlled-autonomous diagnosis.
 
 For PO execution, AutoKeel creates a local ignored `automation/` shim that
 points at the installed Keel plan-orchestrator runtime. This lets the

@@ -151,6 +151,9 @@ acceptance_commands:
     - python scripts/check_autonomous_review_exists.py
     - python scripts/setup_permissions.py
     - python scripts/evidence/oura_smoke.py
+    - python scripts/verify_s03_readiness.py
+    - python scripts/validate_provider_decisions.py
+    - python scripts/verify_s04_readiness.py
 
 evidence_collectors:
   s03_oura_smoke: scripts/evidence/oura_smoke.py
@@ -171,6 +174,11 @@ loop:
   max_retries_per_slice_before_replan: 3
   max_same_failure_class_per_slice: 2
   max_total_failures_per_slice: 8
+  max_run_retargets_per_slice: 2
+  stop_on_retarget_budget_exceeded: true
+  stop_on_missing_retarget_verification: true
+  max_closed_repairs_same_root_cause_per_slice: 2
+  max_closed_repairs_total_per_slice: 5
   max_swr_remote_wait_hours: 12
   max_swr_repairs_per_slice: 2
   max_po_repaired_resumes_per_item: 1

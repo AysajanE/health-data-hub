@@ -74,6 +74,10 @@ def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def env_present(name: str) -> bool:
+    return bool(str(os.environ.get(name, "")).strip())
+
+
 def slug_ts() -> str:
     return datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
 
@@ -688,6 +692,9 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         loop = self.policy.get("loop", {})
         max_total = int(loop.get("max_total_failures_per_slice", 8))
         max_same = int(loop.get("max_same_failure_class_per_slice", 2))
+        max_closed_total = int(loop.get("max_closed_repairs_total_per_slice", 5))
+        max_closed_same_root = int(loop.get("max_closed_repairs_same_root_cause_per_slice", 2))
+        max_retargets = int(loop.get("max_run_retargets_per_slice", 2))
         all_rows = [row for row in iter_jsonl(self.failure_path) if row.get("slice") == slice_["id"]]
         rows = [row for row in all_rows if self.failure_counts_against_budget(row)]
         if len(rows) > max_total:
@@ -699,8 +706,56 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         repeated = sorted(f"{key}={value}" for key, value in counts.items() if value > max_same)
         if repeated:
             return CommandResult([], 37, "", f"same failure class budget exceeded for {slice_['id']}: {', '.join(repeated)}")
+        closed_rows = [row for row in all_rows if not row.get("open", True) and self.failure_closure_evidence_valid(row)]
+        if len(closed_rows) > max_closed_total:
+            return CommandResult(
+                [],
+                37,
+                "",
+                f"closed repair budget exceeded for {slice_['id']}: {len(closed_rows)} > {max_closed_total}",
+            )
+        root_counts: dict[str, int] = {}
+        for row in closed_rows:
+            root_cause = str(row.get("root_cause_id") or row.get("failure_class") or "unclassified")
+            root_counts[root_cause] = root_counts.get(root_cause, 0) + 1
+        repeated_roots = sorted(f"{key}={value}" for key, value in root_counts.items() if value > max_closed_same_root)
+        if repeated_roots:
+            return CommandResult([], 37, "", f"root-cause repair budget exceeded for {slice_['id']}: {', '.join(repeated_roots)}")
+        retarget_count = len(self.retarget_evidence_paths(slice_["id"]))
+        if bool(loop.get("stop_on_retarget_budget_exceeded", False)) and retarget_count > max_retargets:
+            return CommandResult([], 37, "", f"run retarget budget exceeded for {slice_['id']}: {retarget_count} > {max_retargets}")
         resolved = len(all_rows) - len(rows)
         return CommandResult([], 0, f"failure budgets ok; unresolved={len(rows)} resolved={resolved}", "")
+
+    def retarget_evidence_paths(self, slice_id: str) -> list[Path]:
+        evidence_dir = self.root / "docs/evidence"
+        if not evidence_dir.exists():
+            return []
+        return sorted(evidence_dir.glob(f"{slice_id}-run-retarget*.json"))
+
+    def verify_run_retarget_evidence(self, slice_id: str) -> CommandResult:
+        paths = self.retarget_evidence_paths(slice_id)
+        if not paths:
+            return CommandResult([], 0, "no run retarget evidence for slice", "")
+
+        failures: list[str] = []
+        for path in paths:
+            rel = str(path.relative_to(self.root))
+            result = self.runner.run(
+                ["python", "scripts/verify_run_retarget_evidence.py", rel, "--json"],
+                cwd=self.root,
+                execute_in_dry_run=True,
+            )
+            self.log_event(
+                "run_retarget_evidence_validated" if result.ok else "run_retarget_evidence_rejected",
+                {"evidence": rel, "exit_code": result.exit_code, "stdout": result.stdout[-2000:], "stderr": result.stderr[-2000:]},
+                slice_id=slice_id,
+            )
+            if not result.ok:
+                failures.append(rel)
+        if failures:
+            return CommandResult([], 37, "", "run retarget evidence validation failed: " + ", ".join(failures))
+        return CommandResult([], 0, f"run retarget evidence ok; count={len(paths)}", "")
 
     def checkpoint_allowed_pre_po_changes(self, slice_id: str) -> CommandResult:
         status = self._git_status_paths()
@@ -789,6 +844,38 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             or path.startswith("docs/gstack/")
             or path.startswith("docs/playbooks/")
         )
+
+    def git_path_exists_at_head(self, rel_path: str) -> bool:
+        path = Path(rel_path)
+        if path.is_absolute() or ".." in path.parts:
+            return False
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=self.root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if probe.returncode != 0:
+            return (self.root / rel_path).exists()
+        result = subprocess.run(
+            ["git", "cat-file", "-e", f"HEAD:{rel_path}"],
+            cwd=self.root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def assert_autoplan_tracked_at_head(self, slice_: dict[str, Any]) -> CommandResult:
+        autoplan = str(slice_.get("autoplan") or "")
+        if not autoplan:
+            return CommandResult([], 41, "", "slice missing autoplan path")
+        if not self.git_path_exists_at_head(autoplan):
+            return CommandResult([], 41, "", f"autoplan must be tracked at HEAD before compile: {autoplan}")
+        return CommandResult(["git", "cat-file", "-e", f"HEAD:{autoplan}"], 0, "autoplan tracked at HEAD", "")
 
     def validate_autoplan_text(self, slice_: dict[str, Any], text: str) -> list[str]:
         lowered = text.lower()
@@ -1045,7 +1132,7 @@ Return only a Markdown autoplan suitable to save at:
             return CommandResult([], 0, "SWR provider preflight not required", "")
         if self.dry_run:
             return CommandResult([], 0, '{"dry_run": true, "secret_values_logged": false}', "")
-        missing = [name for name in self.swr_required_env() if not os.environ.get(name)]
+        missing = [name for name in self.swr_required_env() if not env_present(name)]
         report = {
             "status": "ok" if not missing else str(self.policy.get("swr", {}).get("provider_auth_failure_status", "blocked_external")),
             "provider": "openai",
@@ -1834,7 +1921,7 @@ and use the recorded `run_dir` and `repair_stage_id` with
                 "stdout_tail": result.stdout[-2000:],
                 "stderr_tail": result.stderr[-2000:],
                 "environment_probe": {
-                    "OPENAI_API_KEY_set_in_process_env": bool(os.environ.get("OPENAI_API_KEY")),
+                    "OPENAI_API_KEY_set_in_process_env": env_present("OPENAI_API_KEY"),
                     "env_file_exists": (self.root / ".env").exists(),
                 },
                 "next_action": "Provide real local OpenAI API credentials via the process environment or an ignored repo-local .env, then rerun AutoKeel for S02.",
@@ -3015,6 +3102,14 @@ Additional validator requirements:
         autoplan_result = self.ensure_autoplan(slice_)
         if not autoplan_result.ok:
             return autoplan_result
+        autoplan_head = self.assert_autoplan_tracked_at_head(slice_)
+        if not autoplan_head.ok:
+            self.log_event(
+                "autoplan_head_invariant_failed",
+                {"autoplan": slice_.get("autoplan"), "stderr": autoplan_head.stderr},
+                slice_id=slice_["id"],
+            )
+            return autoplan_head
 
         task_pack = self.materialize_swr_task_pack()
         if not task_pack.ok:
@@ -3144,6 +3239,14 @@ Additional validator requirements:
         autoplan_result = self.ensure_autoplan(slice_)
         if not autoplan_result.ok:
             return autoplan_result
+        autoplan_head = self.assert_autoplan_tracked_at_head(slice_)
+        if not autoplan_head.ok:
+            self.log_event(
+                "autoplan_head_invariant_failed",
+                {"autoplan": slice_.get("autoplan"), "stderr": autoplan_head.stderr},
+                slice_id=slice_["id"],
+            )
+            return autoplan_head
 
         autoplan_rel = slice_.get("autoplan")
         autoplan = self.root / autoplan_rel
@@ -3208,6 +3311,35 @@ Additional validator requirements:
         self.log_event(event, {"playbook": str(playbook.relative_to(self.root)), "exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}, slice_id=slice_["id"])
         return result
 
+    def provider_decisions_exist(self, slice_id: str) -> bool:
+        decisions = self.root / "ops/autonomy/decisions"
+        if not decisions.exists():
+            return False
+        for path in decisions.glob("*.json"):
+            payload = read_json(path, {})
+            if (
+                isinstance(payload, dict)
+                and payload.get("slice") == slice_id
+                and payload.get("schema_version") == "autokeel.provider_evidence_decision.v1"
+            ):
+                return True
+        return False
+
+    def validate_provider_decisions(self, slice_id: str) -> CommandResult:
+        if not self.provider_decisions_exist(slice_id):
+            return CommandResult([], 0, "no provider decisions for slice", "")
+        result = self.runner.run(
+            ["python", "scripts/validate_provider_decisions.py", slice_id, "--json"],
+            cwd=self.root,
+            execute_in_dry_run=True,
+        )
+        self.log_event(
+            "provider_decisions_validated" if result.ok else "provider_decisions_rejected",
+            {"exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
+            slice_id=slice_id,
+        )
+        return result
+
     def validate_po_contract_before_start(self, playbook: Path) -> CommandResult:
         contract_env = {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"}
         list_items = self.runner.run(
@@ -3247,6 +3379,21 @@ Additional validator requirements:
             state = self.load_state()
             state["v1_complete"] = True
             self.save_state(state)
+        return result
+
+    def run_slice_readiness(self, slice_id: str) -> CommandResult:
+        command_by_slice = {
+            "S04": ["python", "scripts/verify_s04_readiness.py", "--json"],
+        }
+        command = command_by_slice.get(slice_id)
+        if command is None:
+            return CommandResult([], 0, "no slice-specific readiness gate", "")
+        result = self.runner.run(command, cwd=self.root, execute_in_dry_run=True)
+        self.log_event(
+            "slice_readiness_passed" if result.ok else "slice_readiness_failed",
+            {"command": " ".join(command), "exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
+            slice_id=slice_id,
+        )
         return result
 
     def evaluate_tripwires(self) -> CommandResult:
@@ -4375,6 +4522,12 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 slice_id=slice_id,
             )
             return lane_guard
+        provider_guard = self.validate_provider_decisions(slice_id)
+        if not provider_guard.ok:
+            return provider_guard
+        retarget_guard = self.verify_run_retarget_evidence(slice_id)
+        if not retarget_guard.ok:
+            return retarget_guard
         failure_guard = self.assert_no_open_high_failures(slice_id, "ship")
         if not failure_guard.ok:
             return failure_guard
@@ -4542,6 +4695,19 @@ Use local files and commands only. If evidence is missing, write a failing revie
             run = self.start_or_resume_po(slice_)
             return self.run_po_and_handle_status(slice_, run)
 
+        readiness = self.run_slice_readiness(slice_["id"])
+        if not readiness.ok:
+            failure = self.record_failure(
+                slice_["id"],
+                "audit_failure",
+                "high",
+                "Slice readiness gate failed before launch.",
+                "Stopped before lane/evidence/compiler work; readiness must pass before this slice can start.",
+                self.root / "docs/briefs",
+            )
+            self.mark_slice_status(slice_["id"], "blocked", failure_path=str(failure.relative_to(self.root)), reason=readiness.stderr or "slice readiness failed")
+            return readiness.exit_code or 35
+
         lane_decision = self.ensure_lane_decision(slice_)
         if not lane_decision.ok:
             self.log_event(
@@ -4606,6 +4772,19 @@ Use local files and commands only. If evidence is missing, write a failing revie
         ):
             self.write_swr_playbook_evidence(slice_, validation)
 
+        provider_decisions = self.validate_provider_decisions(slice_["id"])
+        if not provider_decisions.ok:
+            self.record_failure(
+                slice_["id"],
+                "audit_failure",
+                "high",
+                "Provider decision validation failed before PO start.",
+                "Stopped before PO; provider decisions must be schema-valid and non-conflicting.",
+                self.root / "ops/autonomy/decisions",
+            )
+            self.mark_slice_status(slice_["id"], "replan_required", reason="provider decision validation failed")
+            return provider_decisions.exit_code or 35
+
         if self.dry_run:
             self.log_event("dry_run_po_start_skipped", {"playbook": slice_.get("playbook")}, slice_id=slice_["id"])
             return 0
@@ -4656,7 +4835,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--doctor", action="store_true", help="Run AutoKeel preflight checks and exit.")
     parser.add_argument("--strict", action="store_true", help="Use strict mode with --doctor.")
     parser.add_argument("--strict-swr", metavar="SLICE_ID", help="With --doctor, run strict SWR provider preflight for a slice before selection.")
-    parser.add_argument("--readiness", choices=["S02", "S03"], help="Run a slice-specific pre-launch readiness check and exit.")
+    parser.add_argument("--readiness", choices=["S02", "S03", "S04"], help="Run a slice-specific pre-launch readiness check and exit.")
     parser.add_argument("--next-slice", action="store_true", help="Print the next actionable slice and exit.")
     parser.add_argument("--replay-events", action="store_true", help="Print event log rows and exit.")
     parser.add_argument("--unblock-evidence", nargs=2, metavar=("SLICE_ID", "EVIDENCE_DIR"), help="Mark a blocked slice evidence_ready with a local evidence dir.")
@@ -4716,6 +4895,12 @@ def main(argv: list[str] | None = None) -> int:
             from scripts.verify_s03_readiness import verify_s03_readiness
 
             report = verify_s03_readiness(root)
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 0 if report["status"] == "ok" else 1
+        if args.readiness == "S04":
+            from scripts.verify_s04_readiness import verify_s04_readiness
+
+            report = verify_s04_readiness(root)
             print(json.dumps(report, indent=2, sort_keys=True))
             return 0 if report["status"] == "ok" else 1
         if args.next_slice:

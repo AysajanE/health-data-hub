@@ -47,6 +47,10 @@ class PyEightSmokeCollectorTests(unittest.TestCase):
         self.assertEqual(decision_payload["slice"], "S03")
         self.assertEqual(decision_payload["tripwire"], "pyeight_smoke_failure")
         self.assertEqual(decision_payload["action"], "oura_only_v1")
+        self.assertEqual(decision_payload["evidence_path"], str(evidence_path.relative_to(root)))
+        self.assertEqual(decision_payload["private_evidence_mode"], "0o600")
+        self.assertEqual(decision_payload["supersedes"], [])
+        self.assertIsNone(decision_payload["superseded_by"])
 
     def test_collect_records_fallback_when_provider_issue_occurs(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -159,6 +163,34 @@ class PyEightSmokeCollectorTests(unittest.TestCase):
             self.assertEqual(decision_payload["provider"], "pyeight")
             self.assertEqual(decision_payload["decision"], "include_8_sleep_under_tripwire")
             self.assertFalse(decision_payload["fallback_active"])
+            self.assertEqual(decision_payload["evidence_path"], report["evidence"])
+            self.assertEqual(decision_payload["private_evidence_mode"], "0o600")
+            self.assertIn("private_evidence_sha256", decision_payload)
+
+    def test_blank_required_env_writes_fallback_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "PYEIGHT_EMAIL": "   ",
+                        "PYEIGHT_PASSWORD": "secret",
+                        "PYEIGHT_TIMEZONE": "America/Toronto",
+                        "PYEIGHT_CLIENT_ID": "client",
+                        "PYEIGHT_CLIENT_SECRET": "client-secret",
+                    },
+                    clear=True,
+                ),
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("network should not run")),
+            ):
+                report = collect(root, fallback_to_decision=True)
+
+            self.assertEqual(report["status"], "fallback_accepted")
+            decisions = sorted((root / "ops/autonomy/decisions").glob("S03-pyeight-fallback-*.json"))
+            self.assertEqual(len(decisions), 1)
+            decision_payload = json.loads(decisions[0].read_text(encoding="utf-8"))
+            self.assertIn("PYEIGHT_EMAIL", decision_payload["reason"])
 
     def test_existing_fallback_decision_short_circuits_collection(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

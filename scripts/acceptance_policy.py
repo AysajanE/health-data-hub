@@ -22,6 +22,9 @@ DEFAULT_ALLOW_COMMANDS = (
     "python scripts/check_autonomous_review_exists.py",
     "python scripts/setup_permissions.py",
     "python scripts/evidence/oura_smoke.py",
+    "python scripts/verify_s03_readiness.py",
+    "python scripts/validate_provider_decisions.py",
+    "python scripts/verify_s04_readiness.py",
 )
 
 BROAD_PREFIX_DENYLIST = (
