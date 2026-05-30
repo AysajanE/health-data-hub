@@ -1,0 +1,97 @@
+{
+  "errors": [],
+  "repair_attempts": 0,
+  "row_summaries": [
+    {
+      "issues": 0,
+      "phase": "S04 readiness and provider-decision guard",
+      "step_id": "01"
+    },
+    {
+      "issues": 0,
+      "phase": "Daily feature construction",
+      "step_id": "02"
+    },
+    {
+      "issues": 0,
+      "phase": "Prior-only HRV z-score persistence",
+      "step_id": "03"
+    },
+    {
+      "issues": 0,
+      "phase": "Sleep merge diagnostics under Oura-only v1",
+      "step_id": "04"
+    },
+    {
+      "issues": 0,
+      "phase": "Hygiene and acceptance evidence",
+      "step_id": "05"
+    }
+  ],
+  "schema_version": "compiler_validation_report_v1",
+  "status": "pass",
+  "validated_at": "2026-05-30T19:13:28+00:00",
+  "warnings": [
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/verify_s04_readiness.py --json'",
+      "severity": "warning",
+      "step_id": "01"
+    },
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/verify_s04_readiness.py --json'",
+      "severity": "warning",
+      "step_id": "05"
+    },
+    {
+      "code": "UNKNOWN_VERIFICATION_COMMAND",
+      "column": "required_verification_commands",
+      "message": "verification command is not in the compiler allowlist: 'python scripts/check_no_tracked_data.py'",
+      "severity": "warning",
+      "step_id": "05"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "01"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "02"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "03"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "04"
+    },
+    {
+      "code": "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE",
+      "column": "manual_gate",
+      "message": "risky auth/security/payment/deploy/production row should usually require manual signoff",
+      "severity": "warning",
+      "step_id": "05"
+    },
+    {
+      "code": "AUTHOR_EXTERNAL_HINTS_WITHOUT_CHECK",
+      "message": "source artifacts mention external dependencies, but no row requires external evidence",
+      "severity": "warning"
+    }
+  ]
+}

@@ -1,0 +1,273 @@
+{
+  "compiler_warnings": [
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[01]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[02]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[03]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[04]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_RISKY_ROW_WITHOUT_MANUAL_GATE[05]: risky auth/security/payment/deploy/production row should usually require manual signoff",
+    "AUTHOR_EXTERNAL_HINTS_WITHOUT_CHECK: source artifacts mention external dependencies, but no row requires external evidence",
+    "UNKNOWN_VERIFICATION_COMMAND[01]: verification command is not in the compiler allowlist: 'python scripts/verify_s04_readiness.py --json'",
+    "UNKNOWN_VERIFICATION_COMMAND[05]: verification command is not in the compiler allowlist: 'python scripts/verify_s04_readiness.py --json'",
+    "UNKNOWN_VERIFICATION_COMMAND[05]: verification command is not in the compiler allowlist: 'python scripts/check_no_tracked_data.py'"
+  ],
+  "rows": [
+    {
+      "action": "Add or update tests proving feature engineering reads the active S03 provider decision and treats Oura-only v1 as the first-class feature source. The tests must fail if pyEight evidence is required or 8 Sleep is treated as active without a ",
+      "allowed_write_roots": [
+        "tests/test_features.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "tests/test_features.py"
+      ],
+      "exit_criteria": "tests/test_features.py exist with the required S04 behavior; python scripts/verify_s04_readiness.py --json, python -m pytest tests/test_features.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_001",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "S04 readiness and provider-decision guard",
+      "prerequisites": "none",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python scripts/verify_s04_readiness.py --json",
+        "python -m pytest tests/test_features.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "01",
+      "why_now": "Required for the S04 acceptance contract."
+    },
+    {
+      "action": "Implement deterministic daily feature construction from warehouse mood and Oura sleep rows. For date `D`, use the sleep night ending on morning `D`, join the same-day mood label `feeling[D]`, and join `prior_day_feeling` from `D-1`. Do not ",
+      "allowed_write_roots": [
+        "src/warehouse",
+        "tests/test_features.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/warehouse/features.py",
+        "tests/test_features.py"
+      ],
+      "exit_criteria": "src/warehouse/features.py, tests/test_features.py exist with the required S04 behavior; python -m pytest tests/test_features.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_002",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Daily feature construction",
+      "prerequisites": "01",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "src/warehouse",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_features.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "02",
+      "why_now": "Required for the S04 acceptance contract."
+    },
+    {
+      "action": "Implement prior-only `hrv_z` calculation and persistence. Each day may use only earlier eligible days for its HRV baseline; the current day must not contribute to its own z-score. Keep `hrv_avg_ms` as display metadata only, not a model feat",
+      "allowed_write_roots": [
+        "src/warehouse",
+        "tests/test_features.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/warehouse/features.py",
+        "tests/test_features.py"
+      ],
+      "exit_criteria": "src/warehouse/features.py, tests/test_features.py exist with the required S04 behavior; python -m pytest tests/test_features.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_003",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Prior-only HRV z-score persistence",
+      "prerequisites": "02",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "src/warehouse",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_features.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "03",
+      "why_now": "Required for the S04 acceptance contract."
+    },
+    {
+      "action": "Implement sleep-source diagnostics that collapse to Oura-only identity under the active S03 fallback. Diagnostics may state that 8 Sleep is absent/fallback, but must not blend or average 8 Sleep values into v1 features.",
+      "allowed_write_roots": [
+        "src/warehouse",
+        "tests/test_features.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "src/warehouse/features.py",
+        "tests/test_features.py"
+      ],
+      "exit_criteria": "src/warehouse/features.py, tests/test_features.py exist with the required S04 behavior; python -m pytest tests/test_features.py -q passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_004",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Sleep merge diagnostics under Oura-only v1",
+      "prerequisites": "03",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "src/warehouse",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python -m pytest tests/test_features.py -q"
+      ],
+      "requires_red_green": true,
+      "step_id": "04",
+      "why_now": "Required for the S04 acceptance contract."
+    },
+    {
+      "action": "Implement record sanitized S04 command evidence if useful for review, then run the S04 acceptance contract. No raw health data, provider payloads, private evidence contents, tokens, or DuckDB files may be committed.",
+      "allowed_write_roots": [
+        "docs/evidence",
+        "tests/test_features.py"
+      ],
+      "consult_paths": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md"
+      ],
+      "deliverable": [
+        "docs/evidence/s04-feature-engineering-command-evidence.json",
+        "tests/test_features.py"
+      ],
+      "exit_criteria": "docs/evidence/s04-feature-engineering-command-evidence.json, tests/test_features.py exist with the required S04 behavior; python scripts/verify_s04_readiness.py --json, python -m pytest tests/test_features.py -q, python scripts/check_no_tracked_data.py passes",
+      "external_check": "none",
+      "external_dependencies": [],
+      "manual_gate": "none",
+      "manual_gate_evidence": [],
+      "manual_gate_reason": "",
+      "notes": [
+        "source_task: task_005",
+        "autokeel deterministic row author"
+      ],
+      "owner_type": "operator",
+      "phase": "Hygiene and acceptance evidence",
+      "prerequisites": "04",
+      "repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "docs/evidence",
+        "tests"
+      ],
+      "required_verification_artifacts": [],
+      "required_verification_commands": [
+        "python scripts/verify_s04_readiness.py --json",
+        "python -m pytest tests/test_features.py -q",
+        "python scripts/check_no_tracked_data.py"
+      ],
+      "requires_red_green": true,
+      "step_id": "05",
+      "why_now": "Required for the S04 acceptance contract."
+    }
+  ],
+  "schema_version": "po_candidate_rows_v1",
+  "support_sections": {
+    "immediate_next_actions": "Run S04 acceptance commands only after all rows complete.",
+    "phase_details": [
+      {
+        "body": "Executes S04 task rows for S04 readiness and provider-decision guard.",
+        "phase_slug": "s04-readiness-and-provider-decision-guard",
+        "title": "S04 readiness and provider-decision guard"
+      },
+      {
+        "body": "Executes S04 task rows for Daily feature construction.",
+        "phase_slug": "daily-feature-construction",
+        "title": "Daily feature construction"
+      },
+      {
+        "body": "Executes S04 task rows for Prior-only HRV z-score persistence.",
+        "phase_slug": "prior-only-hrv-z-score-persistence",
+        "title": "Prior-only HRV z-score persistence"
+      },
+      {
+        "body": "Executes S04 task rows for Sleep merge diagnostics under Oura-only v1.",
+        "phase_slug": "sleep-merge-diagnostics-under-oura-only-v1",
+        "title": "Sleep merge diagnostics under Oura-only v1"
+      },
+      {
+        "body": "Executes S04 task rows for Hygiene and acceptance evidence.",
+        "phase_slug": "hygiene-and-acceptance-evidence",
+        "title": "Hygiene and acceptance evidence"
+      }
+    ],
+    "plan_context": "S04 builds one Health Data Hub v1 slice under the autonomous AutoKeel policy.",
+    "risks_and_contingencies": "If verification fails, stop and record an AutoKeel failure instead of fabricating evidence.",
+    "shared_guidance": [
+      {
+        "body": "Manual gates are forbidden; autonomous_gate_review artifacts, deterministic tests, and recorded evidence are required instead.",
+        "title": "Autonomous Gate Policy"
+      },
+      {
+        "body": "Do not commit raw health data, provider payloads, secrets, DuckDB files, snapshots, or quarantine payloads.",
+        "title": "Health Data Safety"
+      }
+    ]
+  }
+}

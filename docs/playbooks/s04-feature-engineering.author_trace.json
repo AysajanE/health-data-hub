@@ -1,0 +1,45 @@
+{
+  "invented_paths": [],
+  "model_stderr_excerpt": "",
+  "model_stderr_sha256": "",
+  "prompt_sha256": "47de68e5f8c074e17106363030458da78e2a82015f2870c6b0657bf382b1cb21",
+  "raw_model_output_sha256": "e9718c482f19ebb27dd713300efa32e534b0f0f665c7fb1e2337fceb523fcfa1",
+  "repair_attempted": false,
+  "row_author": "external-json",
+  "row_to_source_tasks": {
+    "01": [
+      "task_001"
+    ],
+    "02": [
+      "task_002"
+    ],
+    "03": [
+      "task_003"
+    ],
+    "04": [
+      "task_004"
+    ],
+    "05": [
+      "task_005"
+    ]
+  },
+  "schema_version": "row_author_trace_v1",
+  "source_task_to_rows": {
+    "task_001": [
+      "01"
+    ],
+    "task_002": [
+      "02"
+    ],
+    "task_003": [
+      "03"
+    ],
+    "task_004": [
+      "04"
+    ],
+    "task_005": [
+      "05"
+    ]
+  },
+  "warnings": []
+}

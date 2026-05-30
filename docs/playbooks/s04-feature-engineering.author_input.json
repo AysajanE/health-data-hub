@@ -1,0 +1,468 @@
+{
+  "context_findings": [],
+  "external_dependency_hints": [
+    "open wearables",
+    "oura",
+    "8 sleep",
+    "icloud",
+    "tailscale"
+  ],
+  "global_rules": {
+    "constrained_allowed_write_roots": [],
+    "forbidden_write_roots": [
+      ".",
+      "src",
+      "tests",
+      ".local",
+      ".git",
+      ".codex",
+      ".claude",
+      ".mcp.json",
+      "ops/config",
+      "secrets",
+      ".env",
+      ".env.*"
+    ],
+    "markdown_is_python_emitted": true,
+    "max_repo_files": 5000,
+    "max_rows": 25,
+    "max_write_roots_per_row": 3,
+    "pipe_characters_forbidden": true
+  },
+  "known_paths": [
+    "Library/Logs/healthhub.log",
+    "data/.healthhub.lock",
+    "data/warehouse.duckdb",
+    "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+    "docs/evidence",
+    "docs/evidence/s04-feature-engineering-command-evidence.json",
+    "docs/gstack/health-data-hub-office-hours.md",
+    "docs/gstack/s04-feature-engineering-autoplan.md",
+    "models/eval.jsonl",
+    "scripts/check_no_tracked_data.py",
+    "scripts/oura_auth.py",
+    "scripts/setup_permissions.py",
+    "scripts/verify_s04_readiness.py",
+    "src/warehouse",
+    "src/warehouse/features.py",
+    "tests",
+    "tests/test_features.py"
+  ],
+  "known_write_roots": [
+    "tests/test_features.py",
+    "src/warehouse",
+    "docs/evidence"
+  ],
+  "manual_gate_hints": [
+    "signoff",
+    "manual gate",
+    "reviewer"
+  ],
+  "path_ledger": [
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "Library/Logs/healthhub.log",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "data/.healthhub.lock",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "data/warehouse.duckdb",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "source_doc",
+      "mentioned_by": [
+        "source_artifact"
+      ],
+      "path": "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "doc",
+      "mentioned_by": [
+        "task_005"
+      ],
+      "path": "docs/evidence",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "doc",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_005"
+      ],
+      "path": "docs/evidence/s04-feature-engineering-command-evidence.json",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "source_doc",
+      "mentioned_by": [
+        "source_artifact"
+      ],
+      "path": "docs/gstack/health-data-hub-office-hours.md",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "source_doc",
+      "mentioned_by": [
+        "source_artifact"
+      ],
+      "path": "docs/gstack/s04-feature-engineering-autoplan.md",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "models/eval.jsonl",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/check_no_tracked_data.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/oura_auth.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": false,
+      "status": "missing"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/setup_permissions.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths"
+      ],
+      "path": "scripts/verify_s04_readiness.py",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "task_002",
+        "task_003",
+        "task_004"
+      ],
+      "path": "src/warehouse",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_002",
+        "task_003",
+        "task_004"
+      ],
+      "path": "src/warehouse/features.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    },
+    {
+      "kind": "unknown",
+      "mentioned_by": [
+        "task_001",
+        "task_002",
+        "task_003",
+        "task_004",
+        "task_005"
+      ],
+      "path": "tests",
+      "safe_as_deliverable": false,
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "test",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_001",
+        "task_002",
+        "task_003",
+        "task_004",
+        "task_005"
+      ],
+      "path": "tests/test_features.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": false,
+      "status": "declared_missing"
+    }
+  ],
+  "repo_root": ".",
+  "risk_hints": [],
+  "schema_version": "row_author_context_v1",
+  "source_artifact_paths": [
+    "docs/gstack/health-data-hub-office-hours.md",
+    "docs/gstack/s04-feature-engineering-autoplan.md",
+    "docs/briefs/s04-feature-engineering.autonomous-brief.md"
+  ],
+  "stack_profile": {
+    "build_tools": [],
+    "languages": [
+      "python"
+    ],
+    "package_managers": [
+      "pip"
+    ],
+    "test_runners": [
+      "pytest"
+    ]
+  },
+  "task_cards": [
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "tests/test_features.py"
+      ],
+      "declared_deliverables": [
+        "tests/test_features.py"
+      ],
+      "declared_files": [
+        "tests/test_features.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "S04 readiness and provider-decision guard",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 1,
+      "suggested_allowed_write_roots": [
+        "tests"
+      ],
+      "task": "Add or update tests proving feature engineering reads the active S03 provider decision and treats Oura-only v1 as the first-class feature source. The tests must fail if pyEight evidence is required or 8 Sleep is treated as active without a future superseding decision.",
+      "task_id": "task_001",
+      "verification_candidates": [
+        "python scripts/verify_s04_readiness.py --json",
+        "python -m pytest tests/test_features.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/warehouse",
+        "tests/test_features.py"
+      ],
+      "declared_deliverables": [
+        "src/warehouse/features.py",
+        "tests/test_features.py"
+      ],
+      "declared_files": [
+        "src/warehouse/features.py",
+        "tests/test_features.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "src/warehouse",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Daily feature construction",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 2,
+      "suggested_allowed_write_roots": [
+        "src/warehouse",
+        "tests"
+      ],
+      "task": "Implement deterministic daily feature construction from warehouse mood and Oura sleep rows. For date `D`, use the sleep night ending on morning `D`, join the same-day mood label `feeling[D]`, and join `prior_day_feeling` from `D-1`. Do not forward-fill sleep or mood labels.",
+      "task_id": "task_002",
+      "verification_candidates": [
+        "python -m pytest tests/test_features.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/warehouse",
+        "tests/test_features.py"
+      ],
+      "declared_deliverables": [
+        "src/warehouse/features.py",
+        "tests/test_features.py"
+      ],
+      "declared_files": [
+        "src/warehouse/features.py",
+        "tests/test_features.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "src/warehouse",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Prior-only HRV z-score persistence",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 3,
+      "suggested_allowed_write_roots": [
+        "src/warehouse",
+        "tests"
+      ],
+      "task": "Implement prior-only `hrv_z` calculation and persistence. Each day may use only earlier eligible days for its HRV baseline; the current day must not contribute to its own z-score. Keep `hrv_avg_ms` as display metadata only, not a model feature.",
+      "task_id": "task_003",
+      "verification_candidates": [
+        "python -m pytest tests/test_features.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "src/warehouse",
+        "tests/test_features.py"
+      ],
+      "declared_deliverables": [
+        "src/warehouse/features.py",
+        "tests/test_features.py"
+      ],
+      "declared_files": [
+        "src/warehouse/features.py",
+        "tests/test_features.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "src/warehouse",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Sleep merge diagnostics under Oura-only v1",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 4,
+      "suggested_allowed_write_roots": [
+        "src/warehouse",
+        "tests"
+      ],
+      "task": "Implement sleep-source diagnostics that collapse to Oura-only identity under the active S03 fallback. Diagnostics may state that 8 Sleep is absent/fallback, but must not blend or average 8 Sleep values into v1 features.",
+      "task_id": "task_004",
+      "verification_candidates": [
+        "python -m pytest tests/test_features.py -q"
+      ]
+    },
+    {
+      "behavioral": true,
+      "clamped_allowed_write_roots": [
+        "docs/evidence",
+        "tests/test_features.py"
+      ],
+      "declared_deliverables": [
+        "docs/evidence/s04-feature-engineering-command-evidence.json",
+        "tests/test_features.py"
+      ],
+      "declared_files": [
+        "docs/evidence/s04-feature-engineering-command-evidence.json",
+        "tests/test_features.py"
+      ],
+      "existing_repo_surfaces": [
+        "docs/gstack/health-data-hub-office-hours.md",
+        "docs/gstack/s04-feature-engineering-autoplan.md",
+        "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+        "docs/evidence",
+        "tests"
+      ],
+      "missing_declared_files": false,
+      "missing_paths_behavioral": false,
+      "notes": "",
+      "phase": "Hygiene and acceptance evidence",
+      "risk_flags": [
+        "manual_gate_hints_present",
+        "external_dependency_hints_present"
+      ],
+      "source_order": 5,
+      "suggested_allowed_write_roots": [
+        "docs/evidence",
+        "tests"
+      ],
+      "task": "Record sanitized S04 command evidence if useful for review, then run the S04 acceptance contract. No raw health data, provider payloads, private evidence contents, tokens, or DuckDB files may be committed.",
+      "task_id": "task_005",
+      "verification_candidates": [
+        "python scripts/verify_s04_readiness.py --json",
+        "python -m pytest tests/test_features.py -q",
+        "python scripts/check_no_tracked_data.py"
+      ]
+    }
+  ]
+}
