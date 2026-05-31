@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+from unittest.mock import patch
 from uuid import uuid4
 
 from scripts.verify_s04_readiness import verify_s04_readiness
@@ -298,7 +299,12 @@ def test_compute_daily_features_loads_active_s03_provider_decision_from_policy_r
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         _write_s04_readiness_fixture(root)
-        policy = load_sleep_provider_policy(root)
+        loaded_policy: SleepProviderPolicy | None = None
+
+        def _load_policy_from_root(policy_root: Path) -> SleepProviderPolicy:
+            nonlocal loaded_policy
+            loaded_policy = load_sleep_provider_policy(policy_root)
+            return loaded_policy
 
         conn = connect_duckdb(":memory:", apply_schema=True)
         try:
@@ -312,13 +318,19 @@ def test_compute_daily_features_loads_active_s03_provider_decision_from_policy_r
                 _sleep_payload("8sleep", feature_date, total_sleep_min=490, deep_min=150, hrv_avg_ms=74.0),
             )
 
-            row = compute_daily_features(conn, feature_date, policy_root=root)
+            with patch(
+                "src.warehouse.warehouse.load_sleep_provider_policy",
+                side_effect=_load_policy_from_root,
+            ) as load_policy:
+                row = compute_daily_features(conn, feature_date, policy_root=root)
         finally:
             conn.close()
 
-    assert policy.active_sleep_source == "oura"
-    assert policy.eight_sleep_state == "fallback_active"
-    assert policy.decision_paths == ("ops/autonomy/decisions/S03-pyeight-fallback.json",)
+    load_policy.assert_called_once_with(root)
+    assert loaded_policy is not None
+    assert loaded_policy.active_sleep_source == "oura"
+    assert loaded_policy.eight_sleep_state == "fallback_active"
+    assert loaded_policy.decision_paths == ("ops/autonomy/decisions/S03-pyeight-fallback.json",)
     assert row is not None
     assert row.total_sleep_min == 410
     assert row.deep_sleep_pct == 82 / 410
