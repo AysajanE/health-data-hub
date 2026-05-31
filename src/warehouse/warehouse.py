@@ -309,13 +309,11 @@ def _choose_total_sleep_minutes(
     eight_row: SleepNightRow | None,
 ) -> tuple[int | None, int | None, str | None]:
     oura_total = oura_row.total_sleep_min if oura_row is not None else None
-    eight_total = eight_row.total_sleep_min if eight_row is not None else None
     warning = EIGHT_SLEEP_FALLBACK_IGNORED_WARNING if eight_row is not None else None
 
-    if oura_total is not None and eight_total is not None:
-        delta = abs(oura_total - eight_total)
-        return oura_total, delta, warning
     if oura_total is not None:
+        # Under the active Oura-only fallback policy, merge diagnostics collapse
+        # to source identity and do not compare ignored 8 Sleep values.
         return oura_total, None, warning
     return None, None, warning
 

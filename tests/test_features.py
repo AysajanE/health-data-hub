@@ -108,7 +108,7 @@ def test_oura_only_fallback_ignores_8sleep_rows_for_features() -> None:
     assert row.deep_sleep_pct == 86 / 430
     assert row.sleep_source_count == 1
     assert row.sleep_merge_warning == "8sleep_fallback_ignored"
-    assert diagnostics == (True, True, 70, "oura_primary", "oura", "8sleep_fallback_ignored")
+    assert diagnostics == (True, True, None, "oura_primary", "oura", "8sleep_fallback_ignored")
 
 
 def test_oura_and_8sleep_are_not_averaged_or_blended() -> None:
@@ -133,7 +133,7 @@ def test_oura_and_8sleep_are_not_averaged_or_blended() -> None:
     assert row.hrv_avg_ms == 40.0
     assert row.hrv_avg_ms != 65.0
     assert row.deep_sleep_pct == 80 / 400
-    assert diagnostics == (True, True, 120, "oura_primary", "oura", "8sleep_fallback_ignored")
+    assert diagnostics == (True, True, None, "oura_primary", "oura", "8sleep_fallback_ignored")
 
 
 def test_8sleep_only_rows_do_not_create_v1_sleep_features() -> None:
