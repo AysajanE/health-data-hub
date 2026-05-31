@@ -4,10 +4,13 @@ from datetime import date, datetime
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any, Iterable, Mapping, TypeVar
+import statistics
+from typing import Any, Iterable, Mapping, Sequence, TypeVar
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+MIN_PRIOR_HRV_BASELINE_VALUES = 7
+PRIOR_HRV_WINDOW_DAYS = 28
 
 _RowT = TypeVar("_RowT")
 
@@ -124,9 +127,63 @@ def eligible_sleep_rows_for_v1(rows: Iterable[_RowT], policy: SleepProviderPolic
     return [row for row in rows if _row_source(row) == policy.active_sleep_source]
 
 
+def _median_absolute_deviation(values: Sequence[float], median_value: float) -> float:
+    deviations = [abs(value - median_value) for value in values]
+    return float(statistics.median(deviations))
+
+
+def _std_fallback_z(current_value: float, history: Sequence[float]) -> tuple[float | None, str]:
+    std_value = statistics.pstdev(history)
+    if std_value < 1e-6:
+        return None, "missing"
+    mean_value = statistics.fmean(history)
+    return (current_value - mean_value) / std_value, "std_fallback"
+
+
+def compute_prior_only_hrv_z(
+    *,
+    current_value: float | None,
+    recent_history: Sequence[float],
+    prior_history: Sequence[float],
+) -> tuple[float | None, str | None]:
+    """Compute the persisted v1 HRV z-score from prior-only history.
+
+    `recent_history` is the prior 28-day window. If it has enough values, it is
+    used directly; otherwise the function falls back to the full expanding
+    prior-only history. The current day's value must not be included in either
+    history sequence.
+    """
+
+    if current_value is None:
+        return None, None
+
+    if len(recent_history) >= MIN_PRIOR_HRV_BASELINE_VALUES:
+        history = list(recent_history)
+        method = "prior_28d"
+    else:
+        history = list(prior_history)
+        if len(history) < MIN_PRIOR_HRV_BASELINE_VALUES:
+            return None, None
+        method = "prior_expanding_min7"
+
+    median_value = float(statistics.median(history))
+    mad = _median_absolute_deviation(history, median_value)
+    scale = 1.4826 * mad
+    if scale >= 1e-6:
+        return (current_value - median_value) / scale, method
+
+    std_z, fallback_kind = _std_fallback_z(current_value, history)
+    if std_z is None:
+        return None, None
+    return std_z, f"{method}_{fallback_kind}"
+
+
 __all__ = [
+    "MIN_PRIOR_HRV_BASELINE_VALUES",
+    "PRIOR_HRV_WINDOW_DAYS",
     "LabeledDailyFeaturesRow",
     "SleepProviderPolicy",
+    "compute_prior_only_hrv_z",
     "eligible_sleep_rows_for_v1",
     "load_sleep_provider_policy",
 ]

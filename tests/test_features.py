@@ -4,13 +4,14 @@ from datetime import UTC, date, datetime
 import hashlib
 import json
 from pathlib import Path
+import pytest
 import subprocess
 import tempfile
 from unittest.mock import patch
 from uuid import uuid4
 
 from scripts.verify_s04_readiness import verify_s04_readiness
-from src.warehouse.features import SleepProviderPolicy, load_sleep_provider_policy
+from src.warehouse.features import SleepProviderPolicy, compute_prior_only_hrv_z, load_sleep_provider_policy
 from src.warehouse.warehouse import (
     compute_daily_features,
     connect_duckdb,
@@ -204,6 +205,56 @@ def test_select_labeled_daily_features_uses_same_day_mood_without_forward_fill()
     assert rows[0].feeling == 4
     assert rows[0].prior_day_feeling == 6
     assert rows[0].total_sleep_min == 420
+
+
+def test_compute_prior_only_hrv_z_uses_expanding_history_once_seven_prior_values_exist() -> None:
+    z_score, method = compute_prior_only_hrv_z(
+        current_value=52.0,
+        recent_history=[40.0, 41.0, 42.0, 43.0, 44.0, 45.0],
+        prior_history=[40.0, 41.0, 42.0, 43.0, 44.0, 45.0, 46.0],
+    )
+
+    assert method == "prior_expanding_min7"
+    assert z_score is not None
+    assert z_score == pytest.approx((52.0 - 43.0) / (1.4826 * 2.0))
+
+
+def test_compute_daily_features_persists_prior_only_hrv_z_without_current_day_leakage() -> None:
+    feature_date = date(2026, 5, 30)
+    conn = connect_duckdb(":memory:", apply_schema=True)
+    try:
+        for offset, hrv_value in enumerate((40.0, 41.0, 42.0, 43.0, 44.0, 45.0), start=23):
+            sleep_date = date(2026, 5, offset)
+            _insert_mood(conn, sleep_date, feeling=6)
+            insert_sleep_night(
+                conn,
+                _sleep_payload("oura", sleep_date, total_sleep_min=420 + offset, deep_min=84, hrv_avg_ms=hrv_value),
+            )
+            compute_daily_features(conn, sleep_date, provider_policy=FALLBACK_POLICY)
+
+        _insert_prior_mood(conn, feature_date, feeling=5)
+        insert_sleep_night(
+            conn,
+            _sleep_payload("oura", feature_date, total_sleep_min=410, deep_min=82, hrv_avg_ms=52.0),
+        )
+
+        row = compute_daily_features(conn, feature_date, provider_policy=FALLBACK_POLICY)
+        persisted = conn.execute(
+            """
+            SELECT hrv_z, hrv_avg_ms, hrv_z_method
+            FROM daily_features
+            WHERE feature_date = ?
+            """,
+            [feature_date],
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert row.hrv_z is None
+    assert row.hrv_avg_ms == 52.0
+    assert row.hrv_z_method is None
+    assert persisted == (None, 52.0, None)
 
 
 def _write_json(path: Path, payload: dict | list) -> None:

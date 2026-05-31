@@ -13,7 +13,10 @@ from pydantic import ValidationError
 
 from src.warehouse.features import (
     LabeledDailyFeaturesRow,
+    MIN_PRIOR_HRV_BASELINE_VALUES,
+    PRIOR_HRV_WINDOW_DAYS,
     SleepProviderPolicy,
+    compute_prior_only_hrv_z,
     eligible_sleep_rows_for_v1,
     load_sleep_provider_policy,
 )
@@ -256,19 +259,6 @@ def _labeled_daily_features_from_db(row: Sequence[Any]) -> LabeledDailyFeaturesR
     return LabeledDailyFeaturesRow(**_row_dict(_LABELED_DAILY_FEATURE_COLUMNS, row))
 
 
-def _median_absolute_deviation(values: Sequence[float], median_value: float) -> float:
-    deviations = [abs(value - median_value) for value in values]
-    return float(statistics.median(deviations))
-
-
-def _std_fallback_z(current_value: float, history: Sequence[float]) -> tuple[float | None, str]:
-    std_value = statistics.pstdev(history)
-    if std_value < 1e-6:
-        return None, "missing"
-    mean_value = statistics.fmean(history)
-    return (current_value - mean_value) / std_value, "std_fallback"
-
-
 def _compute_hrv_z(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -279,7 +269,7 @@ def _compute_hrv_z(
     if current_value is None:
         return None, None
 
-    recent_window_start = feature_date - timedelta(days=28)
+    recent_window_start = feature_date - timedelta(days=PRIOR_HRV_WINDOW_DAYS)
     recent_rows = conn.execute(
         """
         SELECT hrv_avg_ms
@@ -290,35 +280,28 @@ def _compute_hrv_z(
         [source, feature_date, recent_window_start],
     ).fetchall()
     recent_history = [float(value) for (value,) in recent_rows]
+    if len(recent_history) >= MIN_PRIOR_HRV_BASELINE_VALUES:
+        return compute_prior_only_hrv_z(
+            current_value=current_value,
+            recent_history=recent_history,
+            prior_history=recent_history,
+        )
 
-    if len(recent_history) >= 7:
-        history = recent_history
-        method = "prior_28d"
-    else:
-        expanding_rows = conn.execute(
-            """
-            SELECT hrv_avg_ms
-            FROM sleep_nights
-            WHERE source = ? AND sleep_date < ? AND hrv_avg_ms IS NOT NULL
-            ORDER BY sleep_date
-            """,
-            [source, feature_date],
-        ).fetchall()
-        history = [float(value) for (value,) in expanding_rows]
-        if len(history) < 7:
-            return None, None
-        method = "prior_expanding_min7"
-
-    median_value = float(statistics.median(history))
-    mad = _median_absolute_deviation(history, median_value)
-    scale = 1.4826 * mad
-    if scale >= 1e-6:
-        return (current_value - median_value) / scale, method
-
-    std_z, fallback_kind = _std_fallback_z(current_value, history)
-    if std_z is None:
-        return None, None
-    return std_z, f"{method}_{fallback_kind}"
+    expanding_rows = conn.execute(
+        """
+        SELECT hrv_avg_ms
+        FROM sleep_nights
+        WHERE source = ? AND sleep_date < ? AND hrv_avg_ms IS NOT NULL
+        ORDER BY sleep_date
+        """,
+        [source, feature_date],
+    ).fetchall()
+    expanding_history = [float(value) for (value,) in expanding_rows]
+    return compute_prior_only_hrv_z(
+        current_value=current_value,
+        recent_history=recent_history,
+        prior_history=expanding_history,
+    )
 
 
 def _choose_total_sleep_minutes(
