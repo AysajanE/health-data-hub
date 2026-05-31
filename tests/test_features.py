@@ -11,7 +11,13 @@ from uuid import uuid4
 
 from scripts.verify_s04_readiness import verify_s04_readiness
 from src.warehouse.features import SleepProviderPolicy, load_sleep_provider_policy
-from src.warehouse.warehouse import compute_daily_features, connect_duckdb, insert_mood_entry, insert_sleep_night
+from src.warehouse.warehouse import (
+    compute_daily_features,
+    connect_duckdb,
+    insert_mood_entry,
+    insert_sleep_night,
+    select_labeled_daily_features,
+)
 
 
 FALLBACK_POLICY = SleepProviderPolicy(
@@ -47,13 +53,13 @@ def _sleep_payload(
     }
 
 
-def _insert_prior_mood(conn, feature_date: date, feeling: int = 6) -> None:
+def _insert_mood(conn, mood_date: date, *, feeling: int) -> None:
     insert_mood_entry(
         conn,
         {
             "log_id": uuid4(),
-            "logged_at_utc": datetime(2026, 5, feature_date.day - 1, 22, 0, tzinfo=UTC),
-            "mood_date": date(2026, 5, feature_date.day - 1),
+            "logged_at_utc": datetime(2026, 5, mood_date.day, 22, 0, tzinfo=UTC),
+            "mood_date": mood_date,
             "feeling": feeling,
             "energy": feeling,
             "notes": None,
@@ -62,6 +68,10 @@ def _insert_prior_mood(conn, feature_date: date, feeling: int = 6) -> None:
             "supersedes_log_id": None,
         },
     )
+
+
+def _insert_prior_mood(conn, feature_date: date, feeling: int = 6) -> None:
+    _insert_mood(conn, date(2026, 5, feature_date.day - 1), feeling=feeling)
 
 
 def _diagnostics(conn, feature_date: date) -> tuple:
@@ -148,6 +158,52 @@ def test_8sleep_only_rows_do_not_create_v1_sleep_features() -> None:
     assert row.sleep_source_count is None
     assert row.sleep_merge_warning == "8sleep_fallback_ignored"
     assert diagnostics == (False, True, None, "missing", None, "8sleep_fallback_ignored")
+
+
+def test_logged_day_without_sleep_rows_still_persists_daily_feature_row() -> None:
+    feature_date = date(2026, 5, 26)
+    conn = connect_duckdb(":memory:", apply_schema=True)
+    try:
+        _insert_prior_mood(conn, feature_date, feeling=6)
+        _insert_mood(conn, feature_date, feeling=4)
+
+        row = compute_daily_features(conn, feature_date, provider_policy=FALLBACK_POLICY)
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert row.feature_date == feature_date
+    assert row.total_sleep_min is None
+    assert row.hrv_avg_ms is None
+    assert row.deep_sleep_pct is None
+    assert row.hrv_z is None
+    assert row.hrv_z_method is None
+    assert row.prior_day_feeling == 6
+    assert row.prior_day_feeling_imputed is False
+
+
+def test_select_labeled_daily_features_uses_same_day_mood_without_forward_fill() -> None:
+    first_date = date(2026, 5, 27)
+    second_date = date(2026, 5, 28)
+    conn = connect_duckdb(":memory:", apply_schema=True)
+    try:
+        _insert_prior_mood(conn, first_date, feeling=6)
+        _insert_mood(conn, first_date, feeling=4)
+        insert_sleep_night(conn, _sleep_payload("oura", first_date, total_sleep_min=420, deep_min=84, hrv_avg_ms=44.0))
+        compute_daily_features(conn, first_date, provider_policy=FALLBACK_POLICY)
+
+        insert_sleep_night(conn, _sleep_payload("oura", second_date, total_sleep_min=415, deep_min=83, hrv_avg_ms=45.0))
+        compute_daily_features(conn, second_date, provider_policy=FALLBACK_POLICY)
+
+        rows = select_labeled_daily_features(conn, start_date=first_date, end_date=second_date)
+    finally:
+        conn.close()
+
+    assert len(rows) == 1
+    assert rows[0].feature_date == first_date
+    assert rows[0].feeling == 4
+    assert rows[0].prior_day_feeling == 6
+    assert rows[0].total_sleep_min == 420
 
 
 def _write_json(path: Path, payload: dict | list) -> None:

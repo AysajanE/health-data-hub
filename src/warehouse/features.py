@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -17,6 +18,23 @@ class SleepProviderPolicy:
     eight_sleep_state: str
     eight_sleep_allowed_for_features: bool = False
     decision_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class LabeledDailyFeaturesRow:
+    feature_date: date
+    feeling: int
+    total_sleep_min: int | None
+    hrv_z: float | None
+    deep_sleep_pct: float | None
+    prior_day_feeling: int | None
+    hrv_avg_ms: float | None
+    hrv_z_method: str | None
+    feature_version: str | None
+    prior_day_feeling_imputed: bool
+    sleep_source_count: int | None
+    sleep_merge_warning: str | None
+    computed_at_utc: datetime
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
@@ -107,6 +125,7 @@ def eligible_sleep_rows_for_v1(rows: Iterable[_RowT], policy: SleepProviderPolic
 
 
 __all__ = [
+    "LabeledDailyFeaturesRow",
     "SleepProviderPolicy",
     "eligible_sleep_rows_for_v1",
     "load_sleep_provider_policy",

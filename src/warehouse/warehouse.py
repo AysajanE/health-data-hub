@@ -11,7 +11,12 @@ from uuid import UUID, uuid4
 import duckdb
 from pydantic import ValidationError
 
-from src.warehouse.features import SleepProviderPolicy, eligible_sleep_rows_for_v1, load_sleep_provider_policy
+from src.warehouse.features import (
+    LabeledDailyFeaturesRow,
+    SleepProviderPolicy,
+    eligible_sleep_rows_for_v1,
+    load_sleep_provider_policy,
+)
 from src.warehouse.models import (
     DailyFeaturesRow,
     MoodEntryRow,
@@ -60,6 +65,21 @@ _MOOD_ENTRY_COLUMNS = (
 )
 _DAILY_FEATURE_COLUMNS = (
     "feature_date",
+    "total_sleep_min",
+    "hrv_z",
+    "deep_sleep_pct",
+    "prior_day_feeling",
+    "hrv_avg_ms",
+    "hrv_z_method",
+    "feature_version",
+    "prior_day_feeling_imputed",
+    "sleep_source_count",
+    "sleep_merge_warning",
+    "computed_at_utc",
+)
+_LABELED_DAILY_FEATURE_COLUMNS = (
+    "feature_date",
+    "feeling",
     "total_sleep_min",
     "hrv_z",
     "deep_sleep_pct",
@@ -232,6 +252,10 @@ def _mood_entry_from_db(row: Sequence[Any]) -> MoodEntryRow:
     )
 
 
+def _labeled_daily_features_from_db(row: Sequence[Any]) -> LabeledDailyFeaturesRow:
+    return LabeledDailyFeaturesRow(**_row_dict(_LABELED_DAILY_FEATURE_COLUMNS, row))
+
+
 def _median_absolute_deviation(values: Sequence[float], median_value: float) -> float:
     deviations = [abs(value - median_value) for value in values]
     return float(statistics.median(deviations))
@@ -367,6 +391,25 @@ def _compute_prior_day_feeling(
     if not history:
         return None, False
     return int(round(statistics.fmean(history))), True
+
+
+def _load_current_day_feeling(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    feature_date: date,
+) -> int | None:
+    row = conn.execute(
+        """
+        SELECT e.feeling
+        FROM mood_current c
+        JOIN mood_entries e ON e.log_id = c.log_id
+        WHERE c.mood_date = ?
+        """,
+        [feature_date],
+    ).fetchone()
+    if row is None:
+        return None
+    return int(row[0])
 
 
 def apply_schema(conn: duckdb.DuckDBPyConnection, schema_path: Path = SCHEMA_PATH) -> None:
@@ -587,6 +630,7 @@ def compute_daily_features(
     provider_policy: SleepProviderPolicy | None = None,
     policy_root: Path = REPO_ROOT,
 ) -> DailyFeaturesRow | None:
+    current_day_feeling = _load_current_day_feeling(conn, feature_date=feature_date)
     sleep_rows = conn.execute(
         """
         SELECT source, sleep_date, bedtime_utc, waketime_utc, total_sleep_min,
@@ -597,12 +641,16 @@ def compute_daily_features(
         """,
         [feature_date],
     ).fetchall()
-    if not sleep_rows:
+    if current_day_feeling is None and not sleep_rows:
         return None
 
-    policy = provider_policy or load_sleep_provider_policy(policy_root)
     normalized_sleep_rows = [_sleep_night_from_db(row) for row in sleep_rows]
-    eligible_sleep_rows = eligible_sleep_rows_for_v1(normalized_sleep_rows, policy)
+    eligible_sleep_rows: list[SleepNightRow]
+    if normalized_sleep_rows:
+        policy = provider_policy or load_sleep_provider_policy(policy_root)
+        eligible_sleep_rows = eligible_sleep_rows_for_v1(normalized_sleep_rows, policy)
+    else:
+        eligible_sleep_rows = []
     by_source = {row.source: row for row in eligible_sleep_rows}
     raw_by_source = {row.source: row for row in normalized_sleep_rows}
     oura_row = by_source.get("oura")
@@ -660,6 +708,40 @@ def compute_daily_features(
     return row
 
 
+def select_labeled_daily_features(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[LabeledDailyFeaturesRow]:
+    where_clauses: list[str] = []
+    params: list[Any] = []
+
+    if start_date is not None:
+        where_clauses.append("df.feature_date >= ?")
+        params.append(start_date)
+    if end_date is not None:
+        where_clauses.append("df.feature_date <= ?")
+        params.append(end_date)
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    rows = conn.execute(
+        f"""
+        SELECT df.feature_date, e.feeling, df.total_sleep_min, df.hrv_z, df.deep_sleep_pct,
+               df.prior_day_feeling, df.hrv_avg_ms, df.hrv_z_method, df.feature_version,
+               df.prior_day_feeling_imputed, df.sleep_source_count, df.sleep_merge_warning,
+               df.computed_at_utc
+        FROM daily_features df
+        JOIN mood_current c ON c.mood_date = df.feature_date
+        JOIN mood_entries e ON e.log_id = c.log_id
+        {where_sql}
+        ORDER BY df.feature_date
+        """,
+        params,
+    ).fetchall()
+    return [_labeled_daily_features_from_db(row) for row in rows]
+
+
 __all__ = [
     "DEFAULT_DATABASE_PATH",
     "DEFAULT_FEATURE_VERSION",
@@ -673,5 +755,6 @@ __all__ = [
     "insert_mood_entry",
     "insert_sleep_merge_diagnostics",
     "insert_sleep_night",
+    "select_labeled_daily_features",
     "select_current_mood_entries",
 ]
