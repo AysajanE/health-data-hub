@@ -266,6 +266,14 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _parse_iso_datetime(value: str) -> datetime:
+    if value.endswith("Z"):
+        value = f"{value[:-1]}+00:00"
+    elif len(value) >= 5 and value[-5] in "+-" and value[-3] != ":":
+        value = f"{value[:-2]}:{value[-2:]}"
+    return datetime.fromisoformat(value)
+
+
 def _write_public_evidence(root: Path, rel: str) -> Path:
     evidence = root / rel
     evidence.parent.mkdir(parents=True, exist_ok=True)
@@ -451,11 +459,25 @@ def test_s04_command_evidence_is_sanitized_and_covers_acceptance_contract() -> N
     assert evidence_path.exists(), "expected sanitized S04 command evidence artifact"
 
     payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    created_at = _parse_iso_datetime(payload["created_at"])
 
     assert payload["schema_version"] == "autokeel_command_evidence_v1"
     assert payload["slice"] == "S04"
     assert payload["status"] == "ok"
     assert payload["redaction"]
+    assert created_at.tzinfo is not None
+
+    packet_timestamp_paths = (
+        Path(".local/plan_orchestrator/packet/artifacts/verification_report/verification_report.execute.round-0.json"),
+        Path(".local/plan_orchestrator/packet/audit_packet_manifest.execute.round-0.json"),
+    )
+    packet_generated_at = [
+        _parse_iso_datetime(json.loads(path.read_text(encoding="utf-8"))["generated_at_utc"]).astimezone(UTC)
+        for path in packet_timestamp_paths
+        if path.exists()
+    ]
+    if packet_generated_at:
+        assert created_at.astimezone(UTC) <= min(packet_generated_at)
 
     commands = payload["commands"]
     assert [entry["command"] for entry in commands] == [
