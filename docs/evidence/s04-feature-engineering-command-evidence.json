@@ -1,8 +1,14 @@
 {
   "schema_version": "autokeel_command_evidence_v1",
-  "created_at": "2026-05-31T13:02:45-04:00",
+  "created_at": "2026-05-31T21:13:23Z",
   "slice": "S04",
+  "run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
   "status": "ok",
+  "provenance": {
+    "path": "docs/evidence/s04-feature-engineering-command-evidence-provenance.json",
+    "acceptance_window_start_utc": "2026-05-31T19:59:38Z",
+    "acceptance_window_end_utc": "2026-05-31T21:13:23Z"
+  },
   "commands": [
     {
       "command": "python scripts/verify_s04_readiness.py --json",

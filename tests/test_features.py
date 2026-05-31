@@ -274,6 +274,12 @@ def _parse_iso_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+def _parse_run_started_at(run_id: str) -> datetime:
+    prefix, started_at_raw, _ = run_id.split("_", 2)
+    assert prefix == "RUN"
+    return datetime.strptime(started_at_raw, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+
+
 def _write_public_evidence(root: Path, rel: str) -> Path:
     evidence = root / rel
     evidence.parent.mkdir(parents=True, exist_ok=True)
@@ -459,33 +465,51 @@ def test_s04_command_evidence_is_sanitized_and_covers_acceptance_contract() -> N
     assert evidence_path.exists(), "expected sanitized S04 command evidence artifact"
 
     payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    created_at = _parse_iso_datetime(payload["created_at"])
+    commands = payload["commands"]
+    created_at = _parse_iso_datetime(payload["created_at"]).astimezone(UTC)
+    run_id = payload["run_id"]
+    run_started_at = _parse_run_started_at(run_id)
+    provenance = payload["provenance"]
+    provenance_path = Path(provenance["path"])
 
     assert payload["schema_version"] == "autokeel_command_evidence_v1"
     assert payload["slice"] == "S04"
     assert payload["status"] == "ok"
     assert payload["redaction"]
+    assert run_id.startswith("RUN_")
     assert created_at.tzinfo is not None
+    assert provenance_path.exists(), "expected explicit S04 command-evidence provenance artifact"
+    assert str(provenance_path).startswith("docs/evidence/")
 
-    packet_timestamp_paths = (
-        Path(".local/plan_orchestrator/packet/artifacts/verification_report/verification_report.execute.round-0.json"),
-        Path(".local/plan_orchestrator/packet/audit_packet_manifest.execute.round-0.json"),
-    )
-    packet_generated_at = [
-        _parse_iso_datetime(json.loads(path.read_text(encoding="utf-8"))["generated_at_utc"]).astimezone(UTC)
-        for path in packet_timestamp_paths
-        if path.exists()
+    provenance_payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+    provenance_start = _parse_iso_datetime(provenance_payload["acceptance_window_start_utc"]).astimezone(UTC)
+    provenance_end = _parse_iso_datetime(provenance_payload["acceptance_window_end_utc"]).astimezone(UTC)
+
+    assert provenance_payload["schema_version"] == "autokeel_command_evidence_provenance_v1"
+    assert provenance_payload["slice"] == payload["slice"]
+    assert provenance_payload["run_id"] == run_id
+    assert provenance_payload["evidence_path"] == str(evidence_path)
+    assert provenance_payload["evidence_created_at"] == payload["created_at"]
+    assert provenance_payload["evidence_sha256"] == _sha256(evidence_path)
+    assert provenance["acceptance_window_start_utc"] == provenance_payload["acceptance_window_start_utc"]
+    assert provenance["acceptance_window_end_utc"] == provenance_payload["acceptance_window_end_utc"]
+    assert [entry["kind"] for entry in provenance_payload["local_sources"]] == [
+        "run_start",
+        "verification_report",
     ]
-    if packet_generated_at:
-        assert created_at.astimezone(UTC) <= min(packet_generated_at)
+    assert run_started_at <= provenance_start <= provenance_end
+    assert provenance_start <= created_at <= provenance_end
 
-    commands = payload["commands"]
+    provenance_commands = provenance_payload["verified_commands"]
     assert [entry["command"] for entry in commands] == [
         "python scripts/verify_s04_readiness.py --json",
         "python -m pytest tests/test_features.py -q",
         "python scripts/check_no_tracked_data.py",
     ]
+    assert [entry["command"] for entry in provenance_commands] == [entry["command"] for entry in commands]
     assert all(entry["exit_code"] == 0 for entry in commands)
+    assert all(entry["exit_code"] == 0 for entry in provenance_commands)
+    assert all(entry["status"] == "pass" for entry in provenance_commands)
 
     tails = "\n".join(
         f"{entry.get('stdout_tail', '')}\n{entry.get('stderr_tail', '')}"
