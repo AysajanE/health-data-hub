@@ -158,6 +158,7 @@
     ],
     "id": "S05",
     "lane": "swr_preferred",
+    "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
     "name": "Model lifecycle and gates",
     "playbook": "docs/playbooks/s05-model-lifecycle.playbook.md",
     "pre_po_commands": [
@@ -173,7 +174,8 @@
     ],
     "risk": "high",
     "slug": "s05-model-lifecycle",
-    "status": "pending"
+    "status": "pending",
+    "updated_at": "2026-05-31T19:05:54-04:00"
   },
   {
     "acceptance": [
