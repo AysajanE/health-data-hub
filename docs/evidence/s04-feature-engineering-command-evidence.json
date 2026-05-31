@@ -1,0 +1,27 @@
+{
+  "schema_version": "autokeel_command_evidence_v1",
+  "created_at": "2026-05-31T17:28:00-0400",
+  "slice": "S04",
+  "status": "ok",
+  "commands": [
+    {
+      "command": "python scripts/verify_s04_readiness.py --json",
+      "exit_code": 0,
+      "stdout_tail": "{\n  \"checks\": {\n    \"open_high_or_critical_failures\": 0,\n    \"provider_reopening_slice_complete\": false,\n    \"pyeight_decision\": \"ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json\",\n    \"pyeight_state\": \"fallback_active\",\n    \"s01_status\": \"complete\",\n    \"s02_status\": \"complete\",\n    \"s03_8sleep_addendum\": \"docs/evidence/S03-8sleep-provider-status-addendum-20260531.md\",\n    \"s03_evidence_summary\": \"docs/evidence/ingestion/s03-ingestion-evidence.md\",\n    \"s03_provider_decision_count\": 2,\n    \"s03_provider_decisions_status\": \"ok\",\n    \"s03_readiness_status\": \"ok\",\n    \"s03_ship_branch\": \"ship/s03\",\n    \"s03_ship_commit\": \"c9349b337df6e36861468368669dc65cef5cf64d\",\n    \"s03_status\": \"complete\",\n    \"s04_autoplan\": \"docs/gstack/s04-feature-engineering-autoplan.md\",\n    \"s04_brief\": \"docs/briefs/s04-feature-engineering.autonomous-brief.md\"\n  },\n  \"errors\": [],\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python -m pytest tests/test_features.py -q",
+      "exit_code": 0,
+      "stdout_tail": "...........                                                              [100%]\n11 passed in 2.02s\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    }
+  ],
+  "redaction": "Command tails are sanitized summaries. No raw health data, provider payloads, private evidence contents, tokens, DuckDB files, or other sensitive local artifacts are committed."
+}

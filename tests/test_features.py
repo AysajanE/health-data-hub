@@ -443,3 +443,31 @@ def test_compute_daily_features_loads_active_s03_provider_decision_from_policy_r
     assert row.deep_sleep_pct == 82 / 410
     assert row.hrv_avg_ms == 41.0
     assert row.sleep_merge_warning == "8sleep_fallback_ignored"
+
+
+def test_s04_command_evidence_is_sanitized_and_covers_acceptance_contract() -> None:
+    evidence_path = Path("docs/evidence/s04-feature-engineering-command-evidence.json")
+
+    assert evidence_path.exists(), "expected sanitized S04 command evidence artifact"
+
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == "autokeel_command_evidence_v1"
+    assert payload["slice"] == "S04"
+    assert payload["status"] == "ok"
+    assert payload["redaction"]
+
+    commands = payload["commands"]
+    assert [entry["command"] for entry in commands] == [
+        "python scripts/verify_s04_readiness.py --json",
+        "python -m pytest tests/test_features.py -q",
+        "python scripts/check_no_tracked_data.py",
+    ]
+    assert all(entry["exit_code"] == 0 for entry in commands)
+
+    tails = "\n".join(
+        f"{entry.get('stdout_tail', '')}\n{entry.get('stderr_tail', '')}"
+        for entry in commands
+    ).lower()
+    for forbidden_snippet in ("private/evidence", "data/", ".duckdb", ".sqlite", ".parquet"):
+        assert forbidden_snippet not in tails
