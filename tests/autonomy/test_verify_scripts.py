@@ -1084,6 +1084,47 @@ class VerifyScriptsTests(unittest.TestCase):
             self.assertEqual(report["status"], "error")
             self.assertTrue(any("detached ship worktree" in error for error in report["errors"]))
 
+    def test_ship_invariants_allow_no_review_artifact_slices(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            subprocess.run(["git", "branch", "ship/s04", commit], cwd=root, check=True)
+            (root / "ops/autonomy").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [{"id": "S04", "status": "complete", "ship_branch": "ship/s04", "ship_commit": commit}],
+            )
+            (root / "ops/autonomy/events.jsonl").write_text(
+                json.dumps(
+                    {
+                        "slice": "S04",
+                        "event": "slice_acceptance_passed",
+                        "details": {"cwd": str(root / ".local/autokeel/ship-checkouts/s04-test")},
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "slice": "S04",
+                        "event": "slice_ship_branch_created",
+                        "details": {"operator_branch_before": "main", "operator_branch_after": "main"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = verify_ship_invariants(root, "S04")
+
+            self.assertEqual(report["status"], "ok", report)
+            self.assertFalse(report["checks"]["review_artifacts_required"])
+
     def test_run_retarget_evidence_requires_ancestry_and_closure_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

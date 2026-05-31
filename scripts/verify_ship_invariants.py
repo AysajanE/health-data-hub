@@ -89,7 +89,9 @@ def verify_ship_invariants(root: Path, slice_id: str) -> dict[str, Any]:
         and event.get("event") == "slice_acceptance_passed"
         and ".local/autokeel/ship-checkouts" in str((event.get("details") or {}).get("cwd") or "")
     ]
-    if not review_events:
+    review_artifacts = slice_.get("review_artifacts") if isinstance(slice_, dict) else []
+    checks["review_artifacts_required"] = bool(review_artifacts)
+    if review_artifacts and not review_events:
         errors.append("review validation did not record a detached ship worktree cwd")
     if not acceptance_events:
         errors.append("verify_slice did not record a detached ship worktree cwd")
