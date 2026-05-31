@@ -160,6 +160,12 @@
     "lane": "swr_preferred",
     "name": "Model lifecycle and gates",
     "playbook": "docs/playbooks/s05-model-lifecycle.playbook.md",
+    "pre_po_commands": [
+      "python scripts/verify_s05_provider_policy.py --json"
+    ],
+    "pre_ship_commands": [
+      "python scripts/verify_s05_provider_policy.py --json"
+    ],
     "required": true,
     "review_artifacts": [
       "docs/reviews/s05-autonomous-model-gate-review.md",

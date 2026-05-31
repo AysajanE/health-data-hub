@@ -21,3 +21,20 @@ terminal_recovery:
   require_po_terminal_passed: true
   require_no_open_failures_for_run: true
   run_before_playbook_generation: true
+
+remaining_v1_autonomous_launch:
+  auto_authorized: true
+  required_completed_slices:
+    - S01
+    - S02
+    - S03
+    - S04
+  required_next_slice: S05
+  require_no_active_run: true
+  require_no_active_swr_run: true
+  require_no_open_high_or_critical_failures: true
+  required_commands:
+    - python scripts/verify_failure_ledger.py --json
+    - python scripts/verify_autokeel_invariants.py --json
+    - python scripts/verify_s05_readiness.py --json
+    - python -m ops.autonomy.autokeel --once --dry-run --slice S05

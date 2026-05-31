@@ -3340,6 +3340,40 @@ Additional validator requirements:
         )
         return result
 
+    def run_slice_phase_commands(self, slice_: dict[str, Any], phase: str) -> CommandResult:
+        from scripts.acceptance_policy import command_allowed
+
+        key = f"{phase}_commands"
+        commands = slice_.get(key, [])
+        if not commands:
+            return CommandResult([], 0, f"no {key}", "")
+
+        for command in commands:
+            command_text = str(command)
+            if not command_allowed(command_text, self.root):
+                self.log_event(
+                    f"{phase}_command_rejected",
+                    {"command": command_text, "reason": "command is not allowlisted"},
+                    slice_id=slice_["id"],
+                )
+                return CommandResult([], 98, "", f"{phase} command is not allowlisted: {command_text}")
+
+            result = self.runner.run(shlex.split(command_text), cwd=self.root, execute_in_dry_run=True)
+            self.log_event(
+                f"{phase}_command_passed" if result.ok else f"{phase}_command_failed",
+                {
+                    "command": command_text,
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout[-4000:],
+                    "stderr": result.stderr[-4000:],
+                },
+                slice_id=slice_["id"],
+            )
+            if not result.ok:
+                return result
+
+        return CommandResult([], 0, f"{key} passed", "")
+
     def validate_po_contract_before_start(self, playbook: Path) -> CommandResult:
         contract_env = {"PLAN_ORCHESTRATOR_CLEAN_ENV_CONFIRMED": "1"}
         list_items = self.runner.run(
@@ -3384,6 +3418,7 @@ Additional validator requirements:
     def run_slice_readiness(self, slice_id: str) -> CommandResult:
         command_by_slice = {
             "S04": ["python", "scripts/verify_s04_readiness.py", "--json"],
+            "S05": ["python", "scripts/verify_s05_readiness.py", "--json"],
         }
         command = command_by_slice.get(slice_id)
         if command is None:
@@ -4525,6 +4560,21 @@ Use local files and commands only. If evidence is missing, write a failing revie
         provider_guard = self.validate_provider_decisions(slice_id)
         if not provider_guard.ok:
             return provider_guard
+        pre_ship = self.run_slice_phase_commands(slice_, "pre_ship")
+        if not pre_ship.ok:
+            self.log_event(
+                "slice_ship_failed",
+                {
+                    "run_id": run_id,
+                    "ship_branch": branch,
+                    "reason": "pre_ship_policy_command_failed",
+                    "exit_code": pre_ship.exit_code,
+                    "stdout": pre_ship.stdout[-2000:],
+                    "stderr": pre_ship.stderr[-2000:],
+                },
+                slice_id=slice_id,
+            )
+            return pre_ship
         retarget_guard = self.verify_run_retarget_evidence(slice_id)
         if not retarget_guard.ok:
             return retarget_guard
@@ -4785,6 +4835,19 @@ Use local files and commands only. If evidence is missing, write a failing revie
             self.mark_slice_status(slice_["id"], "replan_required", reason="provider decision validation failed")
             return provider_decisions.exit_code or 35
 
+        pre_po = self.run_slice_phase_commands(slice_, "pre_po")
+        if not pre_po.ok:
+            self.record_failure(
+                slice_["id"],
+                "audit_failure",
+                "high",
+                "Slice pre-PO policy command failed.",
+                "Stopped before PO execution; pre-PO policy commands must pass.",
+                self.root / "ops/autonomy/slices.json",
+            )
+            self.mark_slice_status(slice_["id"], "replan_required", reason="pre-PO policy command failed")
+            return pre_po.exit_code or 35
+
         if self.dry_run:
             self.log_event("dry_run_po_start_skipped", {"playbook": slice_.get("playbook")}, slice_id=slice_["id"])
             return 0
@@ -4835,7 +4898,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--doctor", action="store_true", help="Run AutoKeel preflight checks and exit.")
     parser.add_argument("--strict", action="store_true", help="Use strict mode with --doctor.")
     parser.add_argument("--strict-swr", metavar="SLICE_ID", help="With --doctor, run strict SWR provider preflight for a slice before selection.")
-    parser.add_argument("--readiness", choices=["S02", "S03", "S04"], help="Run a slice-specific pre-launch readiness check and exit.")
+    parser.add_argument("--readiness", choices=["S02", "S03", "S04", "S05"], help="Run a slice-specific pre-launch readiness check and exit.")
     parser.add_argument("--next-slice", action="store_true", help="Print the next actionable slice and exit.")
     parser.add_argument("--replay-events", action="store_true", help="Print event log rows and exit.")
     parser.add_argument("--unblock-evidence", nargs=2, metavar=("SLICE_ID", "EVIDENCE_DIR"), help="Mark a blocked slice evidence_ready with a local evidence dir.")
@@ -4901,6 +4964,12 @@ def main(argv: list[str] | None = None) -> int:
             from scripts.verify_s04_readiness import verify_s04_readiness
 
             report = verify_s04_readiness(root)
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 0 if report["status"] == "ok" else 1
+        if args.readiness == "S05":
+            from scripts.verify_s05_readiness import verify_s05_readiness
+
+            report = verify_s05_readiness(root)
             print(json.dumps(report, indent=2, sort_keys=True))
             return 0 if report["status"] == "ok" else 1
         if args.next_slice:
