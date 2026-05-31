@@ -129,7 +129,6 @@
       "S02",
       "S03"
     ],
-    "failure_path": "ops/autonomy/failures/S04-audit_failure-20260530T153932-0400-eb9cc5de.md",
     "id": "S04",
     "lane": "compiler",
     "name": "Feature engineering",
@@ -137,13 +136,13 @@
     "required": true,
     "retry_count": 0,
     "risk": "medium",
-    "run_id": "RUN_20260530T191329Z_40064d103fdf412db1150e69ef247613",
     "slug": "s04-feature-engineering",
     "status": "pending",
-    "updated_at": "2026-05-30T15:39:32-04:00"
+    "updated_at": "2026-05-31T15:27:30-04:00"
   },
   {
     "acceptance": [
+      "python scripts/verify_s05_provider_policy.py --json",
       "python -m pytest tests/model -q",
       "python scripts/check_autonomous_review_exists.py S05",
       "python scripts/check_no_tracked_data.py"
@@ -242,6 +241,7 @@
   {
     "acceptance": [
       "python -m pytest -q",
+      "python scripts/verify_v1_provider_policy.py --json",
       "python scripts/check_no_tracked_data.py"
     ],
     "autoplan": "docs/gstack/s09-testing-v1-evaluation-autoplan.md",

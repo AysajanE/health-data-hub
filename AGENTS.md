@@ -49,7 +49,7 @@ v1 is a **Sleep + Mood Retrospective Explainer**.
 Required in v1:
 
 - Oura + mood log.
-- 8 Sleep only if stable under tripwire.
+- 8 Sleep fallback-only under the active S03 provider decision; Oura direct API v2 is the first-class sleep source.
 - Local-first DuckDB storage.
 - FastAPI mood endpoint if mood Shortcut path survives tripwire.
 - Streamlit retrospective UI.
@@ -216,8 +216,17 @@ python scripts/verify_ship_invariants.py S01 --json
 
 S04 must not start unless `python scripts/verify_s04_readiness.py --json`
 passes. S04 must consume the active S03 provider decision, treat Oura-only v1
-as first-class, and must not require pyEight evidence unless a future explicit
-slice supersedes the S03 fallback decision.
+as first-class, and must not require pyEight evidence. 8 Sleep / pyEight is
+fallback-only for v1. Feature construction must ignore 8 Sleep rows for v1
+model features even if 8 Sleep rows exist in the warehouse. Diagnostics may
+record that 8 Sleep rows were present and ignored under fallback. 8 Sleep must
+not be averaged, blended, reconciled, used as fallback HRV, used as fallback
+sleep stage source, or counted as an active sleep source unless a future
+explicit provider-reopening slice supersedes S03.
+
+S05 must run `python scripts/verify_s05_provider_policy.py --json` before
+model training. S09 must run `python scripts/verify_v1_provider_policy.py
+--json` before final v1 completion.
 
 Close a failure only with local evidence:
 
@@ -340,6 +349,11 @@ Never track:
 * quarantine payloads
 * snapshots
 * tokens
+
+Treat optional 8 Sleep credential names as sensitive if they are present:
+`PYEIGHT_EMAIL`, `PYEIGHT_PASSWORD`, `PYEIGHT_CLIENT_ID`,
+`PYEIGHT_CLIENT_SECRET`, `EIGHT_SLEEP_TOKEN`, and `EIGHT_SLEEP_PASSWORD`.
+Their absence must not fail v1.
 
 Before any ship/complete decision, run:
 

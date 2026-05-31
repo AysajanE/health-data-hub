@@ -45,12 +45,13 @@
     "scripts/verify_s04_readiness.py",
     "src/warehouse",
     "src/warehouse/features.py",
+    "src/warehouse/warehouse.py",
     "tests",
     "tests/test_features.py"
   ],
   "known_write_roots": [
-    "tests/test_features.py",
     "src/warehouse",
+    "tests/test_features.py",
     "docs/evidence"
   ],
   "manual_gate_hints": [
@@ -193,6 +194,7 @@
     {
       "kind": "unknown",
       "mentioned_by": [
+        "task_001",
         "task_002",
         "task_003",
         "task_004"
@@ -206,14 +208,29 @@
       "kind": "code",
       "mentioned_by": [
         "candidate_repo_paths",
+        "task_001",
         "task_002",
         "task_003",
         "task_004"
       ],
       "path": "src/warehouse/features.py",
       "safe_as_deliverable": true,
-      "safe_as_repo_surface": false,
-      "status": "declared_missing"
+      "safe_as_repo_surface": true,
+      "status": "exists"
+    },
+    {
+      "kind": "code",
+      "mentioned_by": [
+        "candidate_repo_paths",
+        "task_001",
+        "task_002",
+        "task_003",
+        "task_004"
+      ],
+      "path": "src/warehouse/warehouse.py",
+      "safe_as_deliverable": true,
+      "safe_as_repo_surface": true,
+      "status": "exists"
     },
     {
       "kind": "unknown",
@@ -241,8 +258,8 @@
       ],
       "path": "tests/test_features.py",
       "safe_as_deliverable": true,
-      "safe_as_repo_surface": false,
-      "status": "declared_missing"
+      "safe_as_repo_surface": true,
+      "status": "exists"
     }
   ],
   "repo_root": ".",
@@ -269,19 +286,28 @@
     {
       "behavioral": true,
       "clamped_allowed_write_roots": [
+        "src/warehouse",
         "tests/test_features.py"
       ],
       "declared_deliverables": [
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "declared_files": [
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "existing_repo_surfaces": [
         "docs/gstack/health-data-hub-office-hours.md",
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
-        "tests"
+        "src/warehouse",
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
+        "tests",
+        "tests/test_features.py"
       ],
       "missing_declared_files": false,
       "missing_paths_behavioral": false,
@@ -293,6 +319,7 @@
       ],
       "source_order": 1,
       "suggested_allowed_write_roots": [
+        "src/warehouse",
         "tests"
       ],
       "task": "Add or update tests proving feature engineering reads the active S03 provider decision and treats Oura-only v1 as the first-class feature source. The tests must fail if pyEight evidence is required or 8 Sleep is treated as active without a future superseding decision.",
@@ -310,10 +337,12 @@
       ],
       "declared_deliverables": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "declared_files": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "existing_repo_surfaces": [
@@ -321,7 +350,10 @@
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
         "src/warehouse",
-        "tests"
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
+        "tests",
+        "tests/test_features.py"
       ],
       "missing_declared_files": false,
       "missing_paths_behavioral": false,
@@ -350,10 +382,12 @@
       ],
       "declared_deliverables": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "declared_files": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "existing_repo_surfaces": [
@@ -361,7 +395,10 @@
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
         "src/warehouse",
-        "tests"
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
+        "tests",
+        "tests/test_features.py"
       ],
       "missing_declared_files": false,
       "missing_paths_behavioral": false,
@@ -390,10 +427,12 @@
       ],
       "declared_deliverables": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "declared_files": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "existing_repo_surfaces": [
@@ -401,7 +440,10 @@
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
         "src/warehouse",
-        "tests"
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
+        "tests",
+        "tests/test_features.py"
       ],
       "missing_declared_files": false,
       "missing_paths_behavioral": false,
@@ -441,7 +483,8 @@
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
         "docs/evidence",
-        "tests"
+        "tests",
+        "tests/test_features.py"
       ],
       "missing_declared_files": false,
       "missing_paths_behavioral": false,

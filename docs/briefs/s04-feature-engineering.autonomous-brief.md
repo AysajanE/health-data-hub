@@ -18,6 +18,8 @@ S04 builds feature engineering for the Health Data Hub v1 Sleep + Mood Retrospec
 - S04 may include source-merge diagnostics only as Oura-only identity checks. It must not average, blend, or reconcile 8 Sleep values into v1 features.
 - S04 must not write provider-evidence or ingestion-decision files except read-only consult references in docs or tests.
 
+8 Sleep / pyEight is fallback-only for v1. S04 must treat the active S03 provider decision as Oura-only v1. Feature construction must ignore 8 Sleep rows for v1 model features even if 8 Sleep rows exist in the warehouse. Diagnostics may record that 8 Sleep rows were present and ignored under fallback. 8 Sleep must not be averaged, blended, reconciled, used as fallback HRV, used as fallback sleep stage source, or counted as an active sleep source unless a future explicit provider-reopening slice supersedes S03.
+
 ## Required Feature Invariants
 
 - v1 target is same-day evening `feeling[D]`.

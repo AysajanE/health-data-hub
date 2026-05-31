@@ -25,6 +25,8 @@ DEFAULT_ALLOW_COMMANDS = (
     "python scripts/verify_s03_readiness.py",
     "python scripts/validate_provider_decisions.py",
     "python scripts/verify_s04_readiness.py",
+    "python scripts/verify_s05_provider_policy.py",
+    "python scripts/verify_v1_provider_policy.py",
 )
 
 BROAD_PREFIX_DENYLIST = (

@@ -951,16 +951,33 @@ class VerifyScriptsTests(unittest.TestCase):
             summary = root / "docs/evidence/ingestion/s03-ingestion-evidence.md"
             summary.parent.mkdir(parents=True)
             summary.write_text("direct_oura_api_v2_periodic_pull\noura_only_v1\n", encoding="utf-8")
+            addendum = root / "docs/evidence/S03-8sleep-provider-status-addendum-20260531.md"
+            addendum.write_text(
+                "8 Sleep remains fallback-only\n"
+                "Oura direct API v2 remains the first-class sleep provider\n"
+                "8 Sleep values must not be averaged, blended, reconciled, used as fallback HRV\n",
+                encoding="utf-8",
+            )
             brief = root / "docs/briefs/s04-feature-engineering.autonomous-brief.md"
             brief.parent.mkdir(parents=True)
             brief.write_text(
-                "active S03 provider decision\nOura-only v1\nmust not require pyEight evidence\n8 Sleep must remain absent/fallback\n",
+                "active S03 provider decision\n"
+                "Oura-only v1\n"
+                "must not require pyEight evidence\n"
+                "8 Sleep must remain absent/fallback\n"
+                "feature construction must ignore 8 Sleep rows\n"
+                "used as fallback HRV\n",
                 encoding="utf-8",
             )
             autoplan = root / "docs/gstack/s04-feature-engineering-autoplan.md"
             autoplan.parent.mkdir(parents=True)
             autoplan.write_text(
-                "active S03 provider decision\nOura-only v1\nmust not require pyEight evidence\n8 Sleep must remain absent/fallback\n",
+                "active S03 provider decision\n"
+                "Oura-only v1\n"
+                "must not require pyEight evidence\n"
+                "8 Sleep must remain absent/fallback\n"
+                "feature construction must ignore 8 Sleep rows\n"
+                "used as fallback HRV\n",
                 encoding="utf-8",
             )
 

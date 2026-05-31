@@ -63,11 +63,19 @@ def active_pyeight_state(root: Path) -> tuple[str, str | None]:
             active_fallback = rel
         elif payload.get("status") == "ok" and payload.get("fallback_active") is False:
             active_include = rel
+    if active_fallback and active_include:
+        return "conflict", f"{active_fallback}; {active_include}"
     if active_fallback:
         return "fallback_active", active_fallback
     if active_include:
         return "include_active", active_include
     return "unknown", None
+
+
+def has_completed_provider_reopening_slice(by_id: dict[str, Any]) -> bool:
+    """Allow future explicit slices to supersede S03 without weakening S04."""
+
+    return any(by_id.get(slice_id, {}).get("status") == "complete" for slice_id in ("S03B", "S10"))
 
 
 def verify_s04_readiness(root: Path) -> dict[str, Any]:
@@ -122,8 +130,25 @@ def verify_s04_readiness(root: Path) -> dict[str, Any]:
     pyeight_state, pyeight_path = active_pyeight_state(root)
     checks["pyeight_state"] = pyeight_state
     checks["pyeight_decision"] = pyeight_path
-    if pyeight_state not in {"fallback_active", "include_active"}:
-        errors.append("pyEight fallback/include state is not explicit")
+    checks["provider_reopening_slice_complete"] = has_completed_provider_reopening_slice(by_id)
+    if pyeight_state == "include_active" and checks["provider_reopening_slice_complete"]:
+        warnings.append("pyEight include_active is allowed only because a provider-reopening slice is complete")
+    elif pyeight_state != "fallback_active":
+        errors.append("S04 requires pyEight/8 Sleep to be exactly fallback_active for v1")
+
+    addendum = root / "docs/evidence/S03-8sleep-provider-status-addendum-20260531.md"
+    checks["s03_8sleep_addendum"] = str(addendum.relative_to(root)) if addendum.exists() else None
+    if not addendum.exists():
+        errors.append("S03 8 Sleep provider status addendum is missing")
+    else:
+        addendum_text = addendum.read_text(encoding="utf-8").lower()
+        for phrase, error in {
+            "8 sleep remains fallback-only": "S03 addendum must keep 8 Sleep fallback-only",
+            "oura direct api v2 remains the first-class sleep provider": "S03 addendum must keep Oura as first-class sleep provider",
+            "must not be averaged, blended, reconciled": "S03 addendum must forbid 8 Sleep blending",
+        }.items():
+            if phrase not in addendum_text:
+                errors.append(error)
 
     open_high = [
         row
@@ -148,6 +173,8 @@ def verify_s04_readiness(root: Path) -> dict[str, Any]:
             "oura-only v1": "S04 brief must treat Oura-only v1 as first-class",
             "must not require pyeight evidence": "S04 brief must not require pyEight evidence",
             "8 sleep must remain absent/fallback": "S04 brief must keep 8 Sleep absent/fallback",
+            "feature construction must ignore 8 sleep rows": "S04 brief must require feature construction to ignore 8 Sleep rows",
+            "used as fallback hrv": "S04 brief must forbid 8 Sleep fallback HRV",
         }
         for phrase, error in required_phrases.items():
             if phrase not in brief_text:
@@ -164,6 +191,8 @@ def verify_s04_readiness(root: Path) -> dict[str, Any]:
             "oura-only v1": "S04 autoplan must treat Oura-only v1 as first-class",
             "must not require pyeight evidence": "S04 autoplan must not require pyEight evidence",
             "8 sleep must remain absent/fallback": "S04 autoplan must keep 8 Sleep absent/fallback",
+            "feature construction must ignore 8 sleep rows": "S04 autoplan must require feature construction to ignore 8 Sleep rows",
+            "used as fallback hrv": "S04 autoplan must forbid 8 Sleep fallback HRV",
         }.items():
             if phrase not in autoplan_text:
                 errors.append(error)

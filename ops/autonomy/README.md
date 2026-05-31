@@ -146,7 +146,12 @@ python scripts/evidence/pyeight_smoke.py --json
 python scripts/verify_s03_readiness.py --json
 ```
 
-For positive 8 Sleep/pyEight evidence, `.env.local` must contain
+As of the 2026-05-31 S03 provider-status addendum, 8 Sleep / pyEight remains
+fallback-only for v1. S04-S09 must not require pyEight evidence, and feature
+construction must ignore 8 Sleep rows for v1 model features even if those rows
+exist in the warehouse.
+
+For any future positive 8 Sleep/pyEight evidence collection, `.env.local` must contain
 `PYEIGHT_EMAIL`, `PYEIGHT_PASSWORD`, `PYEIGHT_TIMEZONE`,
 `PYEIGHT_CLIENT_ID`, and `PYEIGHT_CLIENT_SECRET`. `PYEIGHT_TIMEZONE` must be
 an explicit IANA timezone such as `America/Toronto`; do not use `local`.
@@ -161,6 +166,11 @@ device IDs, exact sleep dates, or exact sleep metrics. If 8 Sleep cannot
 authenticate or return recent sleep intervals reliably, record that evidence
 and use the documented Oura-only v1 fallback instead of weakening the provider
 gate.
+
+S08 backup, restore, and logging work must treat `PYEIGHT_EMAIL`,
+`PYEIGHT_PASSWORD`, `PYEIGHT_CLIENT_ID`, `PYEIGHT_CLIENT_SECRET`,
+`EIGHT_SLEEP_TOKEN`, and `EIGHT_SLEEP_PASSWORD` as sensitive names if present.
+Their absence must not fail v1.
 
 Only if those pass should a real bounded S03 tick run:
 

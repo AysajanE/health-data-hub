@@ -14,6 +14,7 @@
     {
       "action": "Add or update tests proving feature engineering reads the active S03 provider decision and treats Oura-only v1 as the first-class feature source. The tests must fail if pyEight evidence is required or 8 Sleep is treated as active without a ",
       "allowed_write_roots": [
+        "src/warehouse",
         "tests/test_features.py"
       ],
       "consult_paths": [
@@ -22,9 +23,11 @@
         "docs/briefs/s04-feature-engineering.autonomous-brief.md"
       ],
       "deliverable": [
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
-      "exit_criteria": "tests/test_features.py exist with the required S04 behavior; python scripts/verify_s04_readiness.py --json, python -m pytest tests/test_features.py -q passes",
+      "exit_criteria": "src/warehouse/features.py, src/warehouse/warehouse.py, tests/test_features.py exist with the required S04 behavior; python scripts/verify_s04_readiness.py --json, python -m pytest tests/test_features.py -q passes",
       "external_check": "none",
       "external_dependencies": [],
       "manual_gate": "none",
@@ -41,7 +44,11 @@
         "docs/gstack/health-data-hub-office-hours.md",
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
-        "tests"
+        "src/warehouse",
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
+        "tests",
+        "tests/test_features.py"
       ],
       "required_verification_artifacts": [],
       "required_verification_commands": [
@@ -65,9 +72,10 @@
       ],
       "deliverable": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
-      "exit_criteria": "src/warehouse/features.py, tests/test_features.py exist with the required S04 behavior; python -m pytest tests/test_features.py -q passes",
+      "exit_criteria": "src/warehouse/features.py, src/warehouse/warehouse.py, tests/test_features.py exist with the required S04 behavior; python -m pytest tests/test_features.py -q passes",
       "external_check": "none",
       "external_dependencies": [],
       "manual_gate": "none",
@@ -85,7 +93,10 @@
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
         "src/warehouse",
-        "tests"
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
+        "tests",
+        "tests/test_features.py"
       ],
       "required_verification_artifacts": [],
       "required_verification_commands": [
@@ -108,9 +119,10 @@
       ],
       "deliverable": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
-      "exit_criteria": "src/warehouse/features.py, tests/test_features.py exist with the required S04 behavior; python -m pytest tests/test_features.py -q passes",
+      "exit_criteria": "src/warehouse/features.py, src/warehouse/warehouse.py, tests/test_features.py exist with the required S04 behavior; python -m pytest tests/test_features.py -q passes",
       "external_check": "none",
       "external_dependencies": [],
       "manual_gate": "none",
@@ -128,7 +140,10 @@
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
         "src/warehouse",
-        "tests"
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
+        "tests",
+        "tests/test_features.py"
       ],
       "required_verification_artifacts": [],
       "required_verification_commands": [
@@ -151,9 +166,10 @@
       ],
       "deliverable": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
-      "exit_criteria": "src/warehouse/features.py, tests/test_features.py exist with the required S04 behavior; python -m pytest tests/test_features.py -q passes",
+      "exit_criteria": "src/warehouse/features.py, src/warehouse/warehouse.py, tests/test_features.py exist with the required S04 behavior; python -m pytest tests/test_features.py -q passes",
       "external_check": "none",
       "external_dependencies": [],
       "manual_gate": "none",
@@ -171,7 +187,10 @@
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
         "src/warehouse",
-        "tests"
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
+        "tests",
+        "tests/test_features.py"
       ],
       "required_verification_artifacts": [],
       "required_verification_commands": [
@@ -214,7 +233,8 @@
         "docs/gstack/s04-feature-engineering-autoplan.md",
         "docs/briefs/s04-feature-engineering.autonomous-brief.md",
         "docs/evidence",
-        "tests"
+        "tests",
+        "tests/test_features.py"
       ],
       "required_verification_artifacts": [],
       "required_verification_commands": [

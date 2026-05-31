@@ -339,7 +339,7 @@ CREATE TABLE daily_features (
     -- v1 model features (exactly 4)
     total_sleep_min         INTEGER,         -- merged duration: average if agreement, Oura if >60m disagreement, single source if only one
     hrv_z                   DOUBLE,          -- THE feature the model uses; prior-only baseline
-    deep_sleep_pct          DOUBLE,          -- Oura primary, 8 Sleep fallback (noisy stage metric)
+    deep_sleep_pct          DOUBLE,          -- Oura only under active v1 provider policy
     prior_day_feeling       INTEGER,         -- mood lag-1
     -- display metadata (NOT model features)
     hrv_avg_ms              DOUBLE,          -- raw ms value for UI display
@@ -348,7 +348,7 @@ CREATE TABLE daily_features (
     -- explicit quality flags (replacing the coarse is_imputed)
     prior_day_feeling_imputed BOOLEAN DEFAULT FALSE,
     sleep_source_count      INTEGER,         -- 1 or 2
-    sleep_merge_warning     VARCHAR,         -- e.g. 'sleep_disagreement_60min'
+    sleep_merge_warning     VARCHAR,         -- e.g. '8sleep_fallback_ignored'
     computed_at_utc         TIMESTAMP NOT NULL
 );
 ```
@@ -362,9 +362,9 @@ CREATE TABLE sleep_merge_diagnostics (
     oura_present            BOOLEAN,
     eight_present           BOOLEAN,
     total_sleep_delta_min   INTEGER,            -- Oura vs 8 Sleep gap
-    hrv_merge_method        VARCHAR,            -- 'oura_primary'|'eight_fallback'|'missing'
-    stage_source            VARCHAR,            -- 'oura'|'eight'
-    warning                 VARCHAR,            -- e.g. 'sleep_disagreement_60min'
+    hrv_merge_method        VARCHAR,            -- 'oura_primary'|'missing' under active v1 policy
+    stage_source            VARCHAR,            -- 'oura' under active v1 policy
+    warning                 VARCHAR,            -- e.g. '8sleep_fallback_ignored'
     computed_at_utc         TIMESTAMP NOT NULL
 );
 ```
@@ -375,11 +375,13 @@ This table is for debugging when the model says "sleep duration mattered" but th
 
 ### Sleep Source Reconciliation
 
-Both Oura and 8 Sleep produce a row per night. Merge into `daily_features` using this priority:
+S03 provider-policy update, 2026-05-31: the 8 Sleep reconciliation rules in this original design are superseded for v1. 8 Sleep / pyEight is fallback-only; Oura direct API v2 is the first-class sleep provider. Feature construction must ignore 8 Sleep rows for v1 model features even if they exist in the warehouse. Diagnostics may record that 8 Sleep rows were present and ignored under fallback. 8 Sleep must not be averaged, blended, reconciled, used as fallback HRV, used as fallback sleep stage source, or counted as an active sleep source unless a future explicit provider-reopening slice supersedes S03.
 
-- **Sleep stage breakdown** (deep, REM, light, awake): **Oura primary**. Oura's PPG + accelerometer + temp sensor is consistently rated more accurate than mattress-cover staging in independent reviews. 8 Sleep's staging is the fallback when Oura is missing.
-- **`deep_sleep_pct` computation:** `Oura.deep_min / Oura.total_sleep_min` when Oura is present; else `8Sleep.deep_min / 8Sleep.total_sleep_min`. Computed BEFORE merging total-sleep totals — keeps the ratio internally consistent.
-- **HRV (RMSSD) — Oura primary, 8 Sleep fallback (NOT averaged):** each device has a different baseline and averaging across sources mixes noise structures. v1 policy: **store per-source HRV in ms (`sleep_nights.hrv_avg_ms`); the `daily_features` row uses Oura's HRV when present, else 8 Sleep's**. Then `hrv_z` is computed from the chosen source's prior history. The `sleep_merge_diagnostics.hrv_merge_method` column records `'oura_primary'`, `'eight_fallback'`, or `'missing'` (never `'both_z'`).
+Under the active S03 decision, merge into `daily_features` using this priority:
+
+- **Sleep stage breakdown** (deep, REM, light, awake): **Oura only** for v1. 8 Sleep staging is not a fallback source under the active S03 decision.
+- **`deep_sleep_pct` computation:** `Oura.deep_min / Oura.total_sleep_min` when Oura is present. If only 8 Sleep is present, leave the v1 model feature unset.
+- **HRV (RMSSD):** Oura only for v1. Store per-source HRV in `sleep_nights.hrv_avg_ms`; the `daily_features` row uses Oura's HRV when present and otherwise leaves v1 HRV features unset. The `sleep_merge_diagnostics.hrv_merge_method` column records `'oura_primary'` or `'missing'` under the active S03 decision.
 
   The MODEL trains on the persisted `hrv_z`. UI displays `hrv_avg_ms` in ms. **Persisting `hrv_z` (rather than recomputing) makes restore reproducible.**
 
@@ -405,14 +407,14 @@ Both Oura and 8 Sleep produce a row per night. Merge into `daily_features` using
   ```
 
   Persisting `hrv_z` (rather than recomputing in-memory) makes the model reproducible from disk — a snapshot restore renders the same numbers. `feature_version` lets us detect when the computation changed and trigger a recompute.
-- **Total sleep duration**: **if both present AND |Oura − 8Sleep| ≤ 60 min, average them; if disagreement > 60 min, log `sleep_disagreement_60min` warning and use Oura; if only one source present, use that source.** The schema comment on `daily_features.total_sleep_min` reads: *"merged duration: average if agreement, Oura if >60m disagreement, single source if only one present."* This is the canonical algorithm — any earlier "source-selected, Oura primary" framing in the doc is superseded by this rule.
+- **Total sleep duration**: use Oura only for v1. If both Oura and 8 Sleep rows exist, keep Oura and record the Oura vs 8 Sleep gap only as diagnostics. If only 8 Sleep is present, leave v1 sleep model features unset.
 - **Body temperature deviation and resting HR are NOT v1 features.** They are stored in `sleep_nights` if the provider supplies them, but there is no `body_temp_dev_c` or `rhr_avg_bpm` column in `daily_features` and they are not in the v1 model. They are candidate v2 features once `N_model ≥ 60`. (Earlier drafts listed reconciliation rules for these — those rules apply only when v2 introduces the columns.)
 
-Reconciliation logic lives in `features.py:merge_sleep_sources()` and is unit-tested with fixtures for: both-present, Oura-only, 8Sleep-only, disagree-by-60min.
+Reconciliation logic lives in `src/warehouse/features.py` and `src/warehouse/warehouse.py` and is unit-tested with fixtures for: both-present ignored fallback, Oura-only, and 8Sleep-only fallback rows.
 
 ### Missing Data Policy
 
-- **One sleep source missing, other present:** use the available source, mark `daily_features.is_imputed=False` (this is not imputation — it's source selection). Record the source-coverage state in `sleep_merge_diagnostics`.
+- **One sleep source missing, other present:** Oura-only rows are eligible. 8 Sleep-only rows do not create v1 sleep model features under the active S03 fallback decision. Record the source-coverage state in `sleep_merge_diagnostics`.
 - **Both sleep sources missing:** **do NOT forward-fill for training.** Forward-filling sleep across days creates fictional observations and manufactures spurious correlations. Skip the row entirely for model training. For UI-only display, optionally show the prior day with a "no sleep data captured" label — never a numeric estimate.
 - **`prior_day_feeling` missing (yesterday had no mood log):**
   - **For model training:** exclude the row entirely. Do NOT train on imputed lag values at small N; a few imputed lag values can materially distort a model trained on 30-60 days.
@@ -969,7 +971,7 @@ Two reviews ran on this design: an internal adversarial subagent (3 iterations, 
 - **`N_model` defined** as model-ready row count (all 4 features non-null). All gates use `N_model`, not generic paired-day count. UI message changed to "Collecting model-ready days: N/37" (37 not 30 because eval window math at N=30 produces 0 evaluable days).
 - **Baseline N-window cleaned up:** `N_model < 30` no model, `30-36` model trains but no UI gate, `37-43` 7-day eval window, `≥44` 14-day eval window. Removed the partial-window range `30-37` that previously produced 0 days at the boundary.
 - **Sleep-source reconciliation resolved.** `total_sleep_min` = average if |delta|≤60min, Oura if disagreement >60min, single source if only one — schema comment matches reconciliation algorithm.
-- **HRV merge method values corrected** to `'oura_primary' | 'eight_fallback' | 'missing'` (no more `'both_z'` since we don't average source z-scores).
+- **HRV merge method values corrected** to `'oura_primary' | 'missing'` under the active v1 provider policy.
 - **Body temperature and RHR moved out of v1 merge.** They appear in `sleep_nights` only if the provider supplies them; not in `daily_features` and not in the v1 model. Marked as candidate v2 features.
 - **`context_chips` added to schema and API.** New column on `mood_entries`, new field on `MoodLogRequest`. Logged but NOT modeled in v1 — surfaced in UI for outlier explanation.
 - **Stale `is_imputed` references cleaned up.** Only `daily_features.prior_day_feeling_imputed` remains; sleep imputation removed.

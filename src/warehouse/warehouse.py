@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import duckdb
 from pydantic import ValidationError
 
+from src.warehouse.features import SleepProviderPolicy, eligible_sleep_rows_for_v1, load_sleep_provider_policy
 from src.warehouse.models import (
     DailyFeaturesRow,
     MoodEntryRow,
@@ -26,7 +27,7 @@ DEFAULT_DATABASE_PATH = REPO_ROOT / "data" / "warehouse.duckdb"
 DEFAULT_GENERAL_LOG_PATH = Path.home() / "Library" / "Logs" / "healthhub.log"
 DEFAULT_QUARANTINE_DIR = REPO_ROOT / "data" / "quarantine"
 DEFAULT_FEATURE_VERSION = "v1.0"
-SLEEP_DISAGREEMENT_WARNING = "sleep_disagreement_60min"
+EIGHT_SLEEP_FALLBACK_IGNORED_WARNING = "8sleep_fallback_ignored"
 
 _ModelT = TypeVar("_ModelT", SleepNightRow, MoodEntryRow, DailyFeaturesRow, SleepMergeDiagnosticsRow)
 
@@ -302,40 +303,31 @@ def _choose_total_sleep_minutes(
 ) -> tuple[int | None, int | None, str | None]:
     oura_total = oura_row.total_sleep_min if oura_row is not None else None
     eight_total = eight_row.total_sleep_min if eight_row is not None else None
+    warning = EIGHT_SLEEP_FALLBACK_IGNORED_WARNING if eight_row is not None else None
 
     if oura_total is not None and eight_total is not None:
         delta = abs(oura_total - eight_total)
-        if delta > 60:
-            return oura_total, delta, SLEEP_DISAGREEMENT_WARNING
-        return int(round((oura_total + eight_total) / 2)), delta, None
+        return oura_total, delta, warning
     if oura_total is not None:
-        return oura_total, None, None
-    if eight_total is not None:
-        return eight_total, None, None
-    return None, None, None
+        return oura_total, None, warning
+    return None, None, warning
 
 
 def _choose_stage_metrics(
     oura_row: SleepNightRow | None,
-    eight_row: SleepNightRow | None,
 ) -> tuple[float | None, str | None]:
-    for source_name, row in (("oura", oura_row), ("eight", eight_row)):
-        if row is None:
-            continue
-        if row.total_sleep_min is None or row.total_sleep_min <= 0 or row.deep_min is None:
-            continue
-        return row.deep_min / row.total_sleep_min, source_name
-    return None, None
+    if oura_row is None:
+        return None, None
+    if oura_row.total_sleep_min is None or oura_row.total_sleep_min <= 0 or oura_row.deep_min is None:
+        return None, None
+    return oura_row.deep_min / oura_row.total_sleep_min, "oura"
 
 
 def _choose_hrv_source(
     oura_row: SleepNightRow | None,
-    eight_row: SleepNightRow | None,
 ) -> tuple[float | None, str | None, str]:
     if oura_row is not None and oura_row.hrv_avg_ms is not None:
         return oura_row.hrv_avg_ms, "oura", "oura_primary"
-    if eight_row is not None and eight_row.hrv_avg_ms is not None:
-        return eight_row.hrv_avg_ms, "8sleep", "eight_fallback"
     return None, None, "missing"
 
 
@@ -592,6 +584,8 @@ def compute_daily_features(
     computed_at_utc: datetime | None = None,
     feature_version: str = DEFAULT_FEATURE_VERSION,
     allow_prior_day_imputation: bool = False,
+    provider_policy: SleepProviderPolicy | None = None,
+    policy_root: Path = REPO_ROOT,
 ) -> DailyFeaturesRow | None:
     sleep_rows = conn.execute(
         """
@@ -606,17 +600,20 @@ def compute_daily_features(
     if not sleep_rows:
         return None
 
+    policy = provider_policy or load_sleep_provider_policy(policy_root)
     normalized_sleep_rows = [_sleep_night_from_db(row) for row in sleep_rows]
-    by_source = {row.source: row for row in normalized_sleep_rows}
+    eligible_sleep_rows = eligible_sleep_rows_for_v1(normalized_sleep_rows, policy)
+    by_source = {row.source: row for row in eligible_sleep_rows}
+    raw_by_source = {row.source: row for row in normalized_sleep_rows}
     oura_row = by_source.get("oura")
-    eight_row = by_source.get("8sleep")
+    eight_row = raw_by_source.get("8sleep")
 
     total_sleep_min, total_sleep_delta_min, sleep_warning = _choose_total_sleep_minutes(
         oura_row,
         eight_row,
     )
-    deep_sleep_pct, stage_source = _choose_stage_metrics(oura_row, eight_row)
-    hrv_avg_ms, hrv_source, hrv_merge_method = _choose_hrv_source(oura_row, eight_row)
+    deep_sleep_pct, stage_source = _choose_stage_metrics(oura_row)
+    hrv_avg_ms, hrv_source, hrv_merge_method = _choose_hrv_source(oura_row)
     hrv_z, hrv_z_method = _compute_hrv_z(
         conn,
         source=hrv_source or "oura",
@@ -655,8 +652,7 @@ def compute_daily_features(
             hrv_z_method=hrv_z_method,
             feature_version=feature_version,
             prior_day_feeling_imputed=prior_day_feeling_imputed,
-            sleep_source_count=int(diagnostics_row.oura_present or False)
-            + int(diagnostics_row.eight_present or False),
+            sleep_source_count=1 if diagnostics_row.oura_present else None,
             sleep_merge_warning=sleep_warning,
             computed_at_utc=computed_at,
         ),

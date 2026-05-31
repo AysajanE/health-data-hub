@@ -1,17 +1,13 @@
 {
-  "active_run": {
-    "run_id": "RUN_20260530T191329Z_40064d103fdf412db1150e69ef247613",
-    "slice": "S04",
-    "started_at": "2026-05-30T15:39:32-04:00"
-  },
+  "active_run": null,
   "active_swr_run": null,
   "completed_slices": [
     "S01",
     "S02",
     "S03"
   ],
-  "current_slice": "S04",
-  "last_event_id": 602,
+  "current_slice": null,
+  "last_event_id": 604,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [

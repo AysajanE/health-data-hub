@@ -2,6 +2,8 @@
   "candidate_repo_paths": [
     "/",
     "data/warehouse.duckdb",
+    "src/warehouse/features.py",
+    "src/warehouse/warehouse.py",
     "models/eval.jsonl",
     "Library/Logs/healthhub.log",
     "data/secrets/oura_tokens.json",
@@ -9,13 +11,12 @@
     "data/secrets/eight_session.json",
     "data/.healthhub.lock",
     "scripts/setup_permissions.py",
-    "src/warehouse/features.py",
     "tests/test_features.py",
     "docs/evidence/s04-feature-engineering-command-evidence.json",
     "scripts/verify_s04_readiness.py",
     "scripts/check_no_tracked_data.py"
   ],
-  "compiled_at": "2026-05-30T19:13:28+00:00",
+  "compiled_at": "2026-05-31T19:25:54+00:00",
   "constraints": [
     "**Personal use first.** No multi-tenant infra, no compliance gates, no scale concerns.",
     "**Local-first / user-owned data.** No cloud lock-in, no third-party data brokers. DuckDB on the user's Mac. Backups to iCloud Drive (encrypted with `age`, or via Advanced Data Protection).",
@@ -39,7 +40,7 @@
     "`hrv_z` must be prior-only and persisted.",
     "No sleep forward-fill for training.",
     "Mood labels are never imputed.",
-    "8 Sleep values must not be averaged, blended, or reconciled into v1 features."
+    "8 Sleep values must not be averaged, blended, reconciled, used as fallback HRV, used as fallback sleep stage source, or counted as an active sleep source unless a future explicit provider-reopening slice supersedes S03."
   ],
   "external_dependency_hints": [
     "open wearables",
@@ -51,6 +52,8 @@
   "implementation_tasks": [
     {
       "files": [
+        "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "notes": "",
@@ -64,6 +67,7 @@
     {
       "files": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "notes": "",
@@ -76,6 +80,7 @@
     {
       "files": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "notes": "",
@@ -88,6 +93,7 @@
     {
       "files": [
         "src/warehouse/features.py",
+        "src/warehouse/warehouse.py",
         "tests/test_features.py"
       ],
       "notes": "",
@@ -124,22 +130,22 @@
   "schema_version": "gstack_plan_ir_v1",
   "source_artifacts": [
     {
-      "byte_size": 97733,
+      "byte_size": 97675,
       "kind": "office_hours",
       "path": "docs/gstack/health-data-hub-office-hours.md",
-      "sha256": "548af49f81b7063427df5bd1758ac6c0d5a38d985d04ca5a3c23120eb605229e"
+      "sha256": "38d94a48e0c5e7f2f883cccccec52a930452eb62ff04144e098754fdf94fcffa"
     },
     {
-      "byte_size": 4536,
+      "byte_size": 5365,
       "kind": "autoplan",
       "path": "docs/gstack/s04-feature-engineering-autoplan.md",
-      "sha256": "c38528c9bda2264e6e88384cb6e02028ab5f36469fe58015991ecbd5e14d68af"
+      "sha256": "5e4c6f627573be71f4eb16d5c04bd4c7d4c1fa4d1d5bb1cb9df6375995df3710"
     },
     {
-      "byte_size": 2231,
+      "byte_size": 2748,
       "kind": "approved_brief",
       "path": "docs/briefs/s04-feature-engineering.autonomous-brief.md",
-      "sha256": "6f4215a78823d1bda9a7fd31304ff7d51bab93a82562b1e4844dc6b5f3850725"
+      "sha256": "ac3ce37bd5b1a0068e28d455f7ae4ddbf46d6995f0a695bb96005a6331be1970"
     }
   ],
   "stack_profile": {

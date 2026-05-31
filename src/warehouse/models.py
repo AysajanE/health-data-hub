@@ -27,8 +27,8 @@ HrvZMethod = Literal[
     "prior_28d_std_fallback",
     "prior_expanding_min7_std_fallback",
 ]
-HrvMergeMethod = Literal["oura_primary", "eight_fallback", "missing"]
-StageSource = Literal["oura", "eight"]
+HrvMergeMethod = Literal["oura_primary", "missing"]
+StageSource = Literal["oura"]
 
 
 def _normalize_utc(value: datetime | None) -> datetime | None:

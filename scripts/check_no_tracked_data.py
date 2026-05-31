@@ -21,7 +21,9 @@ FORBIDDEN_PATH_RE = re.compile(
 )
 
 SECRET_CONTENT_RE = re.compile(
-    r"(?i)\b(access_token|refresh_token|mood_token|x-mood-token|client_secret|password|authorization)\b"
+    r"(?i)\b(access_token|refresh_token|mood_token|x-mood-token|client_secret|password|authorization|"
+    r"pyeight_email|pyeight_password|pyeight_client_id|pyeight_client_secret|"
+    r"eight_sleep_token|eight_sleep_password)\b"
     r"[ \t]*[:=][ \t]*['\"]?(?P<value>[A-Za-z0-9_\-./+=]{16,})"
 )
 
