@@ -1,0 +1,21 @@
+{
+  "closure_evidence": "docs/evidence/s04-ship-readiness-private-evidence-handoff-repair-20260531.md",
+  "item_checkpoint_ancestry_proof": "old_run_branch_head is the merge-base of the retargeted descendant; the descendant adds only S04 readiness verifier/test hardening after PO passed all five items",
+  "merge_base": "ae2eaf21138649184d24481eeb52844aa4127349",
+  "new_target_commit": "6d2eb8eaa1e02229cb917c0485840c4ab9602fca",
+  "old_run_branch_head": "ae2eaf21138649184d24481eeb52844aa4127349",
+  "reason": "Detached ship validation for S04 failed because S04 readiness required untracked private S03 Oura evidence; retarget to a descendant that accepts completed-S03 tracked handoff while preserving S03 private-evidence requirements",
+  "repaired_files": [
+    "scripts/verify_s04_readiness.py",
+    "tests/autonomy/test_verify_scripts.py"
+  ],
+  "run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
+  "skipped_item_count": 0,
+  "slice": "S04",
+  "terminal_counts_after": {
+    "ST130_PASSED": 5
+  },
+  "terminal_counts_before": {
+    "ST130_PASSED": 5
+  }
+}

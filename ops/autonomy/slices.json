@@ -129,16 +129,18 @@
       "S02",
       "S03"
     ],
+    "failure_path": "ops/autonomy/failures/S04-agent_false_done-20260531T173653-0400-2393b10b.md",
     "id": "S04",
     "lane": "compiler",
     "name": "Feature engineering",
     "playbook": "docs/playbooks/s04-feature-engineering.playbook.md",
     "required": true,
-    "retry_count": 0,
+    "retry_count": 1,
     "risk": "medium",
+    "run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
     "slug": "s04-feature-engineering",
-    "status": "pending",
-    "updated_at": "2026-05-31T15:27:30-04:00"
+    "status": "replan_required",
+    "updated_at": "2026-05-31T17:36:53-04:00"
   },
   {
     "acceptance": [
