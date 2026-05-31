@@ -9,7 +9,7 @@ import tempfile
 from uuid import uuid4
 
 from scripts.verify_s04_readiness import verify_s04_readiness
-from src.warehouse.features import SleepProviderPolicy
+from src.warehouse.features import SleepProviderPolicy, load_sleep_provider_policy
 from src.warehouse.warehouse import compute_daily_features, connect_duckdb, insert_mood_entry, insert_sleep_night
 
 
@@ -290,3 +290,37 @@ def test_conflicting_provider_decisions_fail_s04_readiness() -> None:
         assert report["status"] == "error"
         joined = "\n".join(report["errors"])
         assert "provider decision invalid" in joined or "exactly fallback_active" in joined
+
+
+def test_compute_daily_features_loads_active_s03_provider_decision_from_policy_root() -> None:
+    feature_date = date(2026, 5, 26)
+
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        _write_s04_readiness_fixture(root)
+        policy = load_sleep_provider_policy(root)
+
+        conn = connect_duckdb(":memory:", apply_schema=True)
+        try:
+            _insert_prior_mood(conn, feature_date)
+            insert_sleep_night(
+                conn,
+                _sleep_payload("oura", feature_date, total_sleep_min=410, deep_min=82, hrv_avg_ms=41.0),
+            )
+            insert_sleep_night(
+                conn,
+                _sleep_payload("8sleep", feature_date, total_sleep_min=490, deep_min=150, hrv_avg_ms=74.0),
+            )
+
+            row = compute_daily_features(conn, feature_date, policy_root=root)
+        finally:
+            conn.close()
+
+    assert policy.active_sleep_source == "oura"
+    assert policy.eight_sleep_state == "fallback_active"
+    assert policy.decision_paths == ("ops/autonomy/decisions/S03-pyeight-fallback.json",)
+    assert row is not None
+    assert row.total_sleep_min == 410
+    assert row.deep_sleep_pct == 82 / 410
+    assert row.hrv_avg_ms == 41.0
+    assert row.sleep_merge_warning == "8sleep_fallback_ignored"

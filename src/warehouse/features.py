@@ -16,6 +16,7 @@ class SleepProviderPolicy:
     active_sleep_source: str
     eight_sleep_state: str
     eight_sleep_allowed_for_features: bool = False
+    decision_paths: tuple[str, ...] = ()
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
@@ -71,10 +72,13 @@ def load_sleep_provider_policy(root: Path = REPO_ROOT) -> SleepProviderPolicy:
             raise ValueError(f"8 Sleep include decision is not valid for v1 fallback-only policy: {include_names}")
         raise ValueError("missing active S03 8 Sleep fallback decision")
 
+    decision_paths = tuple(str(path.relative_to(root)) for path in active_fallback_paths)
+
     return SleepProviderPolicy(
         active_sleep_source="oura",
         eight_sleep_state="fallback_active",
         eight_sleep_allowed_for_features=False,
+        decision_paths=decision_paths,
     )
 
 
