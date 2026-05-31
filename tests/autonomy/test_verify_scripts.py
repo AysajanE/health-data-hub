@@ -989,6 +989,75 @@ class VerifyScriptsTests(unittest.TestCase):
             self.assertEqual(report["status"], "error")
             self.assertTrue(any("S04 brief" in error for error in report["errors"]))
 
+    def test_verify_s04_readiness_accepts_completed_s03_handoff_without_private_oura_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / ".gitignore").write_text("private/\ndata/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
+            (root / "ops/autonomy/decisions").mkdir(parents=True)
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text("", encoding="utf-8")
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {"id": "S01", "status": "complete", "required": True},
+                    {"id": "S02", "status": "complete", "required": True},
+                    {
+                        "id": "S03",
+                        "status": "complete",
+                        "required": True,
+                        "ship_branch": "ship/s03",
+                        "ship_commit": "",
+                        "review_artifacts": ["docs/reviews/s03-autonomous-ingestion-evidence-review.md"],
+                    },
+                    {"id": "S04", "status": "pending", "required": True},
+                ],
+            )
+            (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            ship_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, stdout=subprocess.PIPE, check=True).stdout.strip()
+            subprocess.run(["git", "branch", "ship/s03", ship_commit], cwd=root, check=True)
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            slices[2]["ship_commit"] = ship_commit
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            write_json_atomic(root / "ops/autonomy/decisions/S03-pyeight-fallback.json", provider_decision_payload(root))
+            summary = root / "docs/evidence/ingestion/s03-ingestion-evidence.md"
+            summary.parent.mkdir(parents=True)
+            summary.write_text("direct_oura_api_v2_periodic_pull\noura_only_v1\n", encoding="utf-8")
+            addendum = root / "docs/evidence/S03-8sleep-provider-status-addendum-20260531.md"
+            addendum.write_text(
+                "8 Sleep remains fallback-only\n"
+                "Oura direct API v2 remains the first-class sleep provider\n"
+                "8 Sleep values must not be averaged, blended, reconciled, used as fallback HRV\n",
+                encoding="utf-8",
+            )
+            s04_rule = (
+                "active S03 provider decision\n"
+                "Oura-only v1\n"
+                "must not require pyEight evidence\n"
+                "8 Sleep must remain absent/fallback\n"
+                "feature construction must ignore 8 Sleep rows\n"
+                "used as fallback HRV\n"
+            )
+            brief = root / "docs/briefs/s04-feature-engineering.autonomous-brief.md"
+            brief.parent.mkdir(parents=True)
+            brief.write_text(s04_rule, encoding="utf-8")
+            autoplan = root / "docs/gstack/s04-feature-engineering-autoplan.md"
+            autoplan.parent.mkdir(parents=True)
+            autoplan.write_text(s04_rule, encoding="utf-8")
+
+            s03_report = verify_s03_readiness(root)
+            self.assertEqual(s03_report["status"], "error")
+            self.assertTrue(any("Oura evidence preflight" in error for error in s03_report["errors"]))
+
+            s04_report = verify_s04_readiness(root)
+
+            self.assertEqual(s04_report["status"], "ok", s04_report)
+            self.assertTrue(s04_report["checks"]["s03_completed_tracked_handoff"])
+            self.assertTrue(any("private Oura evidence is absent" in warning for warning in s04_report["warnings"]))
+
     def test_ship_invariants_require_detached_worktree_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

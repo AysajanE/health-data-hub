@@ -17,6 +17,11 @@ from scripts.validate_provider_decisions import validate_provider_decisions
 from scripts.verify_s03_readiness import verify_s03_readiness
 
 
+S03_PRIVATE_OURA_EVIDENCE_ERROR = (
+    "Oura evidence preflight is missing or not ok and no open blocked_external_missing_evidence failure is recorded"
+)
+
+
 def load_json(path: Path, default: Any) -> Any:
     if not path.exists():
         return default
@@ -78,6 +83,21 @@ def has_completed_provider_reopening_slice(by_id: dict[str, Any]) -> bool:
     return any(by_id.get(slice_id, {}).get("status") == "complete" for slice_id in ("S03B", "S10"))
 
 
+def s03_readiness_ok_for_s04_handoff(s03_readiness: dict[str, Any], s03_status: str | None) -> bool:
+    """S04 consumes S03's tracked completion contract, not private provider payloads.
+
+    S03 launch readiness must still require real private Oura evidence. Once S03 is
+    complete, S04 ship validation can run from a detached worktree where
+    private/evidence is intentionally absent. Only that private-evidence absence is
+    allowed here; all other S03 readiness errors remain blocking.
+    """
+
+    if s03_status != "complete":
+        return False
+    errors = list(s03_readiness.get("errors") or [])
+    return errors == [S03_PRIVATE_OURA_EVIDENCE_ERROR]
+
+
 def verify_s04_readiness(root: Path) -> dict[str, Any]:
     root = root.resolve()
     errors: list[str] = []
@@ -108,10 +128,18 @@ def verify_s04_readiness(root: Path) -> dict[str, Any]:
         elif branch_head != ship_commit:
             errors.append(f"S03 ship_branch points to {branch_head} but slices.json records {ship_commit}")
 
+    s03_status = by_id.get("S03", {}).get("status")
     s03_readiness = verify_s03_readiness(root)
     checks["s03_readiness_status"] = s03_readiness["status"]
+    checks["s03_completed_tracked_handoff"] = False
     if s03_readiness["status"] != "ok":
-        errors.extend(f"S03 readiness failed: {error}" for error in s03_readiness["errors"])
+        if s03_readiness_ok_for_s04_handoff(s03_readiness, s03_status):
+            checks["s03_completed_tracked_handoff"] = True
+            warnings.append(
+                "S03 private Oura evidence is absent; accepting completed S03 tracked handoff for S04 readiness"
+            )
+        else:
+            errors.extend(f"S03 readiness failed: {error}" for error in s03_readiness["errors"])
 
     provider_decisions = validate_provider_decisions(root, "S03")
     checks["s03_provider_decisions_status"] = provider_decisions["status"]
