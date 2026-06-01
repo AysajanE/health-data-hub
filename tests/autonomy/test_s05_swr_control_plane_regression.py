@@ -83,6 +83,18 @@ class S05SWRControlPlaneRegressionTests(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertIn("prior sidecars", result.stderr)
 
+    def test_repair_cycle_id_matches_review_decision_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            configure_s05_repair(root)
+            op = AutoKeel(root=root, dry_run=True)
+            s05 = next(item for item in op.load_slices() if item["id"] == "S05")
+
+            cycle_id = op.swr_repair_cycle_id(s05, "source_authority_map")
+
+            self.assertRegex(cycle_id, r"^[a-z0-9][a-z0-9._-]{0,127}$")
+
     def test_budget_checkpoint_required_for_control_plane_overage(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

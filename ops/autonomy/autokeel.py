@@ -781,6 +781,8 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
 
         root_counts: dict[str, int] = {}
         for row in evidence_closed_rows:
+            if self.repair_budget_scope(row) != "product_or_playbook":
+                continue
             root_cause = self.root_cause_budget_key(row)
             root_counts[root_cause] = root_counts.get(root_cause, 0) + 1
         repeated_roots = sorted(f"{key}={value}" for key, value in root_counts.items() if value > max_closed_same_root)
@@ -2650,7 +2652,7 @@ Additional validator requirements:
 
     def swr_review_repair_cycle_id(self, repair_plan: dict[str, Any], stage_id: str) -> str:
         created = str(repair_plan.get("created_at") or now_iso())
-        stamp = re.sub(r"[^A-Za-z0-9]+", "-", created).strip("-") or "repair"
+        stamp = re.sub(r"[^a-z0-9]+", "-", created.lower()).strip("-") or "repair"
         return f"{stage_id}_stage_review_repair_{stamp}"
 
     def swr_repair_cycle_id(self, slice_: dict[str, Any], stage_id: str) -> str:
@@ -2658,7 +2660,7 @@ Additional validator requirements:
         created_at = ""
         if isinstance(repair, dict):
             created_at = str(repair.get("created_at") or "")
-        safe_created = re.sub(r"[^0-9A-Za-z]+", "", created_at)[:32] or now_slug()
+        safe_created = re.sub(r"[^0-9a-z]+", "", created_at.lower())[:32] or now_slug().lower()
         return f"{stage_id}_stage_review_repair_{safe_created}"
 
     def swr_review_lane_dir(
