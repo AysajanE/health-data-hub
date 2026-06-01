@@ -2645,14 +2645,19 @@ Additional validator requirements:
         manifest_rel = slice_.get("swr_run_manifest")
         if not isinstance(manifest_rel, str) or not manifest_rel:
             return None
-        reason = str(slice_.get("reason") or "")
-        if not self.swr_review_failure_reason_is_repairable(reason):
-            return None
         manifest_path = self.repo_artifact_path(manifest_rel)
         if manifest_path is None or not manifest_path.exists() or manifest_path.name != "run_manifest.json":
             return None
         payload = read_json(manifest_path, {})
         if not isinstance(payload, dict) or payload.get("status") != "quarantined":
+            return None
+        reason = str(
+            slice_.get("reason")
+            or payload.get("quarantined_reason")
+            or payload.get("autokeel_quarantine_reason")
+            or "SWR review history failed closed for stored quarantined run"
+        )
+        if not self.swr_review_failure_reason_is_repairable(reason):
             return None
         repair_plan = self.plan_swr_review_repair(slice_, manifest_path, reason)
         if not isinstance(repair_plan, dict):

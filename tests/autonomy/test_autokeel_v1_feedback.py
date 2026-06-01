@@ -1657,13 +1657,14 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
             manifest_payload["status"] = "quarantined"
             manifest_payload["autokeel_quarantined"] = True
+            manifest_payload["quarantined_reason"] = "SWR independent review failed closed: reviewer decision contains blocking_issues"
             manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
             slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
             for item in slices:
                 if item["id"] == "S02":
-                    item["status"] = "blocked_compile_inputs"
+                    item["status"] = "replan_required"
                     item["swr_run_manifest"] = str(manifest.relative_to(root))
-                    item["reason"] = "SWR independent review failed closed: reviewer decision contains blocking_issues"
+                    item.pop("reason", None)
             write_json_atomic(root / "ops/autonomy/slices.json", slices)
 
             class NoFreshLaunchRunner:
