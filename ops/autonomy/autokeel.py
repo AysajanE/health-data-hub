@@ -1236,6 +1236,8 @@ Return only a Markdown autoplan suitable to save at:
         return None, None
 
     def swr_run_is_active(self, payload: dict[str, Any]) -> bool:
+        if payload.get("autokeel_quarantined"):
+            return False
         if str(payload.get("status", "")) in self.SWR_ACTIVE_RUN_STATUSES:
             return True
         stages = payload.get("stages")
@@ -1744,6 +1746,42 @@ and use the recorded `run_dir` and `repair_stage_id` with
         self.save_state(state)
         self.clear_swr_lease(slice_id, reason)
         self.log_event("active_swr_run_cleared", {"reason": reason}, slice_id=slice_id)
+
+    def quarantine_swr_manifest(self, slice_id: str, manifest_path: Path, reason: str) -> None:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            return
+        payload["autokeel_quarantined"] = True
+        payload["quarantined_at"] = now_iso()
+        payload["quarantined_reason"] = reason
+        payload["status"] = "quarantined"
+        write_json_atomic(manifest_path, payload)
+        self.log_event(
+            "swr_manifest_quarantined",
+            {"run_manifest": str(manifest_path.relative_to(self.root)), "reason": reason},
+            slice_id=slice_id,
+        )
+
+    def quarantine_related_swr_manifest(self, slice_: dict[str, Any], evidence_path: Path, reason: str) -> None:
+        candidates: list[Path] = []
+        if evidence_path.name == "run_manifest.json" and evidence_path.exists():
+            candidates.append(evidence_path)
+        state = self.load_state()
+        active = state.get("active_swr_run")
+        manifest_rel = active.get("run_manifest") if isinstance(active, dict) and active.get("slice") == slice_["id"] else None
+        if isinstance(manifest_rel, str) and manifest_rel:
+            candidates.append(self.root / manifest_rel)
+        seen: set[Path] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+                resolved.relative_to(self.root.resolve())
+            except ValueError:
+                continue
+            if resolved in seen or not resolved.exists():
+                continue
+            seen.add(resolved)
+            self.quarantine_swr_manifest(slice_["id"], resolved, reason)
 
     def clear_swr_validation_repair(self, slice_id: str) -> None:
         slices = self.load_slices()
@@ -2355,6 +2393,7 @@ Additional validator requirements:
             failure_path=str(failure.relative_to(self.root)),
             reason=reason,
         )
+        self.quarantine_related_swr_manifest(slice_, evidence_path, reason)
         self.clear_active_swr_run(slice_["id"], reason)
         return CommandResult([], 32, "", reason)
 

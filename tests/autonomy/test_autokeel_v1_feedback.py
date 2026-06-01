@@ -1470,6 +1470,10 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertIn("SWR review history failed closed", result.stderr)
             updated = next(item for item in op.load_slices() if item["id"] == "S02")
             self.assertEqual(updated["status"], "blocked_compile_inputs")
+            quarantined = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertTrue(quarantined["autokeel_quarantined"])
+            self.assertEqual(quarantined["status"], "quarantined")
+            self.assertIsNone(op.latest_swr_manifest_for_slice(slice_))
 
     def test_swr_review_bundle_reuse_rejects_different_response_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
