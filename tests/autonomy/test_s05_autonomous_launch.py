@@ -55,6 +55,30 @@ def set_completed_through_s04(root: Path) -> list[dict]:
     return slices
 
 
+def write_s05_lane_decision(root: Path, slices: list[dict]) -> None:
+    decision_path = root / "ops/autonomy/decisions/S05-lane-decision-test.json"
+    write_json_atomic(
+        decision_path,
+        {
+            "created_at": "2026-05-31T18:00:00-04:00",
+            "status": "accepted",
+            "slice": "S05",
+            "lane": "swr_preferred",
+            "decision": "use_swr",
+            "risk": "high",
+            "review_artifacts": [
+                "docs/reviews/s05-autonomous-model-gate-review.md",
+                "docs/reviews/s05-autonomous-statistical-validity-review.md",
+            ],
+            "commands": [{"command": "test fixture", "exit_code": 0}],
+            "verdict": "pass",
+        },
+    )
+    for item in slices:
+        if item["id"] == "S05":
+            item["lane_decision"] = "ops/autonomy/decisions/S05-lane-decision-test.json"
+
+
 class S05AutonomousLaunchTests(unittest.TestCase):
     def test_missing_s05_lane_decision_blocks_control_plane(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -106,6 +130,54 @@ class S05AutonomousLaunchTests(unittest.TestCase):
             report = verify_autokeel_invariants(root)
 
             self.assertFalse(any("S05" in error and "lane_decision" in error for error in report["errors"]))
+
+    def test_swr_review_repair_invariant_requires_existing_manifest_and_blocked_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slices = set_completed_through_s04(root)
+            write_s05_lane_decision(root, slices)
+            for item in slices:
+                if item["id"] == "S05":
+                    item["status"] = "waiting_for_playbook"
+                    item["swr_review_repair"] = {
+                        "repair_action": "rerun_review_lane",
+                        "repair_stage_id": "source_authority_map",
+                        "run_dir": ".local/autokeel/swr/runs/missing",
+                        "run_manifest": ".local/autokeel/swr/runs/missing/run_manifest.json",
+                        "stage_artifact_errors": [],
+                    }
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+
+            report = verify_autokeel_invariants(root)
+
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("swr_review_repair exists while slice is not blocked_compile_inputs" in error for error in report["errors"]))
+            self.assertTrue(any("swr_review_repair missing existing run_manifest" in error for error in report["errors"]))
+
+    def test_swr_review_repair_invariant_rejects_stage_rerun_without_source_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slices = set_completed_through_s04(root)
+            write_s05_lane_decision(root, slices)
+            run_dir = root / ".local/autokeel/swr/runs/s05-repair-test"
+            write_json_atomic(run_dir / "run_manifest.json", {"run_id": "run_s05_repair_test"})
+            for item in slices:
+                if item["id"] == "S05":
+                    item["status"] = "blocked_compile_inputs"
+                    item["swr_review_repair"] = {
+                        "repair_action": "rerun_single_stage",
+                        "repair_stage_id": "repo_grounding",
+                        "run_dir": ".local/autokeel/swr/runs/s05-repair-test",
+                        "run_manifest": ".local/autokeel/swr/runs/s05-repair-test/run_manifest.json",
+                    }
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+
+            report = verify_autokeel_invariants(root)
+
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("single-stage review repair missing source_review_bundle" in error for error in report["errors"]))
 
     def test_s05_readiness_fails_closed_without_swr_auth(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

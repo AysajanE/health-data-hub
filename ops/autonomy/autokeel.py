@@ -1510,6 +1510,53 @@ Return only a Markdown autoplan suitable to save at:
                 return stage
         return {}
 
+    def swr_stage_index(self, payload: dict[str, Any], stage_id: str) -> int | None:
+        stage_order = payload.get("stage_order")
+        if isinstance(stage_order, list) and stage_id in stage_order:
+            return stage_order.index(stage_id)
+        for index, stage in enumerate(payload.get("stages", []) if isinstance(payload.get("stages"), list) else []):
+            if isinstance(stage, dict) and stage.get("stage_id") == stage_id:
+                return index
+        return None
+
+    def swr_stage_response_artifact_errors(self, payload: dict[str, Any], stage_id: str) -> list[str]:
+        stage = self.swr_stage_summary(payload, stage_id)
+        if not stage:
+            return [f"{stage_id}: stage summary is missing"]
+        errors: list[str] = []
+        checkpoint: dict[str, Any] = {}
+        checkpoint_path = self.repo_artifact_path(str(stage.get("checkpoint_path") or ""))
+        if checkpoint_path is not None and checkpoint_path.exists():
+            checkpoint_payload = read_json(checkpoint_path, {})
+            checkpoint = checkpoint_payload if isinstance(checkpoint_payload, dict) else {}
+        response_completed = stage.get("response_status") == "completed" or checkpoint.get("terminal") is True
+        if not response_completed:
+            errors.append(f"{stage_id}: response is not recorded as completed")
+        stage_dir = str(stage.get("stage_dir") or "")
+        for label, rel_key, final_key, sha_key, extension in (
+            ("response markdown", "response_markdown_path", "response_final_markdown_path", "response_markdown_sha256", "md"),
+            ("response JSON", "response_json_path", "response_final_json_path", "response_json_sha256", "json"),
+        ):
+            rel = stage.get(rel_key) or stage.get(final_key)
+            if not rel and stage_dir:
+                rel = f"{stage_dir}/response.final.{extension}"
+            if not isinstance(rel, str) or not rel:
+                errors.append(f"{stage_id}: {label} path is missing")
+                continue
+            path = self.repo_artifact_path(rel)
+            if path is None or not path.exists():
+                errors.append(f"{stage_id}: {label} artifact is missing or outside repo")
+                continue
+            expected = stage.get(sha_key)
+            if not isinstance(expected, str) or not expected:
+                errors.append(f"{stage_id}: {label} sha256 is missing")
+            elif expected != file_sha256(path):
+                errors.append(f"{stage_id}: {label} sha256 does not match manifest")
+        return errors
+
+    def swr_stage_response_artifacts_valid(self, payload: dict[str, Any], stage_id: str) -> bool:
+        return not self.swr_stage_response_artifact_errors(payload, stage_id)
+
     def swr_stage_response_text(self, manifest_path: Path, stage_id: str) -> str:
         payload = read_json(manifest_path, {})
         if not isinstance(payload, dict):
@@ -1794,6 +1841,115 @@ and use the recorded `run_dir` and `repair_stage_id` with
         if changed:
             self.save_slices(slices)
             self.log_event("swr_validation_repair_cleared", {}, slice_id=slice_id)
+
+    def clear_swr_review_repair(self, slice_id: str) -> None:
+        slices = self.load_slices()
+        changed = False
+        for item in slices:
+            if item.get("id") == slice_id and "swr_review_repair" in item:
+                item.pop("swr_review_repair", None)
+                changed = True
+                break
+        if changed:
+            self.save_slices(slices)
+            self.log_event("swr_review_repair_cleared", {}, slice_id=slice_id)
+
+    def swr_review_repair_authorized_by_policy(self, slice_: dict[str, Any], repair_plan: dict[str, Any]) -> tuple[bool, str]:
+        policy = self.authorization_policy.get("swr_review_history_repair", {})
+        if not isinstance(policy, dict) or not bool(policy.get("auto_authorized", False)):
+            return False, "SWR review-history repair is not auto-authorized"
+        manifest_rel = repair_plan.get("run_manifest")
+        if bool(policy.get("require_existing_run_manifest", True)):
+            if not isinstance(manifest_rel, str) or not manifest_rel or not (self.root / manifest_rel).exists():
+                return False, "required SWR run manifest is missing"
+        stage_id = str(repair_plan.get("repair_stage_id") or "")
+        allowed = policy.get("require_repair_stage_id")
+        if isinstance(allowed, list) and allowed and stage_id not in {str(item) for item in allowed}:
+            return False, f"repair_stage_id is not policy-allowed: {stage_id}"
+        if (
+            repair_plan.get("repair_action") == "rerun_single_stage"
+            and bool(policy.get("require_existing_review_bundle_for_stage_rerun", True))
+            and repair_plan.get("source_review_stage_id") is not None
+        ):
+            bundle_rel = repair_plan.get("source_review_bundle")
+            if not isinstance(bundle_rel, str) or not bundle_rel or not (self.root / bundle_rel).exists():
+                return False, "required source SWR review bundle is missing"
+        max_total = int(policy.get("max_repairs_per_slice", 4))
+        max_stage = int(policy.get("max_repairs_per_stage", 2))
+        repairs = [
+            event
+            for event in iter_jsonl(self.events_path)
+            if event.get("slice") == slice_["id"] and event.get("event") in {"swr_review_repair_lane_passed", "swr_review_repair_stage_passed"}
+        ]
+        if len(repairs) >= max_total:
+            return False, "SWR review repair count exceeds policy"
+        same_stage = [
+            event
+            for event in repairs
+            if isinstance(event.get("details"), dict) and event["details"].get("repair_stage_id") == stage_id
+        ]
+        if len(same_stage) >= max_stage:
+            return False, "same-stage SWR review repair count exceeds policy"
+        return True, "policy-authorized same-run SWR review repair"
+
+    def reset_swr_manifest_for_review_repair(self, manifest_path: Path, stage_id: str) -> None:
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            raise AutoKeelError(f"invalid SWR manifest: {manifest_path}")
+        stages = payload.get("stages")
+        if not isinstance(stages, list):
+            raise AutoKeelError(f"SWR manifest has no stages: {manifest_path}")
+        target_index = self.swr_stage_index(payload, stage_id)
+        if target_index is None:
+            raise AutoKeelError(f"SWR stage not found in manifest: {stage_id}")
+        stale_downstream_keys = {
+            "approved_from_status",
+            "checkpoint_path",
+            "input_manifest_json_path",
+            "input_manifest_markdown_path",
+            "response_id",
+            "response_status",
+            "response_latest_json_path",
+            "response_markdown_path",
+            "response_markdown_sha256",
+            "response_json_path",
+            "response_json_sha256",
+            "review_approved",
+            "review_bundle_path",
+            "sidecar_response_json_path",
+            "sidecar_response_json_sha256",
+            "sidecar_response_markdown_path",
+            "sidecar_response_markdown_sha256",
+            "structured_output_path",
+            "structured_output_sha256",
+            "token_preflight_path",
+            "token_preflight_error_path",
+        }
+        for index, stage in enumerate(stages):
+            if not isinstance(stage, dict):
+                continue
+            if index < target_index:
+                continue
+            if index == target_index:
+                stage.pop("approved_from_status", None)
+                stage.pop("review_approved", None)
+                stage.pop("review_bundle_path", None)
+                stage["status"] = "waiting_for_review"
+                continue
+            for key in stale_downstream_keys:
+                stage.pop(key, None)
+            stage["status"] = "prepared"
+        payload.pop("autokeel_quarantined", None)
+        payload.pop("autokeel_quarantine_reason", None)
+        payload.pop("quarantined_at", None)
+        payload.pop("quarantined_reason", None)
+        payload["status"] = "waiting_for_review"
+        payload["current_stage_id"] = stage_id
+        write_json_atomic(manifest_path, payload)
+        self.log_event(
+            "swr_review_repair_manifest_reset",
+            {"run_manifest": str(manifest_path.resolve().relative_to(self.root)), "stage_id": stage_id},
+        )
 
     def handle_swr_playbook_validation_failure(self, slice_: dict[str, Any], validation: CommandResult) -> int:
         source = self.swr_materialization_source_for_slice(slice_)
@@ -2293,6 +2449,10 @@ Additional validator requirements:
             for key in stale_keys:
                 stage.pop(key, None)
             stage["status"] = "prepared"
+        payload.pop("autokeel_quarantined", None)
+        payload.pop("autokeel_quarantine_reason", None)
+        payload.pop("quarantined_at", None)
+        payload.pop("quarantined_reason", None)
         payload["status"] = "created"
         payload["current_stage_id"] = stage_id
         write_json_atomic(manifest_path, payload)
@@ -2379,12 +2539,18 @@ Additional validator requirements:
         return path
 
     def swr_review_failure(self, slice_: dict[str, Any], evidence_path: Path, reason: str) -> CommandResult:
+        manifest_path = evidence_path if evidence_path.name == "run_manifest.json" else self.active_swr_manifest_from_state(slice_) or self.latest_swr_manifest_for_slice(slice_)
+        repair_plan = self.plan_swr_review_repair(slice_, manifest_path, reason) if manifest_path is not None else None
         failure = self.record_failure(
             slice_["id"],
             "audit_failure",
             "high",
             "SWR supervisor review did not satisfy the fail-closed review-bundle contract.",
-            "Stopped before creating or reusing a review bundle and before launching the next SWR stage.",
+            (
+                "Stopped before creating or reusing a review bundle and planned a same-run SWR review repair."
+                if isinstance(repair_plan, dict) and repair_plan.get("repair_action") in {"rerun_review_lane", "rerun_single_stage"}
+                else "Stopped before creating or reusing a review bundle and before launching the next SWR stage."
+            ),
             evidence_path,
         )
         self.mark_slice_status(
@@ -2392,10 +2558,106 @@ Additional validator requirements:
             "blocked_compile_inputs",
             failure_path=str(failure.relative_to(self.root)),
             reason=reason,
+            **({"swr_review_repair": repair_plan} if isinstance(repair_plan, dict) else {}),
         )
-        self.quarantine_related_swr_manifest(slice_, evidence_path, reason)
+        if isinstance(repair_plan, dict) and repair_plan.get("repair_action") in {"rerun_review_lane", "rerun_single_stage"}:
+            self.log_event("swr_review_repair_planned", repair_plan, slice_id=slice_["id"])
+        else:
+            self.quarantine_related_swr_manifest(slice_, evidence_path, reason)
         self.clear_active_swr_run(slice_["id"], reason)
         return CommandResult([], 32, "", reason)
+
+    def plan_swr_review_repair(self, slice_: dict[str, Any], manifest_path: Path | None, reason: str) -> dict[str, Any] | None:
+        if manifest_path is not None and not manifest_path.is_absolute():
+            manifest_path = self.root / manifest_path
+        if manifest_path is None or not manifest_path.exists():
+            return None
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict):
+            return None
+
+        findings = self.swr_review_history_findings(slice_, payload)
+        target_stage_id = str(findings[0].get("stage_id") or "") if findings else str(payload.get("current_stage_id") or "")
+        if not target_stage_id:
+            return None
+        target_index = self.swr_stage_index(payload, target_stage_id)
+        if target_index is None:
+            return None
+        stages = payload.get("stages") if isinstance(payload.get("stages"), list) else []
+        downstream = [
+            str(stage.get("stage_id"))
+            for index, stage in enumerate(stages)
+            if index > target_index and isinstance(stage, dict) and stage.get("stage_id")
+        ]
+        artifact_errors = self.swr_stage_response_artifact_errors(payload, target_stage_id)
+        source_review_stage_id = str(stages[target_index - 1].get("stage_id")) if target_index > 0 and isinstance(stages[target_index - 1], dict) else None
+        source_review_bundle = (
+            self.swr_review_bundle_for_stage(slice_, manifest_path, source_review_stage_id)
+            if source_review_stage_id is not None
+            else None
+        )
+        if not artifact_errors:
+            repair_action = "rerun_review_lane"
+            rationale = "The stage response artifacts are complete and hash-stable; rerun only the supervisor review lane and reset downstream stages that consumed the tainted handoff."
+        elif target_index == 0 or source_review_bundle:
+            repair_action = "rerun_single_stage"
+            rationale = "The stage output is not safely reviewable; rerun this stage and reset downstream stages only."
+        else:
+            repair_action = "blocked_pending_review_bundle"
+            rationale = "The stage output is not safely reviewable and the prior approved review bundle needed for a same-run stage rerun is missing."
+        return {
+            "created_at": now_iso(),
+            "status": "planned",
+            "reason": reason,
+            "repair_action": repair_action,
+            "repair_stage_id": target_stage_id,
+            "source_review_stage_id": source_review_stage_id,
+            "source_review_bundle": source_review_bundle,
+            "run_id": payload.get("run_id"),
+            "run_dir": payload.get("run_dir") or str(manifest_path.parent.relative_to(self.root)),
+            "run_manifest": str(manifest_path.relative_to(self.root)),
+            "review_history_findings": findings,
+            "stage_artifact_errors": artifact_errors,
+            "stale_downstream_stage_ids": downstream,
+            "rationale": rationale,
+        }
+
+    def swr_review_failure_reason_is_repairable(self, reason: str) -> bool:
+        normalized = reason.lower()
+        return "swr review history failed closed" in normalized or "swr independent review failed closed" in normalized
+
+    def plan_stored_swr_review_repair(self, slice_: dict[str, Any]) -> CommandResult | None:
+        manifest_rel = slice_.get("swr_run_manifest")
+        if not isinstance(manifest_rel, str) or not manifest_rel:
+            return None
+        reason = str(slice_.get("reason") or "")
+        if not self.swr_review_failure_reason_is_repairable(reason):
+            return None
+        manifest_path = self.repo_artifact_path(manifest_rel)
+        if manifest_path is None or not manifest_path.exists() or manifest_path.name != "run_manifest.json":
+            return None
+        payload = read_json(manifest_path, {})
+        if not isinstance(payload, dict) or payload.get("status") != "quarantined":
+            return None
+        repair_plan = self.plan_swr_review_repair(slice_, manifest_path, reason)
+        if not isinstance(repair_plan, dict):
+            return None
+        if repair_plan.get("repair_action") not in {"rerun_review_lane", "rerun_single_stage", "blocked_pending_review_bundle"}:
+            return None
+        self.mark_slice_status(
+            slice_["id"],
+            "blocked_compile_inputs",
+            failure_path=slice_.get("failure_path"),
+            reason=reason,
+            swr_review_repair=repair_plan,
+        )
+        self.log_event("swr_review_repair_planned_from_stored_manifest", repair_plan, slice_id=slice_["id"])
+        return CommandResult(
+            [],
+            32,
+            "",
+            "SWR review repair planned from stored quarantined run; rerun AutoKeel to execute the repair without a fresh full SWR launch.",
+        )
 
     def current_swr_stage(self, payload: dict[str, Any]) -> dict[str, Any]:
         current_stage_id = payload.get("current_stage_id")
@@ -2562,13 +2824,14 @@ Additional validator requirements:
             payload=payload,
         )
 
-    def swr_review_bundle_is_valid(self, bundle_path: Path, payload: dict[str, Any]) -> bool:
+    def swr_review_bundle_validation_errors(self, bundle_path: Path, payload: dict[str, Any]) -> list[str]:
         bundle = read_json(bundle_path, {})
         if not isinstance(bundle, dict):
-            return False
+            return [f"{bundle_path.relative_to(self.root)} is not a JSON object"]
         stage_id = str(payload.get("current_stage_id") or "")
         run_id = str(payload.get("run_id") or "")
         stage = self.current_swr_stage(payload)
+        errors: list[str] = []
         required_fields = {
             "run_id",
             "stage_id",
@@ -2579,29 +2842,32 @@ Additional validator requirements:
             "consolidated_verdict",
             "accepted_at",
         }
-        if not required_fields.issubset(bundle.keys()):
-            return False
+        missing = sorted(required_fields - set(bundle.keys()))
+        if missing:
+            errors.append(f"review bundle missing required fields: {', '.join(missing)}")
         if str(bundle.get("run_id") or "") != run_id:
-            return False
+            errors.append("review bundle run_id does not match current SWR run")
         if str(bundle.get("stage_id") or "") != stage_id:
-            return False
+            errors.append("review bundle stage_id does not match current SWR stage")
         if str(bundle.get("response_id") or "") != str(stage.get("response_id") or ""):
-            return False
+            errors.append("review bundle response_id does not match current SWR stage")
         if bundle.get("consolidated_verdict") != "pass":
-            return False
+            errors.append("review bundle consolidated_verdict must be pass")
         reviewers = bundle.get("reviewer_results")
         if not isinstance(reviewers, list):
-            return False
-        required_reviewers = {"operator_codex", "codex_review_agent", "claude_review_agent"}
-        reviewer_map = {str(item.get("reviewer")): str(item.get("verdict")) for item in reviewers if isinstance(item, dict)}
-        if any(reviewer_map.get(reviewer) != "pass" for reviewer in required_reviewers):
-            return False
+            errors.append("review bundle reviewer_results must be a list")
+        else:
+            required_reviewers = {"operator_codex", "codex_review_agent", "claude_review_agent"}
+            reviewer_map = {str(item.get("reviewer")): str(item.get("verdict")) for item in reviewers if isinstance(item, dict)}
+            for reviewer in sorted(required_reviewers):
+                if reviewer_map.get(reviewer) != "pass":
+                    errors.append(f"review bundle reviewer {reviewer} verdict must be pass")
         if bundle.get("review_status") != "approved":
-            return False
+            errors.append("review bundle review_status must be approved")
         if str(bundle.get("source_stage_id") or "") != stage_id:
-            return False
+            errors.append("review bundle source_stage_id does not match current SWR stage")
         if str(bundle.get("source_run_id") or "") != run_id:
-            return False
+            errors.append("review bundle source_run_id does not match current SWR run")
 
         artifacts = self.swr_stage_artifacts(payload)
         checks = [
@@ -2614,30 +2880,36 @@ Additional validator requirements:
         for bundle_key, expected_rel, hash_key in checks:
             rel = str(bundle.get(bundle_key) or "")
             if not rel:
-                return False
+                errors.append(f"review bundle {bundle_key} is missing")
+                continue
             if expected_rel is not None and str(expected_rel) and bundle_key != "reviewer_notes" and rel != str(expected_rel):
-                return False
+                errors.append(f"review bundle {bundle_key} does not match current SWR stage artifact")
+                continue
             artifact_path = self.repo_artifact_path(rel)
             if artifact_path is None or not artifact_path.exists():
-                return False
+                errors.append(f"review bundle {bundle_key} artifact is missing or outside repo")
+                continue
             expected_hash = hashes.get(hash_key)
             if isinstance(expected_hash, str) and expected_hash and expected_hash != file_sha256(artifact_path):
-                return False
+                errors.append(f"review bundle {hash_key} does not match artifact")
         input_artifact = self.repo_artifact_path(str(bundle.get("input_artifact") or bundle.get("input_manifest_json") or ""))
         output_artifact = self.repo_artifact_path(str(bundle.get("response_artifact_json") or bundle.get("output_artifact") or ""))
         if input_artifact is None or output_artifact is None or not input_artifact.exists() or not output_artifact.exists():
-            return False
-        if bundle.get("input_sha256") != file_sha256(input_artifact):
-            return False
-        if bundle.get("output_sha256") != file_sha256(output_artifact):
-            return False
+            errors.append("review bundle input/output artifacts are missing or outside repo")
+        else:
+            if bundle.get("input_sha256") != file_sha256(input_artifact):
+                errors.append("review bundle input_sha256 does not match artifact")
+            if bundle.get("output_sha256") != file_sha256(output_artifact):
+                errors.append("review bundle output_sha256 does not match artifact")
         # Safety invariant: a review bundle cannot be treated as approved based
         # on bundle self-claims alone. The accountable operator provisional,
         # both independent reviewers, deterministic consolidation, and final
         # operator acceptance must all be valid non-blocking decision records.
-        if self.swr_review_bundle_record_errors(bundle_path, bundle, payload):
-            return False
-        return True
+        errors.extend(self.swr_review_bundle_record_errors(bundle_path, bundle, payload))
+        return errors
+
+    def swr_review_bundle_is_valid(self, bundle_path: Path, payload: dict[str, Any]) -> bool:
+        return not self.swr_review_bundle_validation_errors(bundle_path, payload)
 
     def existing_swr_review_bundle(self, slice_: dict[str, Any], payload: dict[str, Any]) -> Path | None:
         stage = self.current_swr_stage(payload)
@@ -2661,24 +2933,94 @@ Additional validator requirements:
                 return candidate
         return None
 
-    def swr_review_history_errors(self, payload: dict[str, Any]) -> list[str]:
-        errors: list[str] = []
+    def swr_bundle_matches_stage_identity(self, bundle_path: Path, payload: dict[str, Any], stage_id: str) -> bool:
+        bundle = read_json(bundle_path, {})
+        if not isinstance(bundle, dict):
+            return False
+        run_id = str(payload.get("run_id") or "")
+        return (
+            str(bundle.get("source_stage_id") or bundle.get("stage_id") or "") == stage_id
+            and str(bundle.get("source_run_id") or bundle.get("run_id") or "") == run_id
+        )
+
+    def swr_review_bundle_candidates_for_stage(
+        self,
+        slice_: dict[str, Any],
+        payload: dict[str, Any],
+        stage: dict[str, Any],
+    ) -> list[Path]:
+        stage_id = str(stage.get("stage_id") or "")
+        run_id = str(payload.get("run_id") or "")
+        candidates: list[Path] = []
+        stage_bundle = stage.get("review_bundle_path")
+        if isinstance(stage_bundle, str) and stage_bundle:
+            path = self.repo_artifact_path(stage_bundle)
+            if path is not None and (
+                bool(stage.get("review_approved")) or self.swr_bundle_matches_stage_identity(path, payload, stage_id)
+            ):
+                candidates.append(path)
+        if run_id and stage_id:
+            safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{slice_['id']}-{run_id}-{stage_id}").strip("-")
+            candidates.append(self.root / ".local" / "autokeel" / "swr" / "review_lane" / safe / f"{stage_id}.review_bundle.json")
+
+        seen: set[Path] = set()
+        unique: list[Path] = []
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            unique.append(candidate)
+        return unique
+
+    def swr_review_history_findings(self, slice_: dict[str, Any], payload: dict[str, Any]) -> list[dict[str, Any]]:
+        findings: list[dict[str, Any]] = []
         stages = payload.get("stages") if isinstance(payload.get("stages"), list) else []
         for stage in stages:
             if not isinstance(stage, dict):
                 continue
-            bundle_rel = stage.get("review_bundle_path")
             stage_id = str(stage.get("stage_id") or "")
-            if not isinstance(bundle_rel, str) or not bundle_rel:
+            if not stage_id:
                 continue
-            bundle_path = self.repo_artifact_path(bundle_rel)
-            if bundle_path is None or not bundle_path.exists():
-                errors.append(f"{stage_id}: review_bundle_path is missing or outside repo")
+            candidates = self.swr_review_bundle_candidates_for_stage(slice_, payload, stage)
+            existing = [candidate for candidate in candidates if candidate.exists()]
+            if not existing:
+                if stage.get("review_approved"):
+                    findings.append(
+                        {
+                            "stage_id": stage_id,
+                            "bundle": str(candidates[0].relative_to(self.root)) if candidates else "",
+                            "errors": [f"{stage_id}: approved review bundle is missing"],
+                        }
+                    )
                 continue
+            bundle_path = existing[0]
             stage_payload = dict(payload)
             stage_payload["current_stage_id"] = stage_id
-            if not self.swr_review_bundle_is_valid(bundle_path, stage_payload):
-                errors.append(f"{stage_id}: review bundle failed decision-record/hash validation: {bundle_rel}")
+            errors = self.swr_review_bundle_validation_errors(bundle_path, stage_payload)
+            if errors:
+                findings.append(
+                    {
+                        "stage_id": stage_id,
+                        "bundle": str(bundle_path.relative_to(self.root)),
+                        "errors": [f"{stage_id}: {error}" for error in errors],
+                    }
+                )
+        return findings
+
+    def swr_review_history_errors(self, payload: dict[str, Any]) -> list[str]:
+        slice_id = str(payload.get("slice") or "")
+        slice_ = self.find_slice(slice_id) if slice_id else None
+        if slice_ is None:
+            slice_ = {"id": slice_id or "SWR"}
+        errors: list[str] = []
+        for finding in self.swr_review_history_findings(slice_, payload):
+            bundle = str(finding.get("bundle") or "")
+            stage_id = str(finding.get("stage_id") or "")
+            if bundle:
+                errors.append(f"{stage_id}: review bundle failed decision-record/hash validation: {bundle}")
+            else:
+                errors.append(f"{stage_id}: review bundle failed decision-record/hash validation")
         return errors
 
     def swr_supervisor_session_id(self, slice_: dict[str, Any], payload: dict[str, Any]) -> str:
@@ -2999,6 +3341,95 @@ Additional validator requirements:
 
         self.record_active_swr_run(slice_, manifest_path, "SWR validation repair in progress")
         return CommandResult(result.argv, 31, result.stdout, "SWR validation repair is still in progress; do not relaunch")
+
+    def run_swr_review_repair(self, slice_: dict[str, Any], repair_plan: dict[str, Any]) -> CommandResult:
+        authorized, auth_reason = self.swr_review_repair_authorized_by_policy(slice_, repair_plan)
+        if repair_plan.get("status") == "authorized":
+            authorized = True
+            auth_reason = "repair plan already marked authorized"
+        if not authorized:
+            self.log_event(
+                "swr_review_repair_waiting_for_authorization",
+                {
+                    "repair_stage_id": repair_plan.get("repair_stage_id"),
+                    "run_manifest": repair_plan.get("run_manifest"),
+                    "authorization_reason": auth_reason,
+                },
+                slice_id=slice_["id"],
+            )
+            return CommandResult([], 34, "", f"SWR review repair is blocked: {auth_reason}")
+
+        manifest_rel = repair_plan.get("run_manifest")
+        stage_id = str(repair_plan.get("repair_stage_id") or "")
+        if not isinstance(manifest_rel, str) or not manifest_rel or not stage_id:
+            return CommandResult([], 34, "", "SWR review repair plan is missing run manifest or stage id")
+        manifest_path = self.root / manifest_rel
+        if not manifest_path.exists():
+            return CommandResult([], 34, "", f"SWR review repair manifest missing: {manifest_rel}")
+
+        self.log_event(
+            "swr_review_repair_policy_authorized",
+            {"repair_stage_id": stage_id, "authorization_reason": auth_reason, "repair_action": repair_plan.get("repair_action")},
+            slice_id=slice_["id"],
+        )
+
+        if repair_plan.get("repair_action") == "rerun_review_lane":
+            if self.dry_run:
+                self.log_event(
+                    "dry_run_swr_review_repair_planned",
+                    {"repair_stage_id": stage_id, "run_manifest": manifest_rel, "repair_action": "rerun_review_lane"},
+                    slice_id=slice_["id"],
+                )
+                return CommandResult([], 0, "dry run SWR review repair planned", "")
+            self.reset_swr_manifest_for_review_repair(manifest_path, stage_id)
+            result = self.run_swr_review_lane(slice_, manifest_path)
+            self.log_event(
+                "swr_review_repair_lane_passed" if result.ok or result.exit_code == 31 else "swr_review_repair_lane_failed",
+                {"repair_stage_id": stage_id, "exit_code": result.exit_code, "stderr": result.stderr[-2000:]},
+                slice_id=slice_["id"],
+            )
+            if result.ok or result.exit_code == 31:
+                self.clear_swr_review_repair(slice_["id"])
+            return result
+
+        if repair_plan.get("repair_action") != "rerun_single_stage":
+            self.log_event(
+                "swr_review_repair_not_runnable",
+                {"repair_action": repair_plan.get("repair_action"), "rationale": repair_plan.get("rationale")},
+                slice_id=slice_["id"],
+            )
+            return CommandResult([], 34, "", "SWR review repair plan is not runnable")
+
+        cmd = self.build_swr_stage_rerun_command(repair_plan)
+        if self.dry_run:
+            self.log_event(
+                "dry_run_swr_review_stage_rerun_planned",
+                {"command": " ".join(shlex.quote(part) for part in cmd)},
+                slice_id=slice_["id"],
+            )
+            return CommandResult(cmd, 0, "dry run SWR review stage rerun planned", "")
+        self.reset_swr_manifest_for_stage_rerun(manifest_path, stage_id)
+        result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        self.log_event(
+            "swr_review_repair_stage_passed" if result.ok else "swr_review_repair_stage_failed",
+            {"repair_stage_id": stage_id, "exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
+            slice_id=slice_["id"],
+        )
+        if not result.ok:
+            if self.swr_wait_timeout_in_progress(result):
+                self.record_active_swr_run(slice_, manifest_path, "SWR review repair stage rerun in progress", observed_result=result)
+                self.clear_swr_review_repair(slice_["id"])
+                return CommandResult(result.argv, 31, result.stdout, "SWR review repair is still in progress; do not relaunch")
+            return result
+        payload = read_json(manifest_path, {})
+        if isinstance(payload, dict) and self.swr_waiting_for_review(payload):
+            review_result = self.run_swr_review_lane(slice_, manifest_path)
+            if review_result.ok or review_result.exit_code == 31:
+                self.clear_swr_review_repair(slice_["id"])
+            return review_result
+        self.record_active_swr_run(slice_, manifest_path, "SWR review repair stage rerun in progress")
+        self.clear_swr_review_repair(slice_["id"])
+        return CommandResult(result.argv, 31, result.stdout, "SWR review repair is still in progress; do not relaunch")
 
     def recover_revalidated_swr_playbook(
         self, slice_: dict[str, Any], repair_plan: dict[str, Any]
@@ -3359,12 +3790,28 @@ Additional validator requirements:
         if lease_error is not None:
             return lease_error
 
+        review_repair_plan = slice_.get("swr_review_repair")
+        if isinstance(review_repair_plan, dict):
+            return self.run_swr_review_repair(slice_, review_repair_plan)
+
+        validation_repair_plan = slice_.get("swr_validation_repair")
+        if isinstance(validation_repair_plan, dict):
+            return self.run_swr_validation_repair(slice_, validation_repair_plan)
+
+        stored_review_repair = self.plan_stored_swr_review_repair(slice_)
+        if stored_review_repair is not None:
+            return stored_review_repair
+
         active_manifest = leased_manifest or self.active_swr_manifest_from_state(slice_) or self.latest_swr_manifest_for_slice(slice_)
         if active_manifest is not None:
             active_payload = read_json(active_manifest, {})
             if isinstance(active_payload, dict):
-                history_errors = self.swr_review_history_errors(active_payload)
-                if history_errors:
+                history_findings = self.swr_review_history_findings(slice_, active_payload)
+                if history_findings:
+                    history_errors = [
+                        f"{finding.get('stage_id')}: review bundle failed decision-record/hash validation: {finding.get('bundle')}"
+                        for finding in history_findings
+                    ]
                     return self.swr_review_failure(
                         slice_,
                         active_manifest,
@@ -3398,10 +3845,6 @@ Additional validator requirements:
                 str(active_manifest.relative_to(self.root)),
                 "SWR background run is still in progress; do not relaunch",
             )
-
-        repair_plan = slice_.get("swr_validation_repair")
-        if isinstance(repair_plan, dict):
-            return self.run_swr_validation_repair(slice_, repair_plan)
 
         if playbook.exists():
             if self.dry_run:

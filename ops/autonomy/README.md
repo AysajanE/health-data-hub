@@ -101,6 +101,19 @@ Malformed agent output, validation errors, `blocking_issues`, or a
 `do_not_approve` / `blocked` decision must stop the SWR lane before bundle
 creation or reuse.
 
+If AutoKeel discovers malformed prior review history after a stage response is
+already complete, it must not quarantine the whole SWR run and relaunch from
+Stage 1. It records a `swr_review_repair` plan, preserves the existing
+`run_manifest` and `run_dir`, and repairs the smallest affected boundary. When
+the target stage response artifacts are completed and hash-checked, AutoKeel
+reruns only the supervisor review lane and resets downstream stages that
+consumed the tainted handoff. If the raw response is not safely reviewable, it
+reruns only that stage in the same SWR run with `keel-swr run --run-dir ...
+--stage ...`. If an older AutoKeel version already quarantined a repairable
+review failure, the next tick must first materialize this `swr_review_repair`
+from the stored `swr_run_manifest`; it must not start a fresh Stage 1 run.
+Full-run quarantine is reserved for irreparable state.
+
 If the terminal SWR playbook materializes but fails
 `scripts/validate_playbook_autonomous.py`, AutoKeel must not convert that into
 `replan_required` or start a fresh five-stage SWR workflow. It archives the

@@ -143,6 +143,19 @@ def dirty_paths(root: Path) -> list[str]:
     return paths
 
 
+def repo_path(root: Path, value: Any) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    if not path.is_absolute():
+        path = root / path
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    return path
+
+
 def approved_dirty_path(path: str) -> bool:
     return (
         path.startswith("ops/autonomy/")
@@ -203,6 +216,35 @@ def verify_autokeel_invariants(root: Path) -> dict[str, Any]:
                 errors.append(f"{slice_id}: complete SWR-required slice lacks matching SWR evidence")
             if slice_.get("status") != "complete" and playbook.exists() and not evidence_ok:
                 errors.append(f"{slice_id}: canonical playbook exists without matching SWR evidence")
+        review_repair = slice_.get("swr_review_repair")
+        if isinstance(review_repair, dict):
+            checks.setdefault("swr_review_repairs", []).append(
+                {
+                    "slice": slice_id,
+                    "repair_action": review_repair.get("repair_action"),
+                    "repair_stage_id": review_repair.get("repair_stage_id"),
+                    "run_manifest": review_repair.get("run_manifest"),
+                }
+            )
+            action = review_repair.get("repair_action")
+            if slice_.get("status") != "blocked_compile_inputs":
+                errors.append(f"{slice_id}: swr_review_repair exists while slice is not blocked_compile_inputs")
+            if action not in {"rerun_review_lane", "rerun_single_stage", "blocked_pending_review_bundle"}:
+                errors.append(f"{slice_id}: swr_review_repair has unknown repair_action")
+            if not review_repair.get("repair_stage_id"):
+                errors.append(f"{slice_id}: swr_review_repair missing repair_stage_id")
+            manifest = repo_path(root, review_repair.get("run_manifest"))
+            if manifest is None or not manifest.exists() or manifest.name != "run_manifest.json":
+                errors.append(f"{slice_id}: swr_review_repair missing existing run_manifest")
+            run_dir = repo_path(root, review_repair.get("run_dir"))
+            if run_dir is None or not run_dir.exists() or not run_dir.is_dir():
+                errors.append(f"{slice_id}: swr_review_repair missing existing run_dir")
+            if action == "rerun_review_lane" and review_repair.get("stage_artifact_errors"):
+                errors.append(f"{slice_id}: review-lane repair has stage_artifact_errors")
+            if action == "rerun_single_stage" and review_repair.get("repair_stage_id") != "source_authority_map":
+                source_bundle = repo_path(root, review_repair.get("source_review_bundle"))
+                if source_bundle is None or not source_bundle.exists():
+                    errors.append(f"{slice_id}: single-stage review repair missing source_review_bundle")
 
     failures = list(iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl") or [])
     open_high = [row for row in failures if row.get("open", True) and row.get("severity") in {"high", "critical"}]

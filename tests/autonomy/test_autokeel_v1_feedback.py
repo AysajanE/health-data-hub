@@ -41,6 +41,7 @@ def copy_fixture(dst: Path) -> None:
         item.pop("stopped_swr_response_id", None)
         item.pop("swr_run_id", None)
         item.pop("swr_run_manifest", None)
+        item.pop("swr_review_repair", None)
         item.pop("swr_validation_repair", None)
     write_json_atomic(slices_path, slices)
     write_json_atomic(
@@ -420,12 +421,15 @@ def write_waiting_swr_manifest(root: Path) -> Path:
                 "stage_number": 1,
                 "gate": "review_required",
                 "status": "waiting_for_review",
+                "response_status": "completed",
                 "response_id": "resp_source_authority_map",
                 "stage_dir": str(stage_dir.relative_to(root)),
                 "checkpoint_path": str(checkpoint.relative_to(root)),
                 "input_manifest_json_path": str(input_manifest.relative_to(root)),
                 "response_markdown_path": str(response_md.relative_to(root)),
                 "response_json_path": str(response_json.relative_to(root)),
+                "response_markdown_sha256": file_sha256(response_md),
+                "response_json_sha256": file_sha256(response_json),
             },
             {"stage_id": "repo_grounding", "stage_number": 2, "gate": "review_required", "status": "prepared"},
         ],
@@ -1430,7 +1434,7 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
             self.assertIsNone(op.existing_swr_review_bundle(slice_, manifest_payload))
 
-    def test_active_swr_run_blocks_when_prior_review_bundle_is_invalid(self) -> None:
+    def test_active_swr_run_plans_review_repair_when_prior_review_bundle_is_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_fixture(root)
@@ -1470,10 +1474,287 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertIn("SWR review history failed closed", result.stderr)
             updated = next(item for item in op.load_slices() if item["id"] == "S02")
             self.assertEqual(updated["status"], "blocked_compile_inputs")
+            repair = updated["swr_review_repair"]
+            self.assertEqual(repair["repair_action"], "rerun_review_lane")
+            self.assertEqual(repair["repair_stage_id"], "source_authority_map")
+            self.assertIn("repo_grounding", repair["stale_downstream_stage_ids"])
+            self.assertEqual(repair["stage_artifact_errors"], [])
             quarantined = json.loads(manifest.read_text(encoding="utf-8"))
-            self.assertTrue(quarantined["autokeel_quarantined"])
-            self.assertEqual(quarantined["status"], "quarantined")
-            self.assertIsNone(op.latest_swr_manifest_for_slice(slice_))
+            self.assertNotIn("autokeel_quarantined", quarantined)
+            self.assertEqual(quarantined["status"], "running")
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("swr_review_repair_planned", events)
+
+    def test_swr_review_history_ignores_consumed_prior_stage_bundle_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+            bundle = write_existing_swr_review_bundle(root, manifest)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            payload["status"] = "running"
+            payload["current_stage_id"] = "repo_grounding"
+            payload["stages"][0]["review_bundle_path"] = str(bundle.relative_to(root))
+            payload["stages"][0]["review_approved"] = True
+            payload["stages"][1]["status"] = "in_progress"
+            payload["stages"][1]["review_bundle_path"] = str(bundle.relative_to(root))
+            payload["stages"][1].pop("review_approved", None)
+
+            op = AutoKeel(root=root, dry_run=False)
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            self.assertEqual(op.swr_review_history_findings(slice_, payload), [])
+
+    def test_swr_review_repair_reruns_review_lane_without_fresh_full_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+            repair = {
+                "created_at": "2026-05-27T00:00:00-04:00",
+                "status": "planned",
+                "repair_action": "rerun_review_lane",
+                "repair_stage_id": "source_authority_map",
+                "run_id": "run_20260527_test_waiting",
+                "run_dir": str(manifest.parent.relative_to(root)),
+                "run_manifest": str(manifest.relative_to(root)),
+                "stale_downstream_stage_ids": ["repo_grounding"],
+            }
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            for item in slices:
+                if item["id"] == "S02":
+                    item["status"] = "blocked_compile_inputs"
+                    item["swr_review_repair"] = repair
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+
+            class ReviewRepairRunner:
+                def __init__(self):
+                    self.calls: list[list[str]] = []
+
+                def _arg(self, argv: list[str], flag: str) -> str:
+                    return argv[argv.index(flag) + 1]
+
+                def _write_decision(
+                    self,
+                    rel: str,
+                    *,
+                    actor_role: str,
+                    review_kind: str = "stage_output",
+                    approval: str = "approve",
+                ) -> None:
+                    path = root / rel
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(
+                        json.dumps(
+                            swr_review_decision(
+                                actor_role=actor_role,
+                                review_kind=review_kind,
+                                approval_decision=approval,
+                            )
+                        ),
+                        encoding="utf-8",
+                    )
+
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    argv = list(argv)
+                    self.calls.append(argv)
+                    joined = " ".join(str(part) for part in argv)
+                    if "keel-swr" in str(argv[0]) and "--run-name" in argv:
+                        raise AssertionError("fresh full SWR workflow rerun is forbidden")
+                    if "supervisor init-session" in joined:
+                        return CommandResult(argv, 0, '{"session":"autokeel-s02-run_20260527_test_waiting"}', "")
+                    if "supervisor classify" in joined:
+                        output = self._arg(argv, "--output")
+                        (root / output).parent.mkdir(parents=True, exist_ok=True)
+                        (root / output).write_text(
+                            json.dumps(
+                                {
+                                    "run_id": "run_20260527_test_waiting",
+                                    "stage_id": "source_authority_map",
+                                    "classification": "completed_complete_artifact",
+                                    "reviewable": True,
+                                    "review_bundle_allowed": True,
+                                }
+                            ),
+                            encoding="utf-8",
+                        )
+                        return CommandResult(argv, 0, '{"classification":"completed_complete_artifact"}', "")
+                    if "supervisor invoke-operator" in joined:
+                        rel = self._arg(argv, "--output-dir") + "/operator.json"
+                        self._write_decision(rel, actor_role="operator_codex")
+                        return CommandResult(argv, 0, json.dumps({"operator_review": rel}), "")
+                    if "supervisor invoke-reviewers" in joined:
+                        out_dir = self._arg(argv, "--output-dir")
+                        codex = out_dir + "/codex.json"
+                        claude = out_dir + "/claude.json"
+                        self._write_decision(codex, actor_role="codex_review_agent")
+                        self._write_decision(claude, actor_role="claude_review_agent")
+                        return CommandResult(argv, 0, json.dumps({"codex_review": codex, "claude_review": claude}), "")
+                    if "supervisor consolidate" in joined:
+                        output = self._arg(argv, "--output")
+                        self._write_decision(output, actor_role="consolidation_pass", review_kind="consolidation", approval="approve_with_conditions")
+                        return CommandResult(argv, 0, json.dumps({"json_report_path": output}), "")
+                    if "supervisor accept" in joined:
+                        output = self._arg(argv, "--output")
+                        self._write_decision(output, actor_role="operator_codex", review_kind="operator_acceptance")
+                        return CommandResult(argv, 0, json.dumps({"json_report_path": output, "approval_decision": "approve"}), "")
+                    if "supervisor create-bundle" in joined:
+                        output = self._arg(argv, "--output")
+                        (root / output).parent.mkdir(parents=True, exist_ok=True)
+                        (root / output).write_text(json.dumps({"bundle_path": output}), encoding="utf-8")
+                        return CommandResult(argv, 0, json.dumps({"bundle_path": output}), "")
+                    if "keel-swr" in str(argv[0]) and "run" in argv:
+                        if "--run-name" in argv:
+                            raise AssertionError("fresh full SWR workflow rerun is forbidden")
+                        if "--run-dir" not in argv:
+                            raise AssertionError("review repair must target the existing run directory")
+                        if "--review-bundle" not in argv:
+                            raise AssertionError("review repair must continue with the repaired bundle")
+                        payload = json.loads(manifest.read_text(encoding="utf-8"))
+                        payload["status"] = "running"
+                        payload["current_stage_id"] = "repo_grounding"
+                        payload["stages"][0]["review_approved"] = True
+                        payload["stages"][0]["review_bundle_path"] = argv[argv.index("--review-bundle") + 1]
+                        payload["stages"][1]["status"] = "in_progress"
+                        payload["stages"][1]["response_id"] = "resp_stage2_after_review_repair"
+                        manifest.write_text(json.dumps(payload), encoding="utf-8")
+                        return CommandResult(
+                            argv,
+                            1,
+                            str(manifest.relative_to(root)) + "\n",
+                            "ApiError: Response resp_stage2_after_review_repair did not reach a terminal state within 5.0s (last_status=in_progress).",
+                        )
+                    return CommandResult(argv, 0, "", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            runner = ReviewRepairRunner()
+            op.runner = runner
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertEqual(result.exit_code, 31)
+            calls = [" ".join(call) for call in runner.calls]
+            self.assertTrue(any("supervisor invoke-operator" in call for call in calls))
+            self.assertTrue(any("keel-swr run" in call and "--review-bundle" in call for call in calls))
+            self.assertFalse(any("keel-swr run" in call and "--run-name" in call for call in calls))
+            repaired = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertNotIn("autokeel_quarantined", repaired)
+            self.assertEqual(repaired["current_stage_id"], "repo_grounding")
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertNotIn("swr_review_repair", updated)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["active_swr_run"]["run_id"], "run_20260527_test_waiting")
+
+    def test_quarantined_review_failure_manifest_plans_repair_before_fresh_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+            manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+            manifest_payload["status"] = "quarantined"
+            manifest_payload["autokeel_quarantined"] = True
+            manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            for item in slices:
+                if item["id"] == "S02":
+                    item["status"] = "blocked_compile_inputs"
+                    item["swr_run_manifest"] = str(manifest.relative_to(root))
+                    item["reason"] = "SWR independent review failed closed: reviewer decision contains blocking_issues"
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+
+            class NoFreshLaunchRunner:
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    if "keel-swr" in str(argv[0]) and "run" in argv:
+                        raise AssertionError("stored repairable SWR run must be planned before any fresh launch")
+                    return CommandResult(list(argv), 0, "", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = NoFreshLaunchRunner()
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertEqual(result.exit_code, 32)
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertEqual(updated["status"], "blocked_compile_inputs")
+            self.assertEqual(updated["swr_review_repair"]["repair_action"], "rerun_review_lane")
+            self.assertEqual(updated["swr_review_repair"]["repair_stage_id"], "source_authority_map")
+            self.assertEqual(updated["swr_review_repair"]["stage_artifact_errors"], [])
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertIn("swr_review_repair_planned_from_stored_manifest", events)
+
+    def test_swr_review_repair_stage_rerun_uses_same_run_and_clears_plan_while_active(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+            bundle = root / ".local/autokeel/swr/review_lane/S02-run_20260527_test_waiting-source_authority_map/source_authority_map.review_bundle.json"
+            bundle.parent.mkdir(parents=True, exist_ok=True)
+            bundle.write_text(json.dumps({"review_status": "approved"}), encoding="utf-8")
+            repair = {
+                "created_at": "2026-05-27T00:00:00-04:00",
+                "status": "planned",
+                "repair_action": "rerun_single_stage",
+                "repair_stage_id": "repo_grounding",
+                "source_review_stage_id": "source_authority_map",
+                "source_review_bundle": str(bundle.relative_to(root)),
+                "run_id": "run_20260527_test_waiting",
+                "run_dir": str(manifest.parent.relative_to(root)),
+                "run_manifest": str(manifest.relative_to(root)),
+            }
+            slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+            for item in slices:
+                if item["id"] == "S02":
+                    item["status"] = "blocked_compile_inputs"
+                    item["swr_review_repair"] = repair
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+
+            class StageRepairRunner:
+                def __init__(self):
+                    self.calls: list[list[str]] = []
+
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    argv = list(argv)
+                    self.calls.append(argv)
+                    if "keel-swr" in str(argv[0]) and "run" in argv:
+                        if "--run-name" in argv:
+                            raise AssertionError("fresh full SWR workflow rerun is forbidden")
+                        if argv[argv.index("--stage") + 1] != "repo_grounding":
+                            raise AssertionError("review repair must rerun only the requested stage")
+                        if argv[argv.index("--review-bundle") + 1] != str(bundle.relative_to(root)):
+                            raise AssertionError("review repair must pass the approved source bundle")
+                        payload = json.loads(manifest.read_text(encoding="utf-8"))
+                        payload["status"] = "running"
+                        payload["current_stage_id"] = "repo_grounding"
+                        payload["stages"][1]["status"] = "in_progress"
+                        payload["stages"][1]["response_id"] = "resp_repo_grounding_review_repair"
+                        manifest.write_text(json.dumps(payload), encoding="utf-8")
+                        return CommandResult(
+                            argv,
+                            1,
+                            str(manifest.relative_to(root)) + "\n",
+                            "ApiError: Response resp_repo_grounding_review_repair did not reach a terminal state within 5.0s (last_status=in_progress).",
+                        )
+                    return CommandResult(argv, 0, "", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            runner = StageRepairRunner()
+            op.runner = runner
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertEqual(result.exit_code, 31)
+            self.assertTrue(any("keel-swr" in call[0] and "--stage" in call for call in runner.calls))
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertNotIn("swr_review_repair", updated)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["active_swr_run"]["response_id"], "resp_repo_grounding_review_repair")
 
     def test_swr_review_bundle_reuse_rejects_different_response_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
