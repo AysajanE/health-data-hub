@@ -168,7 +168,6 @@
     "pre_ship_commands": [
       "python scripts/verify_s05_provider_policy.py --json"
     ],
-    "reason": "SWR independent review failed closed: Codex reviewer decision status must be succeeded; Codex reviewer decision approval_decision must be one of ['approve', 'approve_with_conditions']; Codex reviewer decision contains validation_errors; Codex reviewer decision contains blocking_issues; Claude reviewer decision status must be succeeded; Claude reviewer decision approval_decision must be one of ['approve', 'approve_with_conditions']; Claude reviewer decision contains validation_errors; Claude reviewer decision contains blocking_issues",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -177,10 +176,10 @@
     ],
     "risk": "high",
     "slug": "s05-model-lifecycle",
-    "status": "blocked_compile_inputs",
+    "status": "replan_required",
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-01T09:48:04-04:00"
+    "updated_at": "2026-06-01T11:30:16-04:00"
   },
   {
     "acceptance": [
