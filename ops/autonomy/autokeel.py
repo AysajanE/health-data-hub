@@ -733,6 +733,103 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             + ", ".join(str(item.get("failure_class") or "unknown") for item in failures),
         )
 
+    def swr_review_lane_budget_release_path(self, slice_id: str) -> Path:
+        return self.root / "docs" / "evidence" / f"{slice_id.lower()}-swr-review-lane-budget-release.json"
+
+    def swr_review_repair_plan_key(self, slice_: dict[str, Any]) -> str:
+        import hashlib
+        import json
+
+        repair = slice_.get("swr_review_repair") if isinstance(slice_.get("swr_review_repair"), dict) else {}
+        material = {
+            "slice": slice_.get("id"),
+            "run_id": repair.get("run_id"),
+            "run_manifest": repair.get("run_manifest"),
+            "repair_action": repair.get("repair_action"),
+            "repair_stage_id": repair.get("repair_stage_id"),
+            "created_at": repair.get("created_at"),
+        }
+        return hashlib.sha256(json.dumps(material, sort_keys=True).encode("utf-8")).hexdigest()
+
+    def swr_review_lane_budget_release_valid(self, slice_: dict[str, Any]) -> CommandResult:
+        from datetime import datetime
+
+        slice_id = str(slice_.get("id") or "")
+        path = self.swr_review_lane_budget_release_path(slice_id)
+        if not path.exists():
+            return CommandResult([], 37, "", f"SWR review-lane budget release missing: {path.relative_to(self.root)}")
+
+        payload = read_json(path, {})
+        if not isinstance(payload, dict):
+            return CommandResult([], 37, "", "SWR review-lane budget release is not a JSON object")
+
+        if payload.get("schema_version") != "autokeel.swr_review_lane_budget_release.v1":
+            return CommandResult([], 37, "", "SWR review-lane budget release has unexpected schema_version")
+        if payload.get("slice") != slice_id:
+            return CommandResult([], 37, "", "SWR review-lane budget release slice mismatch")
+        if payload.get("verdict") != "pass" or payload.get("allow_one_next_repair_tick") is not True:
+            return CommandResult([], 37, "", "SWR review-lane budget release is not passing")
+        if payload.get("consumed_at"):
+            return CommandResult([], 37, "", "SWR review-lane budget release is already consumed")
+        if payload.get("release_key") != self.swr_review_repair_plan_key(slice_):
+            return CommandResult([], 37, "", "SWR review-lane budget release does not match current repair plan")
+
+        expires_raw = str(payload.get("expires_at") or "")
+        try:
+            expires_at = datetime.fromisoformat(expires_raw)
+        except ValueError:
+            return CommandResult([], 37, "", "SWR review-lane budget release expires_at is invalid")
+        if datetime.now().astimezone() > expires_at:
+            return CommandResult([], 37, "", "SWR review-lane budget release is expired")
+
+        repair = slice_.get("swr_review_repair")
+        if not isinstance(repair, dict) or repair.get("status") != "planned":
+            return CommandResult([], 37, "", "SWR review-lane budget release requires a planned swr_review_repair")
+        if repair.get("repair_action") != "rerun_review_lane":
+            return CommandResult([], 37, "", "SWR review-lane budget release only allows rerun_review_lane")
+        manifest_rel = str(repair.get("run_manifest") or "")
+        if not manifest_rel or not (self.root / manifest_rel).exists():
+            return CommandResult([], 37, "", "SWR review-lane budget release repair manifest is missing")
+
+        return CommandResult([], 0, f"SWR review-lane budget release valid: {path.relative_to(self.root)}", "")
+
+    def consume_swr_review_lane_budget_release(self, slice_: dict[str, Any]) -> None:
+        """Consume the release before the next real repair tick.
+
+        This intentionally consumes even if the subsequent repair fails; a failed
+        next tick must produce new evidence rather than silently reusing the same
+        release.
+        """
+        if self.dry_run:
+            return
+
+        path = self.swr_review_lane_budget_release_path(str(slice_.get("id") or ""))
+        payload = read_json(path, {})
+        if not isinstance(payload, dict):
+            return
+        payload["consumed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        write_json_atomic(path, payload)
+
+        slices = self.load_slices()
+        for item in slices:
+            if item.get("id") != slice_.get("id"):
+                continue
+            repair = item.get("swr_review_repair")
+            if isinstance(repair, dict):
+                repair["budget_release_consumed_at"] = payload["consumed_at"]
+                repair["budget_release_evidence"] = str(path.relative_to(self.root))
+            item["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+            break
+        write_json_atomic(self.root / "ops/autonomy/slices.json", slices)
+        self.log_event(
+            "swr_review_lane_budget_release_consumed",
+            {
+                "release_evidence": str(path.relative_to(self.root)),
+                "release_key": payload.get("release_key"),
+            },
+            slice_id=str(slice_.get("id") or ""),
+        )
+
     def failure_budget_exceeded(self, slice_: dict[str, Any]) -> CommandResult:
         loop = self.policy.get("loop", {})
         max_total = int(loop.get("max_total_failures_per_slice", 8))
@@ -771,8 +868,31 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         if len(by_scope.get("product_or_playbook", [])) > max_product:
             return CommandResult([], 37, "", f"closed product/playbook repair budget exceeded for {slice_['id']}: {len(by_scope['product_or_playbook'])} > {max_product}")
 
-        if len(by_scope.get("swr_review_lane", [])) > max_swr_review:
-            return CommandResult([], 37, "", f"closed SWR review-lane repair budget exceeded for {slice_['id']}: {len(by_scope['swr_review_lane'])} > {max_swr_review}")
+        swr_review_rows = by_scope.get("swr_review_lane", [])
+        if len(swr_review_rows) > max_swr_review:
+            release = self.swr_review_lane_budget_release_valid(slice_)
+            if release.ok:
+                self.log_event(
+                    "swr_review_lane_budget_release_accepted",
+                    {
+                        "closed_swr_review_lane_repairs": len(swr_review_rows),
+                        "max_closed_swr_review_lane_repairs": max_swr_review,
+                        "release_stdout": release.stdout,
+                    },
+                    slice_id=slice_["id"],
+                )
+                self.consume_swr_review_lane_budget_release(slice_)
+                return CommandResult([], 0, "SWR review-lane budget release accepted for one repair tick", "")
+
+            return CommandResult(
+                [],
+                37,
+                "",
+                (
+                    f"closed SWR review-lane repair budget exceeded for {slice_['id']}: "
+                    f"{len(swr_review_rows)} > {max_swr_review}; {release.stderr}"
+                ),
+            )
 
         if len(by_scope.get("autokeel_control_plane", [])) > max_control:
             checkpoint = self.root / "docs" / "evidence" / f"{slice_['id'].lower()}-autokeel-stability-checkpoint.json"

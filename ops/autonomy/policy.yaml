@@ -35,13 +35,61 @@ swr:
 
 swr_repair_authorization:
   auto_authorize_single_stage_repair: true
+
+  # Existing raw stage-rerun authorization stays narrow.
   allowed_repair_stages:
     - gate_and_contract_review
     - final_markdown_playbook
-  require_existing_review_bundle: true
+
+  # New: review-lane-only repair authorization. This is safe for
+  # source_authority_map because it reruns reviewers on an existing raw artifact;
+  # it does not regenerate the stage response.
+  allowed_review_lane_repair_stages:
+    - source_authority_map
+    - repo_grounding
+    - execution_row_draft
+    - gate_and_contract_review
+    - final_markdown_playbook
+
+  require_existing_stage_artifact_for_review_lane_repair: true
+  require_existing_run_manifest: true
   require_no_open_high_failures: true
   max_same_stage_repairs: 1
   max_total_swr_repairs_per_slice: 2
+
+swr_review_lane_budget_release:
+  auto_authorized: true
+  schema_version: autokeel.swr_review_lane_budget_release.v1
+
+  # Do not raise the normal SWR review-lane budget. This only permits a
+  # one-time continuation after deterministic stabilization evidence.
+  max_overage: 1
+  max_releases_per_slice: 1
+  expires_hours: 24
+
+  required_open_failure_class: failure_budget_exceeded
+  required_open_failure_text: "SWR review-lane repair budget exceeded"
+
+  require_existing_planned_repair: true
+  required_repair_action: rerun_review_lane
+  require_existing_run_manifest: true
+  require_review_history_ok: true
+  require_stability_checkpoint_ok: true
+  require_no_active_po_run: true
+  require_no_active_swr_run: true
+  require_no_other_open_high_or_critical_failures: true
+
+  # Review-lane-only repair may target any SWR stage whose raw output already
+  # exists and is hash-stable. This does not authorize regenerating arbitrary
+  # stage outputs.
+  allowed_review_lane_repair_stages:
+    - source_authority_map
+    - repo_grounding
+    - execution_row_draft
+    - gate_and_contract_review
+    - final_markdown_playbook
+
+  release_evidence_root: docs/evidence
 
 slice_statuses:
   actionable:
