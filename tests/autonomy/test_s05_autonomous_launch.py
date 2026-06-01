@@ -228,6 +228,36 @@ class S05AutonomousLaunchTests(unittest.TestCase):
             readiness.assert_not_called()
             ensure_playbook.assert_called_once()
 
+    def test_s05_swr_review_block_is_not_recorded_as_generic_compile_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            set_completed_through_s04(root)
+
+            autokeel = AutoKeel(root)
+            ensure_playbook = Mock(return_value=CommandResult(["test"], 32, "", "SWR review history failed closed"))
+            record_failure = Mock()
+
+            with (
+                patch.object(autokeel, "run_autokeel_invariants", return_value=CommandResult([], 0, "{}", "")),
+                patch.object(autokeel, "run_verify_v1", return_value=CommandResult([], 1, "{}", "")),
+                patch.object(autokeel, "evaluate_tripwires", return_value=CommandResult([], 0, "{}", "")),
+                patch.object(autokeel, "ensure_slice_brief"),
+                patch.object(autokeel, "failure_budget_exceeded", return_value=CommandResult([], 0, "", "")),
+                patch.object(autokeel, "recover_passed_slice_run", return_value=None),
+                patch.object(autokeel, "restore_repaired_escalated_slice_run", return_value=None),
+                patch.object(autokeel, "run_slice_readiness", return_value=CommandResult([], 0, "", "")),
+                patch.object(autokeel, "ensure_lane_decision", return_value=CommandResult([], 0, "", "")),
+                patch.object(autokeel, "required_external_evidence_ready", return_value=CommandResult([], 0, "", "")),
+                patch.object(autokeel, "ensure_playbook", ensure_playbook),
+                patch.object(autokeel, "record_failure", record_failure),
+            ):
+                code = autokeel.run_once(requested_slice="S05")
+
+            self.assertEqual(code, 32)
+            ensure_playbook.assert_called_once()
+            record_failure.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

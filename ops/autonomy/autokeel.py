@@ -5064,7 +5064,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             )
             if compiled.exit_code == 31:
                 return 0
-            if compiled.exit_code not in {20, 21, 22, 24, 26, 27, 28, 31, 34}:
+            if compiled.exit_code not in {20, 21, 22, 24, 26, 27, 28, 31, 32, 34}:
                 failure = self.record_failure(
                     slice_["id"],
                     "compile_failure",
