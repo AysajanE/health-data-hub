@@ -97,6 +97,56 @@ def prepare_s02_swr_inputs(root: Path) -> Path:
     return fake_keel
 
 
+def swr_review_decision(
+    *,
+    actor_role: str,
+    review_kind: str,
+    approval_decision: str,
+    run_id: str = "run_20260527_test_waiting",
+    stage_id: str = "source_authority_map",
+    status: str = "succeeded",
+    next_action: str | None = None,
+    blocking_issues: list[dict[str, object]] | None = None,
+    validation_errors: list[str] | None = None,
+) -> dict[str, object]:
+    if next_action is None:
+        if review_kind == "consolidation":
+            next_action = "proceed_to_operator_acceptance"
+        elif review_kind == "operator_acceptance" and approval_decision == "approve":
+            next_action = "create_review_bundle"
+        elif approval_decision in {"blocked", "do_not_approve"}:
+            next_action = "blocked"
+        else:
+            next_action = "proceed_to_consolidation"
+    return {
+        "schema_version": "responses_runner_v2.review_decision.v1",
+        "decision_id": f"{actor_role}_{review_kind}_{stage_id}",
+        "created_at": "2026-05-27T00:00:00-04:00",
+        "supervisor_session_id": "autokeel-s02-run_20260527_test_waiting",
+        "workflow_id": "gstack_design_to_po_playbook",
+        "run_id": run_id,
+        "stage_id": stage_id,
+        "review_cycle_id": f"{stage_id}_stage_review",
+        "review_kind": review_kind,
+        "actor_role": actor_role,
+        "agent_command_id": None,
+        "status": status,
+        "approval_decision": approval_decision,
+        "summary": "test decision",
+        "reviewed_artifacts": [],
+        "missing_artifacts": [],
+        "blocking_issues": blocking_issues or [],
+        "non_blocking_improvements": [],
+        "recommendations": [],
+        "unsupported_claims": [],
+        "evidence": [],
+        "command": None,
+        "read_only_check": None,
+        "validation_errors": validation_errors or [],
+        "next_action": next_action,
+    }
+
+
 def write_completed_swr_manifest(root: Path, text: str) -> Path:
     run_dir = root / ".local/autokeel/swr/runs/test-run"
     stage_dir = run_dir / "stages/05_final_markdown_playbook"
@@ -390,8 +440,47 @@ def write_existing_swr_review_bundle(root: Path, manifest_path: Path) -> Path:
     stage = payload["stages"][0]
     review_dir = root / ".local/autokeel/swr/review_lane/S02-run_20260527_test_waiting-source_authority_map"
     review_dir.mkdir(parents=True, exist_ok=True)
+    operator_review = review_dir / "operator/operator.json"
+    codex_review = review_dir / "agents/codex.json"
+    claude_review = review_dir / "agents/claude.json"
+    consolidated_review = review_dir / "consolidated_review.json"
+    operator_acceptance = review_dir / "operator_acceptance.json"
+    operator_review.parent.mkdir(parents=True, exist_ok=True)
+    codex_review.parent.mkdir(parents=True, exist_ok=True)
+    operator_review.write_text(
+        json.dumps(swr_review_decision(actor_role="operator_codex", review_kind="stage_output", approval_decision="approve")),
+        encoding="utf-8",
+    )
+    codex_review.write_text(
+        json.dumps(swr_review_decision(actor_role="codex_review_agent", review_kind="stage_output", approval_decision="approve")),
+        encoding="utf-8",
+    )
+    claude_review.write_text(
+        json.dumps(swr_review_decision(actor_role="claude_review_agent", review_kind="stage_output", approval_decision="approve")),
+        encoding="utf-8",
+    )
+    consolidated_review.write_text(
+        json.dumps(swr_review_decision(actor_role="consolidation_pass", review_kind="consolidation", approval_decision="approve_with_conditions")),
+        encoding="utf-8",
+    )
+    operator_acceptance.write_text(
+        json.dumps(swr_review_decision(actor_role="operator_codex", review_kind="operator_acceptance", approval_decision="approve")),
+        encoding="utf-8",
+    )
     reviewer_notes = review_dir / "reviewer_notes.md"
-    reviewer_notes.write_text("# Reviewer Notes\n\nApproved.\n", encoding="utf-8")
+    records = {
+        "operator_review": str(operator_review.relative_to(root)),
+        "codex_review": str(codex_review.relative_to(root)),
+        "claude_review": str(claude_review.relative_to(root)),
+        "consolidated_review": str(consolidated_review.relative_to(root)),
+        "operator_acceptance": str(operator_acceptance.relative_to(root)),
+    }
+    reviewer_notes.write_text(
+        "# Reviewer Notes\n\n"
+        + "\n".join(f"- {key}: `{value}`" for key, value in records.items())
+        + "\n",
+        encoding="utf-8",
+    )
     bundle_path = review_dir / "source_authority_map.review_bundle.json"
     bundle = {
         "schema_version": "responses_runner_v2.review_bundle.v1",
@@ -417,6 +506,8 @@ def write_existing_swr_review_bundle(root: Path, manifest_path: Path) -> Path:
         "primary_artifact_markdown": stage["response_markdown_path"],
         "response_artifact_json": stage["response_json_path"],
         "reviewer_notes": str(reviewer_notes.relative_to(root)),
+        "acceptance_record": str(operator_acceptance.relative_to(root)),
+        "review_decision_records": records,
         "artifact_hashes": {
             "primary_artifact_markdown_sha256": file_sha256(root / stage["response_markdown_path"]),
             "response_artifact_json_sha256": file_sha256(root / stage["response_json_path"]),
@@ -1019,10 +1110,26 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
                 def _arg(self, argv: list[str], flag: str) -> str:
                     return argv[argv.index(flag) + 1]
 
-                def _write_decision(self, rel: str, approval: str = "approve") -> None:
+                def _write_decision(
+                    self,
+                    rel: str,
+                    *,
+                    actor_role: str,
+                    review_kind: str = "stage_output",
+                    approval: str = "approve",
+                ) -> None:
                     path = root / rel
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(json.dumps({"approval_decision": approval, "recommendations": []}), encoding="utf-8")
+                    path.write_text(
+                        json.dumps(
+                            swr_review_decision(
+                                actor_role=actor_role,
+                                review_kind=review_kind,
+                                approval_decision=approval,
+                            )
+                        ),
+                        encoding="utf-8",
+                    )
 
                 def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
                     argv = list(argv)
@@ -1048,22 +1155,22 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
                         return CommandResult(argv, 0, '{"classification":"completed_complete_artifact"}', "")
                     if "supervisor invoke-operator" in joined:
                         rel = self._arg(argv, "--output-dir") + "/operator.json"
-                        self._write_decision(rel)
+                        self._write_decision(rel, actor_role="operator_codex")
                         return CommandResult(argv, 0, json.dumps({"operator_review": rel}), "")
                     if "supervisor invoke-reviewers" in joined:
                         out_dir = self._arg(argv, "--output-dir")
                         codex = out_dir + "/codex.json"
                         claude = out_dir + "/claude.json"
-                        self._write_decision(codex)
-                        self._write_decision(claude)
+                        self._write_decision(codex, actor_role="codex_review_agent")
+                        self._write_decision(claude, actor_role="claude_review_agent")
                         return CommandResult(argv, 0, json.dumps({"codex_review": codex, "claude_review": claude}), "")
                     if "supervisor consolidate" in joined:
                         output = self._arg(argv, "--output")
-                        self._write_decision(output, approval="approve_with_conditions")
+                        self._write_decision(output, actor_role="consolidation_pass", review_kind="consolidation", approval="approve_with_conditions")
                         return CommandResult(argv, 0, json.dumps({"json_report_path": output}), "")
                     if "supervisor accept" in joined:
                         output = self._arg(argv, "--output")
-                        self._write_decision(output)
+                        self._write_decision(output, actor_role="operator_codex", review_kind="operator_acceptance")
                         return CommandResult(argv, 0, json.dumps({"json_report_path": output, "approval_decision": "approve"}), "")
                     if "supervisor create-bundle" in joined:
                         output = self._arg(argv, "--output")
@@ -1107,6 +1214,88 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["active_swr_run"]["current_stage_id"], "repo_grounding")
             self.assertEqual(state["active_swr_run"]["response_id"], "resp_stage2")
+
+    def test_swr_review_lane_blocks_malformed_operator_before_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+
+            class MalformedOperatorRunner:
+                def __init__(self):
+                    self.calls: list[list[str]] = []
+
+                def _arg(self, argv: list[str], flag: str) -> str:
+                    return argv[argv.index(flag) + 1]
+
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    argv = list(argv)
+                    self.calls.append(argv)
+                    joined = " ".join(str(part) for part in argv)
+                    if "supervisor init-session" in joined:
+                        return CommandResult(argv, 0, '{"session":"autokeel-s02-run_20260527_test_waiting"}', "")
+                    if "supervisor classify" in joined:
+                        output = self._arg(argv, "--output")
+                        (root / output).parent.mkdir(parents=True, exist_ok=True)
+                        (root / output).write_text(
+                            json.dumps(
+                                {
+                                    "run_id": "run_20260527_test_waiting",
+                                    "stage_id": "source_authority_map",
+                                    "classification": "completed_complete_artifact",
+                                    "reviewable": True,
+                                    "review_bundle_allowed": True,
+                                }
+                            ),
+                            encoding="utf-8",
+                        )
+                        return CommandResult(argv, 0, '{"classification":"completed_complete_artifact"}', "")
+                    if "supervisor invoke-operator" in joined:
+                        rel = self._arg(argv, "--output-dir") + "/operator.json"
+                        path = root / rel
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(
+                            json.dumps(
+                                swr_review_decision(
+                                    actor_role="operator_codex",
+                                    review_kind="stage_output",
+                                    approval_decision="blocked",
+                                    status="malformed_output",
+                                    next_action="blocked",
+                                    blocking_issues=[
+                                        {
+                                            "issue_id": "operator_output_failure",
+                                            "severity": "blocking",
+                                            "description": "Agent stdout did not contain JSON.",
+                                            "evidence": ["Agent stdout did not contain JSON."],
+                                            "affected_artifacts": [],
+                                        }
+                                    ],
+                                    validation_errors=["Agent stdout did not contain JSON."],
+                                )
+                            ),
+                            encoding="utf-8",
+                        )
+                        return CommandResult(argv, 0, json.dumps({"operator_review": rel}), "")
+                    if "supervisor invoke-reviewers" in joined or "supervisor create-bundle" in joined or "keel-swr run" in joined:
+                        raise AssertionError("malformed operator review must block before reviewer, bundle, or continuation")
+                    return CommandResult(argv, 0, "", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = MalformedOperatorRunner()
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertEqual(result.exit_code, 32)
+            self.assertIn("operator review failed closed", result.stderr)
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertEqual(updated["status"], "blocked_compile_inputs")
+            calls = [" ".join(call) for call in op.runner.calls]
+            self.assertFalse(any("supervisor invoke-reviewers" in call for call in calls))
+            self.assertFalse(any("supervisor create-bundle" in call for call in calls))
+            self.assertEqual(json.loads(manifest.read_text(encoding="utf-8"))["current_stage_id"], "source_authority_map")
 
     def test_swr_waiting_for_review_reuses_existing_approved_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1183,6 +1372,104 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             report = validate_swr_review_bundle(bundle, root=root)
             self.assertEqual(report["status"], "error")
             self.assertTrue(any("output_sha256" in error for error in report["errors"]))
+
+    def test_swr_review_bundle_rejects_malformed_operator_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+            bundle = write_existing_swr_review_bundle(root, manifest)
+            payload = json.loads(bundle.read_text(encoding="utf-8"))
+            operator_record = root / payload["review_decision_records"]["operator_review"]
+            operator_payload = json.loads(operator_record.read_text(encoding="utf-8"))
+            operator_payload["status"] = "malformed_output"
+            operator_payload["approval_decision"] = "blocked"
+            operator_payload["next_action"] = "blocked"
+            operator_payload["validation_errors"] = ["Agent stdout did not contain JSON."]
+            operator_record.write_text(json.dumps(operator_payload), encoding="utf-8")
+
+            report = validate_swr_review_bundle(bundle, root=root)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("operator provisional review status must be succeeded" in error for error in report["errors"]))
+
+            op = AutoKeel(root=root, dry_run=False)
+            manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertIsNone(op.existing_swr_review_bundle(slice_, manifest_payload))
+
+    def test_swr_review_bundle_rejects_blocking_consolidation_despite_acceptance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+            bundle = write_existing_swr_review_bundle(root, manifest)
+            payload = json.loads(bundle.read_text(encoding="utf-8"))
+            consolidated_record = root / payload["review_decision_records"]["consolidated_review"]
+            consolidated_payload = json.loads(consolidated_record.read_text(encoding="utf-8"))
+            consolidated_payload["approval_decision"] = "do_not_approve"
+            consolidated_payload["blocking_issues"] = [
+                {
+                    "issue_id": "reviewer_output_failure",
+                    "severity": "blocking",
+                    "description": "Reviewer output failed schema validation.",
+                    "evidence": ["review decision failed schema validation"],
+                    "affected_artifacts": [],
+                }
+            ]
+            consolidated_record.write_text(json.dumps(consolidated_payload), encoding="utf-8")
+
+            report = validate_swr_review_bundle(bundle, root=root)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("consolidated review approval_decision" in error for error in report["errors"]))
+            self.assertTrue(any("consolidated review contains blocking_issues" in error for error in report["errors"]))
+
+            op = AutoKeel(root=root, dry_run=False)
+            manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertIsNone(op.existing_swr_review_bundle(slice_, manifest_payload))
+
+    def test_active_swr_run_blocks_when_prior_review_bundle_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            prepare_s02_swr_inputs(root)
+            manifest = write_waiting_swr_manifest(root)
+            bundle = write_existing_swr_review_bundle(root, manifest)
+            bundle_payload = json.loads(bundle.read_text(encoding="utf-8"))
+            operator_record = root / bundle_payload["review_decision_records"]["operator_review"]
+            operator_payload = json.loads(operator_record.read_text(encoding="utf-8"))
+            operator_payload["status"] = "malformed_output"
+            operator_payload["approval_decision"] = "blocked"
+            operator_payload["next_action"] = "blocked"
+            operator_record.write_text(json.dumps(operator_payload), encoding="utf-8")
+
+            manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+            manifest_payload["status"] = "running"
+            manifest_payload["current_stage_id"] = "repo_grounding"
+            manifest_payload["stages"][0]["review_bundle_path"] = str(bundle.relative_to(root))
+            manifest_payload["stages"][0]["review_approved"] = True
+            manifest_payload["stages"][1]["status"] = "in_progress"
+            manifest_payload["stages"][1]["response_id"] = "resp_repo_grounding"
+            manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+
+            class NoRemoteRunner:
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    if "keel-swr" in str(argv[0]) and "run" in argv:
+                        raise AssertionError("invalid prior review bundle must block before remote resume")
+                    return CommandResult(list(argv), 0, "", "")
+
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = NoRemoteRunner()
+            slice_ = next(item for item in op.load_slices() if item["id"] == "S02")
+
+            result = op.ensure_playbook(slice_)
+
+            self.assertEqual(result.exit_code, 32)
+            self.assertIn("SWR review history failed closed", result.stderr)
+            updated = next(item for item in op.load_slices() if item["id"] == "S02")
+            self.assertEqual(updated["status"], "blocked_compile_inputs")
 
     def test_swr_review_bundle_reuse_rejects_different_response_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

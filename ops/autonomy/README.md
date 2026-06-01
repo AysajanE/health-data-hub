@@ -94,7 +94,12 @@ approved review bundle, and continue the same SWR run with `--review-bundle`.
 AutoKeel must not launch the next SWR stage from an unreviewed stage output.
 If an approved review bundle already exists for the same run, stage, response
 artifacts, and hashes, AutoKeel reuses that bundle on retry instead of running a
-duplicate supervisor review cycle.
+duplicate supervisor review cycle. Bundle approval is valid only when the
+operator provisional review, both independent reviewer decisions, consolidation,
+and operator acceptance are all schema-valid, `succeeded`, non-blocking records.
+Malformed agent output, validation errors, `blocking_issues`, or a
+`do_not_approve` / `blocked` decision must stop the SWR lane before bundle
+creation or reuse.
 
 If the terminal SWR playbook materializes but fails
 `scripts/validate_playbook_autonomous.py`, AutoKeel must not convert that into

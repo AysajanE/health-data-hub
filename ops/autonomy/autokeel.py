@@ -2340,12 +2340,188 @@ Additional validator requirements:
             return None
         return path
 
+    def swr_review_failure(self, slice_: dict[str, Any], evidence_path: Path, reason: str) -> CommandResult:
+        failure = self.record_failure(
+            slice_["id"],
+            "audit_failure",
+            "high",
+            "SWR supervisor review did not satisfy the fail-closed review-bundle contract.",
+            "Stopped before creating or reusing a review bundle and before launching the next SWR stage.",
+            evidence_path,
+        )
+        self.mark_slice_status(
+            slice_["id"],
+            "blocked_compile_inputs",
+            failure_path=str(failure.relative_to(self.root)),
+            reason=reason,
+        )
+        self.clear_active_swr_run(slice_["id"], reason)
+        return CommandResult([], 32, "", reason)
+
     def current_swr_stage(self, payload: dict[str, Any]) -> dict[str, Any]:
         current_stage_id = payload.get("current_stage_id")
         for stage in payload.get("stages", []) if isinstance(payload.get("stages"), list) else []:
             if isinstance(stage, dict) and stage.get("stage_id") == current_stage_id:
                 return stage
         return {}
+
+    def swr_decision_record_errors(
+        self,
+        path_value: str | Path,
+        *,
+        label: str,
+        expected_actor: str,
+        expected_review_kind: str,
+        allowed_approvals: set[str],
+        payload: dict[str, Any],
+        required_next_action: str | None = None,
+    ) -> list[str]:
+        path = self.repo_artifact_path(str(path_value))
+        if path is None:
+            return [f"{label} path is outside the repository: {path_value}"]
+        decision = read_json(path, {})
+        if not isinstance(decision, dict):
+            return [f"{label} is not a JSON object: {path.relative_to(self.root)}"]
+
+        errors: list[str] = []
+        if decision.get("schema_version") != "responses_runner_v2.review_decision.v1":
+            errors.append(f"{label} has unexpected schema_version")
+        if decision.get("actor_role") != expected_actor:
+            errors.append(f"{label} actor_role must be {expected_actor}")
+        if decision.get("review_kind") != expected_review_kind:
+            errors.append(f"{label} review_kind must be {expected_review_kind}")
+        if decision.get("status") != "succeeded":
+            errors.append(f"{label} status must be succeeded")
+        approval = str(decision.get("approval_decision") or "")
+        if approval not in allowed_approvals:
+            errors.append(f"{label} approval_decision must be one of {sorted(allowed_approvals)}")
+        if required_next_action is not None and decision.get("next_action") != required_next_action:
+            errors.append(f"{label} next_action must be {required_next_action}")
+        if decision.get("validation_errors"):
+            errors.append(f"{label} contains validation_errors")
+        if decision.get("blocking_issues"):
+            errors.append(f"{label} contains blocking_issues")
+
+        run_id = str(payload.get("run_id") or "")
+        stage_id = str(payload.get("current_stage_id") or "")
+        if run_id and decision.get("run_id") not in {run_id, None, ""}:
+            errors.append(f"{label} run_id does not match current SWR run")
+        if stage_id and decision.get("stage_id") not in {stage_id, None, ""}:
+            errors.append(f"{label} stage_id does not match current SWR stage")
+        return errors
+
+    def swr_stage_review_record_errors(
+        self,
+        *,
+        operator_review: str,
+        codex_review: str,
+        claude_review: str,
+        consolidated_review: str,
+        acceptance_record: str,
+        payload: dict[str, Any],
+    ) -> list[str]:
+        checks = [
+            (
+                "operator provisional review",
+                operator_review,
+                "operator_codex",
+                "stage_output",
+                {"approve", "approve_with_conditions"},
+                None,
+            ),
+            (
+                "Codex reviewer decision",
+                codex_review,
+                "codex_review_agent",
+                "stage_output",
+                {"approve", "approve_with_conditions"},
+                None,
+            ),
+            (
+                "Claude reviewer decision",
+                claude_review,
+                "claude_review_agent",
+                "stage_output",
+                {"approve", "approve_with_conditions"},
+                None,
+            ),
+            (
+                "consolidated review",
+                consolidated_review,
+                "consolidation_pass",
+                "consolidation",
+                {"approve", "approve_with_conditions"},
+                "proceed_to_operator_acceptance",
+            ),
+            (
+                "operator acceptance",
+                acceptance_record,
+                "operator_codex",
+                "operator_acceptance",
+                {"approve"},
+                "create_review_bundle",
+            ),
+        ]
+        errors: list[str] = []
+        for label, record, actor, kind, approvals, next_action in checks:
+            if not record:
+                errors.append(f"{label} record is missing")
+                continue
+            errors.extend(
+                self.swr_decision_record_errors(
+                    record,
+                    label=label,
+                    expected_actor=actor,
+                    expected_review_kind=kind,
+                    allowed_approvals=approvals,
+                    payload=payload,
+                    required_next_action=next_action,
+                )
+            )
+        return errors
+
+    def parse_swr_reviewer_notes_records(self, reviewer_notes: Path) -> dict[str, str]:
+        if not reviewer_notes.exists():
+            return {}
+        records: dict[str, str] = {}
+        for line in reviewer_notes.read_text(encoding="utf-8").splitlines():
+            match = re.match(r"-\s+([A-Za-z0-9_]+):\s+`([^`]+)`", line.strip())
+            if match:
+                records[match.group(1)] = match.group(2)
+        return records
+
+    def swr_review_bundle_record_errors(self, bundle_path: Path, bundle: dict[str, Any], payload: dict[str, Any]) -> list[str]:
+        records = bundle.get("review_decision_records")
+        records = records if isinstance(records, dict) else {}
+        reviewer_notes_rel = str(bundle.get("reviewer_notes") or "")
+        reviewer_notes = self.repo_artifact_path(reviewer_notes_rel) if reviewer_notes_rel else None
+        parsed = self.parse_swr_reviewer_notes_records(reviewer_notes) if reviewer_notes is not None else {}
+
+        def record_for(key: str) -> str:
+            value = records.get(key)
+            if isinstance(value, str) and value:
+                return value
+            parsed_value = parsed.get(key)
+            if isinstance(parsed_value, str) and parsed_value:
+                return parsed_value
+            if key == "operator_acceptance":
+                acceptance = bundle.get("acceptance_record")
+                if isinstance(acceptance, str) and acceptance:
+                    return acceptance
+            if key == "consolidated_review":
+                candidate = bundle_path.parent / "consolidated_review.json"
+                if candidate.exists():
+                    return str(candidate.relative_to(self.root))
+            return ""
+
+        return self.swr_stage_review_record_errors(
+            operator_review=record_for("operator_review"),
+            codex_review=record_for("codex_review"),
+            claude_review=record_for("claude_review"),
+            consolidated_review=record_for("consolidated_review"),
+            acceptance_record=record_for("operator_acceptance"),
+            payload=payload,
+        )
 
     def swr_review_bundle_is_valid(self, bundle_path: Path, payload: dict[str, Any]) -> bool:
         bundle = read_json(bundle_path, {})
@@ -2416,6 +2592,12 @@ Additional validator requirements:
             return False
         if bundle.get("output_sha256") != file_sha256(output_artifact):
             return False
+        # Safety invariant: a review bundle cannot be treated as approved based
+        # on bundle self-claims alone. The accountable operator provisional,
+        # both independent reviewers, deterministic consolidation, and final
+        # operator acceptance must all be valid non-blocking decision records.
+        if self.swr_review_bundle_record_errors(bundle_path, bundle, payload):
+            return False
         return True
 
     def existing_swr_review_bundle(self, slice_: dict[str, Any], payload: dict[str, Any]) -> Path | None:
@@ -2439,6 +2621,26 @@ Additional validator requirements:
             if candidate.exists() and self.swr_review_bundle_is_valid(candidate, payload):
                 return candidate
         return None
+
+    def swr_review_history_errors(self, payload: dict[str, Any]) -> list[str]:
+        errors: list[str] = []
+        stages = payload.get("stages") if isinstance(payload.get("stages"), list) else []
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            bundle_rel = stage.get("review_bundle_path")
+            stage_id = str(stage.get("stage_id") or "")
+            if not isinstance(bundle_rel, str) or not bundle_rel:
+                continue
+            bundle_path = self.repo_artifact_path(bundle_rel)
+            if bundle_path is None or not bundle_path.exists():
+                errors.append(f"{stage_id}: review_bundle_path is missing or outside repo")
+                continue
+            stage_payload = dict(payload)
+            stage_payload["current_stage_id"] = stage_id
+            if not self.swr_review_bundle_is_valid(bundle_path, stage_payload):
+                errors.append(f"{stage_id}: review bundle failed decision-record/hash validation: {bundle_rel}")
+        return errors
 
     def swr_supervisor_session_id(self, slice_: dict[str, Any], payload: dict[str, Any]) -> str:
         raw = f"autokeel-{slice_['id']}-{payload.get('run_id') or 'run'}"
@@ -2566,6 +2768,7 @@ Additional validator requirements:
         bundle_path: Path,
         payload: dict[str, Any],
         acceptance_path: Path,
+        decision_records: dict[str, str],
         reviewer_notes_path: Path | None = None,
     ) -> None:
         bundle = read_json(bundle_path, {})
@@ -2602,6 +2805,7 @@ Additional validator requirements:
                 "consolidated_verdict": "pass",
                 "accepted_at": now_iso(),
                 "acceptance_record": str(acceptance_path.relative_to(self.root)),
+                "review_decision_records": decision_records,
             }
         )
         if reviewer_notes_path is not None:
@@ -2909,6 +3113,17 @@ Additional validator requirements:
             return operator
         operator_payload = self.parse_json_stdout(operator, {})
         operator_review = str(operator_payload.get("operator_review")) if isinstance(operator_payload, dict) else ""
+        operator_errors = self.swr_decision_record_errors(
+            operator_review,
+            label="operator provisional review",
+            expected_actor="operator_codex",
+            expected_review_kind="stage_output",
+            allowed_approvals={"approve", "approve_with_conditions"},
+            payload=payload,
+        )
+        if operator_errors:
+            evidence = self.repo_artifact_path(operator_review) or (review_dir / "operator")
+            return self.swr_review_failure(slice_, evidence, "SWR operator review failed closed: " + "; ".join(operator_errors))
 
         reviewers_cmd = [
             str(self.keel_swr_path()),
@@ -2933,6 +3148,30 @@ Additional validator requirements:
         reviewers_payload = self.parse_json_stdout(reviewers, {})
         codex_review = str(reviewers_payload.get("codex_review")) if isinstance(reviewers_payload, dict) else ""
         claude_review = str(reviewers_payload.get("claude_review")) if isinstance(reviewers_payload, dict) else ""
+        reviewer_errors: list[str] = []
+        reviewer_errors.extend(
+            self.swr_decision_record_errors(
+                codex_review,
+                label="Codex reviewer decision",
+                expected_actor="codex_review_agent",
+                expected_review_kind="stage_output",
+                allowed_approvals={"approve", "approve_with_conditions"},
+                payload=payload,
+            )
+        )
+        reviewer_errors.extend(
+            self.swr_decision_record_errors(
+                claude_review,
+                label="Claude reviewer decision",
+                expected_actor="claude_review_agent",
+                expected_review_kind="stage_output",
+                allowed_approvals={"approve", "approve_with_conditions"},
+                payload=payload,
+            )
+        )
+        if reviewer_errors:
+            evidence = self.repo_artifact_path(codex_review) or self.repo_artifact_path(claude_review) or (review_dir / "agents")
+            return self.swr_review_failure(slice_, evidence, "SWR independent review failed closed: " + "; ".join(reviewer_errors))
 
         consolidated = review_dir / "consolidated_review.json"
         consolidate_cmd = [
@@ -2957,6 +3196,17 @@ Additional validator requirements:
         consolidate = self.runner.run(consolidate_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         if not consolidate.ok:
             return consolidate
+        consolidation_errors = self.swr_decision_record_errors(
+            str(consolidated.relative_to(self.root)),
+            label="consolidated review",
+            expected_actor="consolidation_pass",
+            expected_review_kind="consolidation",
+            allowed_approvals={"approve", "approve_with_conditions"},
+            payload=payload,
+            required_next_action="proceed_to_operator_acceptance",
+        )
+        if consolidation_errors:
+            return self.swr_review_failure(slice_, consolidated, "SWR consolidation failed closed: " + "; ".join(consolidation_errors))
 
         acceptance = review_dir / "operator_acceptance.json"
         accept_cmd = [
@@ -2977,18 +3227,35 @@ Additional validator requirements:
         accept = self.runner.run(accept_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         if not accept.ok:
             return accept
-        acceptance_payload = read_json(acceptance, self.parse_json_stdout(accept, {}))
-        if not isinstance(acceptance_payload, dict) or acceptance_payload.get("approval_decision") != "approve":
-            failure = self.record_failure(
-                slice_["id"],
-                "audit_failure",
-                "high",
-                "SWR supervisor review did not approve next-stage progression.",
-                "Stopped before creating a review bundle or launching the next SWR stage.",
-                acceptance if acceptance.exists() else consolidated,
-            )
-            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason="SWR stage review not approved")
-            return CommandResult(accept_cmd, 32, "", "SWR stage review not approved")
+        acceptance_errors = self.swr_decision_record_errors(
+            str(acceptance.relative_to(self.root)),
+            label="operator acceptance",
+            expected_actor="operator_codex",
+            expected_review_kind="operator_acceptance",
+            allowed_approvals={"approve"},
+            payload=payload,
+            required_next_action="create_review_bundle",
+        )
+        if acceptance_errors:
+            return self.swr_review_failure(slice_, acceptance if acceptance.exists() else consolidated, "SWR acceptance failed closed: " + "; ".join(acceptance_errors))
+
+        decision_records = {
+            "operator_review": operator_review,
+            "codex_review": codex_review,
+            "claude_review": claude_review,
+            "consolidated_review": str(consolidated.relative_to(self.root)),
+            "operator_acceptance": str(acceptance.relative_to(self.root)),
+        }
+        record_errors = self.swr_stage_review_record_errors(
+            operator_review=operator_review,
+            codex_review=codex_review,
+            claude_review=claude_review,
+            consolidated_review=str(consolidated.relative_to(self.root)),
+            acceptance_record=str(acceptance.relative_to(self.root)),
+            payload=payload,
+        )
+        if record_errors:
+            return self.swr_review_failure(slice_, acceptance, "SWR review records failed closed: " + "; ".join(record_errors))
 
         files = {
             "operator_review": operator_review,
@@ -3037,7 +3304,7 @@ Additional validator requirements:
         bundle_rel = str(bundle_payload.get("bundle_path") or bundle_path.relative_to(self.root)) if isinstance(bundle_payload, dict) else str(bundle_path.relative_to(self.root))
         hardened_bundle = self.repo_artifact_path(bundle_rel)
         if hardened_bundle is not None and hardened_bundle.exists():
-            self.harden_swr_review_bundle(slice_, hardened_bundle, payload, acceptance, reviewer_notes)
+            self.harden_swr_review_bundle(slice_, hardened_bundle, payload, acceptance, decision_records, reviewer_notes)
             if not self.swr_review_bundle_is_valid(hardened_bundle, payload):
                 return CommandResult(bundle.argv, 32, "", f"SWR review bundle failed schema/hash validation: {bundle_rel}")
         continue_cmd = self.build_swr_continue_command(manifest_path, bundle_rel)
@@ -3056,6 +3323,14 @@ Additional validator requirements:
         active_manifest = leased_manifest or self.active_swr_manifest_from_state(slice_) or self.latest_swr_manifest_for_slice(slice_)
         if active_manifest is not None:
             active_payload = read_json(active_manifest, {})
+            if isinstance(active_payload, dict):
+                history_errors = self.swr_review_history_errors(active_payload)
+                if history_errors:
+                    return self.swr_review_failure(
+                        slice_,
+                        active_manifest,
+                        "SWR review history failed closed: " + "; ".join(history_errors),
+                    )
             if isinstance(active_payload, dict) and self.swr_waiting_for_review(active_payload):
                 return self.run_swr_review_lane(slice_, active_manifest)
             if not self.dry_run and self.swr_remote_check_due(slice_):
