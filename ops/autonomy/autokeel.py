@@ -716,7 +716,7 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             )
         root_counts: dict[str, int] = {}
         for row in closed_rows:
-            root_cause = str(row.get("root_cause_id") or row.get("failure_class") or "unclassified")
+            root_cause = self.failure_budget_root_key(row)
             root_counts[root_cause] = root_counts.get(root_cause, 0) + 1
         repeated_roots = sorted(f"{key}={value}" for key, value in root_counts.items() if value > max_closed_same_root)
         if repeated_roots:
@@ -726,6 +726,21 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             return CommandResult([], 37, "", f"run retarget budget exceeded for {slice_['id']}: {retarget_count} > {max_retargets}")
         resolved = len(all_rows) - len(rows)
         return CommandResult([], 0, f"failure budgets ok; unresolved={len(rows)} resolved={resolved}", "")
+
+    def failure_budget_root_key(self, row: dict[str, Any]) -> str:
+        failure_class = str(row.get("failure_class") or "unclassified")
+        slice_id = str(row.get("slice") or "UNKNOWN")
+        root_cause = str(row.get("root_cause_id") or failure_class)
+        generic_root = f"{slice_id}-{failure_class}".upper().replace("_", "-")
+        if root_cause and root_cause != generic_root:
+            return root_cause
+        # Safety invariant: generated root_cause_id values such as
+        # S05-AUDIT-FAILURE identify only the failure class, not the actual
+        # diagnosis. Do not let unrelated, evidence-closed repairs consume the
+        # same-root budget merely because they share a generic class label.
+        description = str(row.get("description") or failure_class).lower()
+        signature = re.sub(r"[^a-z0-9]+", "-", description).strip("-") or failure_class
+        return f"{generic_root}:{signature[:96]}"
 
     def retarget_evidence_paths(self, slice_id: str) -> list[Path]:
         evidence_dir = self.root / "docs/evidence"
