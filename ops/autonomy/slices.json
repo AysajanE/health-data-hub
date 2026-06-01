@@ -156,7 +156,7 @@
     "depends_on": [
       "S04"
     ],
-    "failure_path": "ops/autonomy/failures/S05-audit_failure-20260601T164548-0400-a28d47e7.md",
+    "failure_path": "ops/autonomy/failures/S05-audit_failure-20260601T175724-0400-6c9360e5.md",
     "id": "S05",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
@@ -168,7 +168,7 @@
     "pre_ship_commands": [
       "python scripts/verify_s05_provider_policy.py --json"
     ],
-    "reason": "SWR operator review failed closed: operator provisional review status must be succeeded; operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains validation_errors; operator provisional review contains blocking_issues",
+    "reason": "SWR independent review failed closed: Codex reviewer decision status must be succeeded; Codex reviewer decision approval_decision must be one of ['approve', 'approve_with_conditions']; Codex reviewer decision contains validation_errors; Codex reviewer decision contains blocking_issues; Claude reviewer decision status must be succeeded; Claude reviewer decision approval_decision must be one of ['approve', 'approve_with_conditions']; Claude reviewer decision contains validation_errors; Claude reviewer decision contains blocking_issues",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -179,9 +179,9 @@
     "slug": "s05-model-lifecycle",
     "status": "blocked_compile_inputs",
     "swr_review_repair": {
-      "created_at": "2026-06-01T16:45:48-04:00",
+      "created_at": "2026-06-01T17:57:24-04:00",
       "rationale": "The stage response artifacts are complete and hash-stable; rerun only the supervisor review lane and reset downstream stages that consumed the tainted handoff.",
-      "reason": "SWR operator review failed closed: operator provisional review status must be succeeded; operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains validation_errors; operator provisional review contains blocking_issues",
+      "reason": "SWR independent review failed closed: Codex reviewer decision status must be succeeded; Codex reviewer decision approval_decision must be one of ['approve', 'approve_with_conditions']; Codex reviewer decision contains validation_errors; Codex reviewer decision contains blocking_issues; Claude reviewer decision status must be succeeded; Claude reviewer decision approval_decision must be one of ['approve', 'approve_with_conditions']; Claude reviewer decision contains validation_errors; Claude reviewer decision contains blocking_issues",
       "repair_action": "rerun_review_lane",
       "repair_stage_id": "source_authority_map",
       "review_history_findings": [],
@@ -201,7 +201,7 @@
     },
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-01T17:13:35-04:00"
+    "updated_at": "2026-06-01T18:00:33-04:00"
   },
   {
     "acceptance": [
