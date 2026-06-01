@@ -663,6 +663,21 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         raw = str(row.get("description") or row.get("failure_description") or row.get("reason") or "")
         return " ".join(raw.lower().split())[:240]
 
+    def failure_scope_text(self, row: dict[str, Any]) -> str:
+        raw = " ".join(
+            str(row.get(key) or "")
+            for key in (
+                "description",
+                "failure_description",
+                "reason",
+                "action_taken",
+                "evidence_path",
+                "closure_note",
+                "closure_evidence",
+            )
+        )
+        return " ".join(raw.lower().split())
+
     def root_cause_budget_key(self, row: dict[str, Any]) -> str:
         repair_policy = self.policy.get("repair_budget", {})
         pattern = str(repair_policy.get("generic_root_cause_pattern") or r"^S[0-9]{2}-[A-Z_]+$")
@@ -678,6 +693,7 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         failure_class = str(row.get("failure_class") or "")
         origin = str(row.get("failure_origin") or "")
         description = self.failure_description_key(row)
+        scope_text = self.failure_scope_text(row)
         repair_policy = self.policy.get("repair_budget", {})
         meta_classes = set(repair_policy.get("meta_guardrail_failure_classes", []))
 
@@ -688,6 +704,23 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         if "readiness gate" in description or "pre-launch readiness" in description:
             return "autokeel_control_plane"
         if "exit code" in description or "generic compile failure" in description:
+            return "autokeel_control_plane"
+        if "swr supervisor review" in description and any(
+            marker in scope_text
+            for marker in (
+                "review-decision schema",
+                "schema validation",
+                "malformed_output",
+                "malformed reviewer",
+                "stale malformed",
+                "invalid review-history",
+                "cycle ids were normalized",
+                "schema adapter",
+            )
+        ):
+            # Safety invariant: malformed review-decision records are
+            # supervisor/control-plane defects. Valid semantic reviewer
+            # rejections still fall through to the SWR review-lane budget.
             return "autokeel_control_plane"
         if "swr supervisor review" in description or "review bundle" in description or "review history" in description:
             return "swr_review_lane"

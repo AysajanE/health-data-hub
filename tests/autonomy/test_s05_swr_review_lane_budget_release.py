@@ -17,6 +17,9 @@ def copy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "scripts", dst / "scripts")
     shutil.copytree(ROOT / "docs", dst / "docs")
     shutil.copytree(ROOT / "src", dst / "src")
+    release_artifact = dst / "docs/evidence/s05-swr-review-lane-budget-release.json"
+    if release_artifact.exists():
+        release_artifact.unlink()
     (dst / ".gitignore").write_text(
         "data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n.local/\n",
         encoding="utf-8",

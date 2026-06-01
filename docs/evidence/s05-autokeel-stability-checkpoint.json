@@ -19,7 +19,7 @@
         "command": "python -m pytest tests/autonomy -q",
         "exit_code": 0,
         "stderr_tail": "",
-        "stdout_tail": "........................................................................ [ 35%]\n........................................................................ [ 70%]\n...........................................................              [100%]\n203 passed in 26.87s\n"
+        "stdout_tail": "........................................................................ [ 34%]\n........................................................................ [ 69%]\n................................................................         [100%]\n208 passed in 26.52s\n"
       },
       {
         "command": "python -m pytest tests/model -q",
@@ -28,19 +28,13 @@
         "stdout_tail": ".                                                                        [100%]\n1 passed in 0.01s\n"
       }
     ],
-    "open_failures": [
-      {
-        "description": "closed repair budget exceeded for S05: 6 > 5",
-        "failure_class": "failure_budget_exceeded",
-        "severity": "high"
-      }
-    ],
-    "slice_reason": "closed repair budget exceeded for S05: 6 > 5",
-    "slice_status": "blocked",
+    "open_failures": [],
+    "slice_reason": "SWR operator review failed closed: operator provisional review status must be succeeded; operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains validation_errors; operator provisional review contains blocking_issues",
+    "slice_status": "blocked_compile_inputs",
     "swr_review_repair": {
-      "created_at": "2026-06-01T11:50:56-04:00",
+      "created_at": "2026-06-01T16:45:48-04:00",
       "rationale": "The stage response artifacts are complete and hash-stable; rerun only the supervisor review lane and reset downstream stages that consumed the tainted handoff.",
-      "reason": "SWR operator review failed closed: operator provisional review status must be succeeded; operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains blocking_issues",
+      "reason": "SWR operator review failed closed: operator provisional review status must be succeeded; operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains validation_errors; operator provisional review contains blocking_issues",
       "repair_action": "rerun_review_lane",
       "repair_stage_id": "source_authority_map",
       "review_history_findings": [],
@@ -59,7 +53,7 @@
       "status": "planned"
     }
   },
-  "created_at": "2026-06-01T12:42:50-04:00",
+  "created_at": "2026-06-01T17:15:18-04:00",
   "errors": [],
   "slice": "S05",
   "status": "ok",

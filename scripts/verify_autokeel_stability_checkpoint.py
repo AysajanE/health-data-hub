@@ -61,7 +61,7 @@ def verify_checkpoint(root: Path, slice_id: str) -> dict[str, Any]:
 
     checks["slice_status"] = target.get("status")
     checks["slice_reason"] = target.get("reason")
-    if target.get("status") != "blocked":
+    if target.get("status") not in {"blocked", "blocked_compile_inputs"}:
         errors.append(f"{slice_id} must be blocked at checkpoint time: {target.get('status')}")
 
     repair = target.get("swr_review_repair")

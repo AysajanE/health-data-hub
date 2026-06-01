@@ -716,6 +716,57 @@ Manual gates are forbidden.
             self.assertTrue(result.ok, result.stderr)
             self.assertIn("resolved=6", result.stdout)
 
+    def test_malformed_swr_review_decisions_use_control_plane_budget_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence_dir = root / "docs/evidence"
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            (evidence_dir / "root-cause.md").write_text("Root cause fixed.\n", encoding="utf-8")
+            (evidence_dir / "s05-autokeel-stability-checkpoint.json").write_text('{"status":"ok"}\n', encoding="utf-8")
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            rows = [
+                {
+                    "ts": now,
+                    "slice": "S05",
+                    "run_id": "RUN_TEST",
+                    "failure_class": "audit_failure",
+                    "severity": "high",
+                    "open": False,
+                    "description": "SWR supervisor review did not satisfy the fail-closed review-bundle contract.",
+                    "closure_evidence": "docs/evidence/root-cause.md",
+                    "closure_note": "Valid reviewer rejection remains in the review-lane budget.",
+                    "root_cause_id": "S05-SEMANTIC-REVIEW-FAILURE",
+                }
+            ]
+            rows.extend(
+                {
+                    "ts": now,
+                    "slice": "S05",
+                    "run_id": "RUN_TEST",
+                    "failure_class": "audit_failure",
+                    "severity": "high",
+                    "open": False,
+                    "description": "SWR supervisor review did not satisfy the fail-closed review-bundle contract.",
+                    "evidence_path": f".local/autokeel/swr/review_lane/S05/operator/cmd_operator_codex_{index}.json",
+                    "closure_evidence": "docs/evidence/root-cause.md",
+                    "closure_note": "Closed after adding a review-decision schema adapter for malformed_output field-shape drift.",
+                    "root_cause_id": f"S05-SCHEMA-DRIFT-{index}",
+                }
+                for index in range(4)
+            )
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            op = AutoKeel(root=root, dry_run=True)
+
+            self.assertEqual(op.repair_budget_scope(rows[0]), "swr_review_lane")
+            self.assertEqual(op.repair_budget_scope(rows[1]), "autokeel_control_plane")
+            result = op.failure_budget_exceeded(next(item for item in op.load_slices() if item["id"] == "S05"))
+
+            self.assertTrue(result.ok, result.stderr)
+
     def test_run_retarget_budget_blocks_third_retarget(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
