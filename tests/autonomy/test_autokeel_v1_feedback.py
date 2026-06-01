@@ -1522,6 +1522,12 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
                 "run_manifest": str(manifest.relative_to(root)),
                 "stale_downstream_stage_ids": ["repo_grounding"],
             }
+            stale_review_dir = root / ".local/autokeel/swr/review_lane/S02-run_20260527_test_waiting-source_authority_map"
+            (stale_review_dir / "agents").mkdir(parents=True, exist_ok=True)
+            (stale_review_dir / "agents/stale_malformed_review.json").write_text(
+                json.dumps({"status": "malformed_output", "approval_decision": "blocked"}),
+                encoding="utf-8",
+            )
             slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
             for item in slices:
                 if item["id"] == "S02":
@@ -1640,6 +1646,12 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertTrue(any("supervisor invoke-operator" in call for call in calls))
             self.assertTrue(any("keel-swr run" in call and "--review-bundle" in call for call in calls))
             self.assertFalse(any("keel-swr run" in call and "--run-name" in call for call in calls))
+            operator_call = next(call for call in runner.calls if "invoke-operator" in call)
+            operator_cycle = operator_call[operator_call.index("--review-cycle") + 1]
+            operator_output_dir = operator_call[operator_call.index("--output-dir") + 1]
+            self.assertIn("source_authority_map_stage_review_repair", operator_cycle)
+            self.assertIn(operator_cycle, operator_output_dir)
+            self.assertNotEqual(operator_output_dir, str((stale_review_dir / "operator").relative_to(root)))
             repaired = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertNotIn("autokeel_quarantined", repaired)
             self.assertEqual(repaired["current_stage_id"], "repo_grounding")

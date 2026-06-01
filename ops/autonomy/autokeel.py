@@ -2545,11 +2545,18 @@ Additional validator requirements:
         except json.JSONDecodeError:
             return default
 
-    def swr_review_dir(self, slice_: dict[str, Any], payload: dict[str, Any]) -> Path:
+    def swr_review_dir(self, slice_: dict[str, Any], payload: dict[str, Any], review_cycle_id: str | None = None) -> Path:
         run_id = str(payload.get("run_id") or "unknown_run")
         stage_id = str(payload.get("current_stage_id") or "unknown_stage")
-        safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{slice_['id']}-{run_id}-{stage_id}").strip("-")
+        default_cycle = f"{stage_id}_stage_review"
+        suffix = f"-{review_cycle_id}" if review_cycle_id and review_cycle_id != default_cycle else ""
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{slice_['id']}-{run_id}-{stage_id}{suffix}").strip("-")
         return self.root / ".local" / "autokeel" / "swr" / "review_lane" / safe
+
+    def swr_review_repair_cycle_id(self, repair_plan: dict[str, Any], stage_id: str) -> str:
+        created = str(repair_plan.get("created_at") or now_iso())
+        stamp = re.sub(r"[^A-Za-z0-9]+", "-", created).strip("-") or "repair"
+        return f"{stage_id}_stage_review_repair_{stamp}"
 
     def repo_artifact_path(self, rel_or_abs: str) -> Path | None:
         if not rel_or_abs:
@@ -3411,11 +3418,22 @@ Additional validator requirements:
                     slice_id=slice_["id"],
                 )
                 return CommandResult([], 0, "dry run SWR review repair planned", "")
+            review_cycle_id = self.swr_review_repair_cycle_id(repair_plan, stage_id)
             self.reset_swr_manifest_for_review_repair(manifest_path, stage_id)
-            result = self.run_swr_review_lane(slice_, manifest_path)
+            result = self.run_swr_review_lane(
+                slice_,
+                manifest_path,
+                review_cycle_id=review_cycle_id,
+                allow_existing_bundle=False,
+            )
             self.log_event(
                 "swr_review_repair_lane_passed" if result.ok or result.exit_code == 31 else "swr_review_repair_lane_failed",
-                {"repair_stage_id": stage_id, "exit_code": result.exit_code, "stderr": result.stderr[-2000:]},
+                {
+                    "repair_stage_id": stage_id,
+                    "review_cycle_id": review_cycle_id,
+                    "exit_code": result.exit_code,
+                    "stderr": result.stderr[-2000:],
+                },
                 slice_id=slice_["id"],
             )
             if result.ok or result.exit_code == 31:
@@ -3453,7 +3471,12 @@ Additional validator requirements:
             return result
         payload = read_json(manifest_path, {})
         if isinstance(payload, dict) and self.swr_waiting_for_review(payload):
-            review_result = self.run_swr_review_lane(slice_, manifest_path)
+            review_result = self.run_swr_review_lane(
+                slice_,
+                manifest_path,
+                review_cycle_id=self.swr_review_repair_cycle_id(repair_plan, stage_id),
+                allow_existing_bundle=False,
+            )
             if review_result.ok or review_result.exit_code == 31:
                 self.clear_swr_review_repair(slice_["id"])
             return review_result
@@ -3530,12 +3553,19 @@ Additional validator requirements:
         )
         return CommandResult(restore_command, 0, str(playbook.relative_to(self.root)), "")
 
-    def run_swr_review_lane(self, slice_: dict[str, Any], manifest_path: Path) -> CommandResult:
+    def run_swr_review_lane(
+        self,
+        slice_: dict[str, Any],
+        manifest_path: Path,
+        *,
+        review_cycle_id: str | None = None,
+        allow_existing_bundle: bool = True,
+    ) -> CommandResult:
         payload = read_json(manifest_path, {})
         if not isinstance(payload, dict):
             return CommandResult([], 32, "", f"invalid SWR manifest: {manifest_path}")
         stage_id = str(payload.get("current_stage_id") or "")
-        existing_bundle = self.existing_swr_review_bundle(slice_, payload)
+        existing_bundle = self.existing_swr_review_bundle(slice_, payload) if allow_existing_bundle else None
         if existing_bundle is not None:
             bundle_rel = str(existing_bundle.relative_to(self.root))
             self.log_event(
@@ -3550,7 +3580,8 @@ Additional validator requirements:
         session_id, session_result = self.ensure_swr_supervisor_session(slice_, manifest_path)
         if not session_result.ok:
             return session_result
-        review_dir = self.swr_review_dir(slice_, payload)
+        cycle = review_cycle_id or f"{stage_id}_stage_review"
+        review_dir = self.swr_review_dir(slice_, payload, review_cycle_id=cycle)
         review_dir.mkdir(parents=True, exist_ok=True)
         classify_output = review_dir / "stage_outcome.json"
         classify_cmd = [
@@ -3590,7 +3621,6 @@ Additional validator requirements:
             return CommandResult(classify_cmd, 32, "", "SWR stage review blocked")
 
         job = self.write_swr_stage_review_job(slice_, manifest_path, review_dir, classify_output)
-        cycle = f"{stage_id}_stage_review"
         operator_cmd = [
             str(self.keel_swr_path()),
             "supervisor",
