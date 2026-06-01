@@ -1,0 +1,57 @@
+{
+  "allow_one_next_repair_tick": true,
+  "budget_stop": {
+    "actual": 4,
+    "limit": 3,
+    "overage": 1
+  },
+  "commands": [
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ""
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py --json",
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "{\n  \"errors\": [],\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n"
+    },
+    {
+      "command": "python scripts/verify_swr_review_history.py .local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json --json",
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "{\n  \"checks\": [],\n  \"errors\": [],\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n"
+    },
+    {
+      "command": "python scripts/verify_autokeel_stability_checkpoint.py S05 --json",
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "{\n  \"checks\": {\n    \"active_run\": null,\n    \"active_swr_run\": null,\n    \"commands\": [\n      {\n        \"command\": \"git diff --check\",\n        \"exit_code\": 0,\n        \"stderr_tail\": \"\",\n        \"stdout_tail\": \"\"\n      },\n      {\n        \"command\": \"python scripts/check_no_tracked_data.py --json\",\n        \"exit_code\": 0,\n        \"stderr_tail\": \"\",\n        \"stdout_tail\": \"{\\n  \\\"errors\\\": [],\\n  \\\"status\\\": \\\"ok\\\",\\n  \\\"warnings\\\": []\\n}\\n\"\n      },\n      {\n        \"command\": \"python -m pytest tests/autonomy -q\",\n        \"exit_code\": 0,\n        \"stderr_tail\": \"\",\n        \"stdout_tail\": \"........................................................................ [ 34%]\\n........................................................................ [ 69%]\\n...............................................................          [100%]\\n207 passed in 31.83s\\n\"\n      },\n      {\n        \"command\": \"python -m pytest tests/model -q\",\n        \"exit_code\": 0,\n        \"stderr_tail\": \"\",\n        \"stdout_tail\": \".                                                                        [100%]\\n1 passed in 0.01s\\n\"\n      }\n    ],\n    \"open_failures\": [\n      {\n        \"description\": \"closed SWR review-lane repair budget exceeded for S05: 4 > 3\",\n        \"failure_class\": \"failure_budget_exceeded\",\n        \"severity\": \"high\"\n      }\n    ],\n    \"slice_reason\": \"closed SWR review-lane repair budget exceeded for S05: 4 > 3\",\n    \"slice_status\": \"blocked\",\n    \"swr_review_repair\": {\n      \"created_at\": \"2026-06-01T12:51:00-04:00\",\n      \"rationale\": \"The stage response artifacts are complete and hash-stable; rerun only the supervisor review lane and reset downstream stages that consumed the tainted handoff.\",\n      \"reason\": \"SWR operator review failed closed: operator provisional review status must be succeeded; operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains validation_errors; operator provisional review contains blocking_issues\",\n      \"repair_action\": \"rerun_review_lane\",\n      \"repair_stage_id\": \"source_authority_map\",\n      \"review_history_findings\": [],\n      \"run_dir\": \".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook\",\n      \"run_id\": \"run_20260601_133046_ae09e1ea\",\n      \"run_manifest\": \".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json\",\n      \"source_review_bundle\": null,\n      \"source_review_stage_id\": null,\n      \"stage_artifact_errors\": [],\n      \"stale_downstream_stage_ids\": [\n        \"repo_grounding\",\n        \"execution_row_draft\",\n        \"gate_and_contract_review\",\n        \"final_markdown_playbook\"\n      ],\n      \"status\": \"planned\"\n    }\n  },\n  \"created_at\": \"2026-06-01T16:39:31-04:00\",\n  \"errors\": [],\n  \"slice\": \"S05\",\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n"
+    }
+  ],
+  "consumed_at": "2026-06-01T16:40:04-04:00",
+  "created_at": "2026-06-01T16:39:31-04:00",
+  "errors": [],
+  "expires_at": "2026-06-02T16:39:31-04:00",
+  "release_key": "59ae4335caf624f02c22d06f4888521d59f7968f891847d71cc808e7dd4e5afe",
+  "release_type": "swr_review_lane_budget",
+  "repair_plan": {
+    "created_at": "2026-06-01T12:51:00-04:00",
+    "repair_action": "rerun_review_lane",
+    "repair_stage_id": "source_authority_map",
+    "run_id": "run_20260601_133046_ae09e1ea",
+    "run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json"
+  },
+  "safety": {
+    "does_not_authorize_fresh_swr_launch": true,
+    "does_not_authorize_po_start": true,
+    "does_not_raise_global_budget": true,
+    "same_run_review_lane_only": true
+  },
+  "schema_version": "autokeel.swr_review_lane_budget_release.v1",
+  "slice": "S05",
+  "verdict": "pass",
+  "warnings": []
+}
