@@ -650,6 +650,16 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         # only when local closure evidence still exists and explains the repair.
         return not self.failure_closure_evidence_valid(row)
 
+    def failure_counts_against_closed_repair_budget(self, row: dict[str, Any]) -> bool:
+        if row.get("open", True) or not self.failure_closure_evidence_valid(row):
+            return False
+        # `failure_budget_exceeded` is a meta-guardrail stop, not a repair of
+        # the slice artifact or SWR/PO run. Counting evidence-closed budget
+        # guardrail rows against the same closed-repair budget creates a
+        # recursive deadlock: fixing a false budget block consumes the budget
+        # required to proceed to the real bounded repair.
+        return row.get("failure_class") != "failure_budget_exceeded"
+
     def evidence_closed_failures(self, slice_id: str, failure_class: str | None = None, run_id: str | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for row in iter_jsonl(self.failure_path):
@@ -706,7 +716,7 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         repeated = sorted(f"{key}={value}" for key, value in counts.items() if value > max_same)
         if repeated:
             return CommandResult([], 37, "", f"same failure class budget exceeded for {slice_['id']}: {', '.join(repeated)}")
-        closed_rows = [row for row in all_rows if not row.get("open", True) and self.failure_closure_evidence_valid(row)]
+        closed_rows = [row for row in all_rows if self.failure_counts_against_closed_repair_budget(row)]
         if len(closed_rows) > max_closed_total:
             return CommandResult(
                 [],

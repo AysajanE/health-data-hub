@@ -668,6 +668,54 @@ Manual gates are forbidden.
             self.assertTrue(result.ok, result.stderr)
             self.assertIn("resolved=3", result.stdout)
 
+    def test_closed_failure_budget_rows_do_not_consume_closed_repair_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence = root / "docs/evidence/root-cause.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Root cause fixed.\n", encoding="utf-8")
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            rows = [
+                {
+                    "ts": now,
+                    "slice": "S01",
+                    "run_id": "RUN_TEST",
+                    "failure_class": "audit_failure",
+                    "severity": "high",
+                    "open": False,
+                    "closure_evidence": "docs/evidence/root-cause.md",
+                    "closure_note": "Fixed with local evidence.",
+                    "root_cause_id": f"S01-AUDIT-{index}",
+                    "description": f"distinct repair {index}",
+                }
+                for index in range(5)
+            ]
+            rows.append(
+                {
+                    "ts": now,
+                    "slice": "S01",
+                    "run_id": "RUN_TEST",
+                    "failure_class": "failure_budget_exceeded",
+                    "severity": "high",
+                    "open": False,
+                    "closure_evidence": "docs/evidence/root-cause.md",
+                    "closure_note": "Fixed budget accounting with local evidence.",
+                    "root_cause_id": "S01-FAILURE-BUDGET-EXCEEDED",
+                    "description": "closed repair budget exceeded for S01: 6 > 5",
+                }
+            )
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            op = AutoKeel(root=root, dry_run=True)
+
+            result = op.failure_budget_exceeded(op.load_slices()[0])
+
+            self.assertTrue(result.ok, result.stderr)
+            self.assertIn("resolved=6", result.stdout)
+
     def test_run_retarget_budget_blocks_third_retarget(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
