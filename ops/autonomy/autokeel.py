@@ -4745,18 +4745,26 @@ Use local files and commands only. If evidence is missing, write a failing revie
             run = self.start_or_resume_po(slice_)
             return self.run_po_and_handle_status(slice_, run)
 
-        readiness = self.run_slice_readiness(slice_["id"])
-        if not readiness.ok:
-            failure = self.record_failure(
-                slice_["id"],
-                "audit_failure",
-                "high",
-                "Slice readiness gate failed before launch.",
-                "Stopped before lane/evidence/compiler work; readiness must pass before this slice can start.",
-                self.root / "docs/briefs",
+        active_swr_manifest = self.active_swr_manifest_from_state(slice_)
+        if active_swr_manifest is None:
+            readiness = self.run_slice_readiness(slice_["id"])
+            if not readiness.ok:
+                failure = self.record_failure(
+                    slice_["id"],
+                    "audit_failure",
+                    "high",
+                    "Slice readiness gate failed before launch.",
+                    "Stopped before lane/evidence/compiler work; readiness must pass before this slice can start.",
+                    self.root / "docs/briefs",
+                )
+                self.mark_slice_status(slice_["id"], "blocked", failure_path=str(failure.relative_to(self.root)), reason=readiness.stderr or "slice readiness failed")
+                return readiness.exit_code or 35
+        else:
+            self.log_event(
+                "slice_readiness_skipped_active_swr",
+                {"run_manifest": str(active_swr_manifest.relative_to(self.root))},
+                slice_id=slice_["id"],
             )
-            self.mark_slice_status(slice_["id"], "blocked", failure_path=str(failure.relative_to(self.root)), reason=readiness.stderr or "slice readiness failed")
-            return readiness.exit_code or 35
 
         lane_decision = self.ensure_lane_decision(slice_)
         if not lane_decision.ok:
