@@ -1,0 +1,67 @@
+{
+  "checks": {
+    "active_run": null,
+    "active_swr_run": null,
+    "commands": [
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "stderr_tail": "",
+        "stdout_tail": ""
+      },
+      {
+        "command": "python scripts/check_no_tracked_data.py --json",
+        "exit_code": 0,
+        "stderr_tail": "",
+        "stdout_tail": "{\n  \"errors\": [],\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n"
+      },
+      {
+        "command": "python -m pytest tests/autonomy -q",
+        "exit_code": 0,
+        "stderr_tail": "",
+        "stdout_tail": "........................................................................ [ 35%]\n........................................................................ [ 70%]\n...........................................................              [100%]\n203 passed in 26.87s\n"
+      },
+      {
+        "command": "python -m pytest tests/model -q",
+        "exit_code": 0,
+        "stderr_tail": "",
+        "stdout_tail": ".                                                                        [100%]\n1 passed in 0.01s\n"
+      }
+    ],
+    "open_failures": [
+      {
+        "description": "closed repair budget exceeded for S05: 6 > 5",
+        "failure_class": "failure_budget_exceeded",
+        "severity": "high"
+      }
+    ],
+    "slice_reason": "closed repair budget exceeded for S05: 6 > 5",
+    "slice_status": "blocked",
+    "swr_review_repair": {
+      "created_at": "2026-06-01T11:50:56-04:00",
+      "rationale": "The stage response artifacts are complete and hash-stable; rerun only the supervisor review lane and reset downstream stages that consumed the tainted handoff.",
+      "reason": "SWR operator review failed closed: operator provisional review status must be succeeded; operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains blocking_issues",
+      "repair_action": "rerun_review_lane",
+      "repair_stage_id": "source_authority_map",
+      "review_history_findings": [],
+      "run_dir": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook",
+      "run_id": "run_20260601_133046_ae09e1ea",
+      "run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
+      "source_review_bundle": null,
+      "source_review_stage_id": null,
+      "stage_artifact_errors": [],
+      "stale_downstream_stage_ids": [
+        "repo_grounding",
+        "execution_row_draft",
+        "gate_and_contract_review",
+        "final_markdown_playbook"
+      ],
+      "status": "planned"
+    }
+  },
+  "created_at": "2026-06-01T12:42:50-04:00",
+  "errors": [],
+  "slice": "S05",
+  "status": "ok",
+  "warnings": []
+}

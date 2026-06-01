@@ -82,6 +82,10 @@ def slug_ts() -> str:
     return datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
 
 
+def now_slug() -> str:
+    return slug_ts()
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -653,12 +657,43 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
     def failure_counts_against_closed_repair_budget(self, row: dict[str, Any]) -> bool:
         if row.get("open", True) or not self.failure_closure_evidence_valid(row):
             return False
-        # `failure_budget_exceeded` is a meta-guardrail stop, not a repair of
-        # the slice artifact or SWR/PO run. Counting evidence-closed budget
-        # guardrail rows against the same closed-repair budget creates a
-        # recursive deadlock: fixing a false budget block consumes the budget
-        # required to proceed to the real bounded repair.
-        return row.get("failure_class") != "failure_budget_exceeded"
+        return self.repair_budget_scope(row) != "meta_guardrail"
+
+    def failure_description_key(self, row: dict[str, Any]) -> str:
+        raw = str(row.get("description") or row.get("failure_description") or row.get("reason") or "")
+        return " ".join(raw.lower().split())[:240]
+
+    def root_cause_budget_key(self, row: dict[str, Any]) -> str:
+        repair_policy = self.policy.get("repair_budget", {})
+        pattern = str(repair_policy.get("generic_root_cause_pattern") or r"^S[0-9]{2}-[A-Z_]+$")
+        root = str(row.get("root_cause_id") or "")
+        failure_class = str(row.get("failure_class") or "unclassified")
+        slice_id = str(row.get("slice") or "UNKNOWN")
+        generated_root = f"{slice_id}-{failure_class}".upper().replace("_", "-")
+        if root and (re.match(pattern, root) or root == generated_root):
+            return f"{row.get('failure_class')}:{self.failure_description_key(row)}"
+        return root or f"{row.get('failure_class')}:{self.failure_description_key(row)}"
+
+    def repair_budget_scope(self, row: dict[str, Any]) -> str:
+        failure_class = str(row.get("failure_class") or "")
+        origin = str(row.get("failure_origin") or "")
+        description = self.failure_description_key(row)
+        repair_policy = self.policy.get("repair_budget", {})
+        meta_classes = set(repair_policy.get("meta_guardrail_failure_classes", []))
+
+        if failure_class in meta_classes:
+            return "meta_guardrail"
+        if origin == "autokeel_wrapper":
+            return "autokeel_control_plane"
+        if "readiness gate" in description or "pre-launch readiness" in description:
+            return "autokeel_control_plane"
+        if "exit code" in description or "generic compile failure" in description:
+            return "autokeel_control_plane"
+        if "swr supervisor review" in description or "review bundle" in description or "review history" in description:
+            return "swr_review_lane"
+        if failure_class in {"compile_failure", "test_failure", "agent_false_done", "model_gate_failed"}:
+            return "product_or_playbook"
+        return "product_or_playbook"
 
     def evidence_closed_failures(self, slice_id: str, failure_class: str | None = None, run_id: str | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -716,17 +751,37 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         repeated = sorted(f"{key}={value}" for key, value in counts.items() if value > max_same)
         if repeated:
             return CommandResult([], 37, "", f"same failure class budget exceeded for {slice_['id']}: {', '.join(repeated)}")
-        closed_rows = [row for row in all_rows if self.failure_counts_against_closed_repair_budget(row)]
-        if len(closed_rows) > max_closed_total:
-            return CommandResult(
-                [],
-                37,
-                "",
-                f"closed repair budget exceeded for {slice_['id']}: {len(closed_rows)} > {max_closed_total}",
-            )
+
+        repair_policy = self.policy.get("repair_budget", {})
+        max_product = int(repair_policy.get("max_closed_product_or_playbook_repairs_per_slice", max_closed_total))
+        max_swr_review = int(repair_policy.get("max_closed_swr_review_lane_repairs_per_slice", 3))
+        max_control = int(repair_policy.get("max_closed_control_plane_repairs_before_stability_checkpoint", 3))
+
+        evidence_closed_rows = [
+            row for row in all_rows
+            if not row.get("open", True)
+            and self.failure_closure_evidence_valid(row)
+            and self.failure_counts_against_closed_repair_budget(row)
+        ]
+
+        by_scope: dict[str, list[dict[str, Any]]] = {}
+        for row in evidence_closed_rows:
+            by_scope.setdefault(self.repair_budget_scope(row), []).append(row)
+
+        if len(by_scope.get("product_or_playbook", [])) > max_product:
+            return CommandResult([], 37, "", f"closed product/playbook repair budget exceeded for {slice_['id']}: {len(by_scope['product_or_playbook'])} > {max_product}")
+
+        if len(by_scope.get("swr_review_lane", [])) > max_swr_review:
+            return CommandResult([], 37, "", f"closed SWR review-lane repair budget exceeded for {slice_['id']}: {len(by_scope['swr_review_lane'])} > {max_swr_review}")
+
+        if len(by_scope.get("autokeel_control_plane", [])) > max_control:
+            checkpoint = self.root / "docs" / "evidence" / f"{slice_['id'].lower()}-autokeel-stability-checkpoint.json"
+            if repair_policy.get("require_stability_checkpoint_after_control_plane_budget", True) and not checkpoint.exists():
+                return CommandResult([], 37, "", f"control-plane repair checkpoint required for {slice_['id']}: {len(by_scope['autokeel_control_plane'])} > {max_control}")
+
         root_counts: dict[str, int] = {}
-        for row in closed_rows:
-            root_cause = self.failure_budget_root_key(row)
+        for row in evidence_closed_rows:
+            root_cause = self.root_cause_budget_key(row)
             root_counts[root_cause] = root_counts.get(root_cause, 0) + 1
         repeated_roots = sorted(f"{key}={value}" for key, value in root_counts.items() if value > max_closed_same_root)
         if repeated_roots:
@@ -1310,6 +1365,46 @@ Return only a Markdown autoplan suitable to save at:
         if isinstance(payload, dict) and self.swr_run_is_active(payload):
             return manifest
         return None
+
+    def swr_execution_phase(self, slice_: dict[str, Any]) -> str:
+        """Return the canonical execution phase for a high-risk SWR slice.
+
+        The result is intentionally small and closed. All launch/readiness/resume
+        decisions must consult this before applying pre-launch gates.
+        """
+        if slice_.get("lane") != "swr_preferred" or slice_.get("risk") != "high":
+            return "not_swr"
+
+        repair = slice_.get("swr_review_repair")
+        if isinstance(repair, dict):
+            status = str(repair.get("status") or "")
+            manifest_rel = str(repair.get("run_manifest") or "")
+            if status == "planned" and manifest_rel and (self.root / manifest_rel).exists():
+                return "swr_review_repair"
+            if status == "planned":
+                return "swr_repair_malformed"
+
+        state = self.load_state()
+        active = state.get("active_swr_run")
+        if isinstance(active, dict) and active.get("slice") == slice_.get("id"):
+            manifest_rel = str(active.get("run_manifest") or "")
+            if manifest_rel and (self.root / manifest_rel).exists():
+                manifest = read_json(self.root / manifest_rel, {})
+                if manifest.get("autokeel_quarantined") or manifest.get("status") == "quarantined":
+                    return "swr_quarantined"
+                return "active_swr_resume"
+
+        manifest_rel = str(slice_.get("swr_run_manifest") or "")
+        if manifest_rel and (self.root / manifest_rel).exists():
+            manifest = read_json(self.root / manifest_rel, {})
+            if manifest.get("autokeel_quarantined") or manifest.get("status") == "quarantined":
+                return "swr_quarantined"
+
+        return "fresh_launch"
+
+    def should_run_slice_readiness(self, slice_: dict[str, Any]) -> bool:
+        phase = self.swr_execution_phase(slice_)
+        return phase in {"not_swr", "fresh_launch"}
 
     def record_active_swr_run(
         self,
@@ -2558,6 +2653,40 @@ Additional validator requirements:
         stamp = re.sub(r"[^A-Za-z0-9]+", "-", created).strip("-") or "repair"
         return f"{stage_id}_stage_review_repair_{stamp}"
 
+    def swr_repair_cycle_id(self, slice_: dict[str, Any], stage_id: str) -> str:
+        repair = slice_.get("swr_review_repair")
+        created_at = ""
+        if isinstance(repair, dict):
+            created_at = str(repair.get("created_at") or "")
+        safe_created = re.sub(r"[^0-9A-Za-z]+", "", created_at)[:32] or now_slug()
+        return f"{stage_id}_stage_review_repair_{safe_created}"
+
+    def swr_review_lane_dir(
+        self,
+        *,
+        slice_id: str,
+        run_id: str,
+        stage_id: str,
+        review_cycle_id: str,
+    ) -> Path:
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{slice_id}-{run_id}-{stage_id}-{review_cycle_id}")
+        return self.root / ".local/autokeel/swr/review_lane" / safe
+
+    def assert_fresh_review_repair_dir(self, review_dir: Path, review_cycle_id: str) -> CommandResult:
+        marker = review_dir / ".autokeel_review_cycle_id"
+        if review_dir.exists() and marker.exists() and marker.read_text(encoding="utf-8").strip() == review_cycle_id:
+            return CommandResult([], 0, "review repair directory belongs to this cycle", "")
+        if review_dir.exists() and any(review_dir.rglob("*.json")):
+            return CommandResult(
+                [],
+                32,
+                "",
+                f"review repair directory is not fresh and contains prior sidecars: {review_dir}",
+            )
+        review_dir.mkdir(parents=True, exist_ok=True)
+        marker.write_text(review_cycle_id + "\n", encoding="utf-8")
+        return CommandResult([], 0, "fresh review repair directory prepared", "")
+
     def repo_artifact_path(self, rel_or_abs: str) -> Path | None:
         if not rel_or_abs:
             return None
@@ -3418,7 +3547,25 @@ Additional validator requirements:
                     slice_id=slice_["id"],
                 )
                 return CommandResult([], 0, "dry run SWR review repair planned", "")
-            review_cycle_id = self.swr_review_repair_cycle_id(repair_plan, stage_id)
+            review_cycle_id = self.swr_repair_cycle_id(slice_, stage_id)
+            review_dir = self.swr_review_lane_dir(
+                slice_id=slice_["id"],
+                run_id=repair_plan["run_id"],
+                stage_id=stage_id,
+                review_cycle_id=review_cycle_id,
+            )
+            fresh = self.assert_fresh_review_repair_dir(review_dir, review_cycle_id)
+            if not fresh.ok:
+                self.record_failure(
+                    slice_["id"],
+                    "audit_failure",
+                    "high",
+                    "SWR review repair directory was contaminated by stale sidecars.",
+                    fresh.stderr,
+                    review_dir,
+                )
+                self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason="SWR review repair directory contaminated")
+                return fresh
             self.reset_swr_manifest_for_review_repair(manifest_path, stage_id)
             result = self.run_swr_review_lane(
                 slice_,
@@ -5529,6 +5676,37 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return 1
 
         self.ensure_slice_brief(slice_)
+        phase = self.swr_execution_phase(slice_)
+        self.log_event(
+            "slice_execution_phase_determined",
+            {"phase": phase, "status": slice_.get("status")},
+            slice_id=slice_["id"],
+        )
+
+        if phase == "swr_repair_malformed":
+            self.record_failure(
+                slice_["id"],
+                "state_divergence",
+                "high",
+                "SWR review repair plan is malformed or references a missing manifest.",
+                "Stopped before launch/resume; repair plan must be fixed with local evidence.",
+                self.root / "ops/autonomy/slices.json",
+            )
+            self.mark_slice_status(slice_["id"], "blocked", reason="malformed SWR review repair plan")
+            return 36
+
+        if phase == "swr_quarantined" and not isinstance(slice_.get("swr_review_repair"), dict):
+            self.record_failure(
+                slice_["id"],
+                "audit_failure",
+                "high",
+                "SWR run is quarantined without a planned repair.",
+                "Stopped before launch/resume; create a bounded repair plan or abandon with evidence.",
+                self.root / "ops/autonomy/slices.json",
+            )
+            self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason="SWR run quarantined without repair plan")
+            return 32
+
         budgets = self.failure_budget_exceeded(slice_)
         if not budgets.ok:
             failure = self.record_failure(
@@ -5562,21 +5740,10 @@ Use local files and commands only. If evidence is missing, write a failing revie
             run = self.start_or_resume_po(slice_)
             return self.run_po_and_handle_status(slice_, run)
 
-        active_swr_manifest = self.active_swr_manifest_from_state(slice_)
-        if active_swr_manifest is None and isinstance(slice_.get("swr_review_repair"), dict):
-            self.log_event(
-                "slice_readiness_skipped_swr_review_repair",
-                {
-                    "run_manifest": slice_["swr_review_repair"].get("run_manifest"),
-                    "repair_action": slice_["swr_review_repair"].get("repair_action"),
-                    "repair_stage_id": slice_["swr_review_repair"].get("repair_stage_id"),
-                },
-                slice_id=slice_["id"],
-            )
-        elif active_swr_manifest is None:
+        if self.should_run_slice_readiness(slice_):
             readiness = self.run_slice_readiness(slice_["id"])
             if not readiness.ok:
-                failure = self.record_failure(
+                self.record_failure(
                     slice_["id"],
                     "audit_failure",
                     "high",
@@ -5584,14 +5751,38 @@ Use local files and commands only. If evidence is missing, write a failing revie
                     "Stopped before lane/evidence/compiler work; readiness must pass before this slice can start.",
                     self.root / "docs/briefs",
                 )
-                self.mark_slice_status(slice_["id"], "blocked", failure_path=str(failure.relative_to(self.root)), reason=readiness.stderr or "slice readiness failed")
+                self.mark_slice_status(slice_["id"], "blocked", reason="slice readiness failed")
                 return readiness.exit_code or 35
         else:
             self.log_event(
-                "slice_readiness_skipped_active_swr",
-                {"run_manifest": str(active_swr_manifest.relative_to(self.root))},
+                "slice_readiness_skipped_existing_swr_phase",
+                {"phase": phase},
                 slice_id=slice_["id"],
             )
+
+        if phase in {"active_swr_resume", "swr_review_repair"}:
+            manifest_rel = str(
+                (slice_.get("swr_review_repair") or {}).get("run_manifest")
+                if isinstance(slice_.get("swr_review_repair"), dict)
+                else slice_.get("swr_run_manifest")
+            )
+            if manifest_rel:
+                result = self.runner.run(
+                    ["python", "scripts/verify_swr_review_history.py", manifest_rel, "--json"],
+                    cwd=self.root,
+                    execute_in_dry_run=True,
+                )
+                if not result.ok:
+                    self.record_failure(
+                        slice_["id"],
+                        "audit_failure",
+                        "high",
+                        "SWR review history failed closed before resume.",
+                        result.stderr[-2000:] or result.stdout[-2000:],
+                        self.root / manifest_rel,
+                    )
+                    self.mark_slice_status(slice_["id"], "blocked_compile_inputs", reason="SWR review history failed closed")
+                    return 32
 
         lane_decision = self.ensure_lane_decision(slice_)
         if not lane_decision.ok:

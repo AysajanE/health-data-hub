@@ -177,7 +177,7 @@
     ],
     "risk": "high",
     "slug": "s05-model-lifecycle",
-    "status": "blocked",
+    "status": "blocked_compile_inputs",
     "swr_review_repair": {
       "created_at": "2026-06-01T11:50:56-04:00",
       "rationale": "The stage response artifacts are complete and hash-stable; rerun only the supervisor review lane and reset downstream stages that consumed the tainted handoff.",
@@ -201,7 +201,7 @@
     },
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-01T11:56:06-04:00"
+    "updated_at": "2026-06-01T12:42:55-04:00"
   },
   {
     "acceptance": [

@@ -194,6 +194,29 @@ loop:
   po_repaired_escalation_resume_attempts: 1
   heartbeat_path: ops/autonomy/heartbeats/latest.json
 
+repair_budget:
+  schema_version: autokeel.repair_budget.v1
+
+  # Never count meta stops as closed repairs. Open meta stops still block.
+  meta_guardrail_failure_classes:
+    - failure_budget_exceeded
+
+  # Generic historical root-cause IDs are class placeholders, not diagnoses.
+  generic_root_cause_pattern: "^S[0-9]{2}-[A-Z_]+$"
+
+  # Closed product/playbook repairs remain tightly bounded.
+  max_closed_product_or_playbook_repairs_per_slice: 5
+
+  # SWR review-lane repairs are separately bounded because they repair the
+  # supervisor/review handoff, not product code.
+  max_closed_swr_review_lane_repairs_per_slice: 3
+
+  # Too many control-plane repairs means the autonomous harness must pass a
+  # stabilization checkpoint before relaunch. This is not a bypass.
+  max_closed_control_plane_repairs_before_stability_checkpoint: 3
+
+  require_stability_checkpoint_after_control_plane_budget: true
+
 commands:
   optional_tools:
     - claude
