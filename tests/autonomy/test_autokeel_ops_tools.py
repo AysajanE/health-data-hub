@@ -25,9 +25,17 @@ def copy_autonomy_fixture(dst: Path) -> None:
     slices = json.loads(slices_path.read_text(encoding="utf-8"))
     for item in slices:
         item["status"] = "pending"
-        item.pop("retry_count", None)
-        item.pop("failure_path", None)
-        item.pop("run_id", None)
+        for stale_key in (
+            "retry_count",
+            "failure_path",
+            "reason",
+            "run_id",
+            "swr_run_id",
+            "swr_run_manifest",
+            "swr_review_repair",
+            "swr_validation_repair",
+        ):
+            item.pop(stale_key, None)
     write_json_atomic(slices_path, slices)
     write_json_atomic(
         dst / "ops/autonomy/autonomy_state.json",
@@ -108,6 +116,40 @@ class AutoKeelOpsToolTests(unittest.TestCase):
             updated = json.loads(slices_path.read_text(encoding="utf-8"))
             self.assertEqual(updated[0]["status"], "replan_required")
             self.assertEqual(updated[0]["retry_count"], 0)
+            state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["current_slice"], "S01")
+
+    def test_close_failure_preserves_swr_review_repair_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence = root / "docs/reviews/closure.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Verdict: pass\n", encoding="utf-8")
+            slices_path = root / "ops/autonomy/slices.json"
+            slices = json.loads(slices_path.read_text(encoding="utf-8"))
+            slices[0]["status"] = "blocked"
+            slices[0]["retry_count"] = 5
+            slices[0]["reason"] = "slice readiness failed"
+            slices[0]["swr_review_repair"] = {
+                "repair_action": "rerun_review_lane",
+                "repair_stage_id": "source_authority_map",
+            }
+            write_json_atomic(slices_path, slices)
+            ledger = root / "ops/autonomy/failure_ledger.jsonl"
+            ledger.write_text(
+                json.dumps({"slice": "S01", "failure_class": "audit_failure", "severity": "high", "open": True}) + "\n",
+                encoding="utf-8",
+            )
+
+            report = close_failure(root, "S01", "audit_failure", "docs/reviews/closure.md", "closed in test")
+
+            self.assertEqual(report["status"], "ok")
+            updated = json.loads(slices_path.read_text(encoding="utf-8"))
+            self.assertEqual(updated[0]["status"], "blocked_compile_inputs")
+            self.assertEqual(updated[0]["retry_count"], 0)
+            self.assertEqual(updated[0]["reason"], "slice readiness failed")
+            self.assertEqual(updated[0]["swr_review_repair"]["repair_action"], "rerun_review_lane")
             state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["current_slice"], "S01")
 

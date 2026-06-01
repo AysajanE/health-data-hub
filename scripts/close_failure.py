@@ -80,9 +80,12 @@ def requeue_closed_blocked_slice(root: Path, slice_id: str, rows: list[dict[str,
             continue
         if item.get("status") not in {"blocked", "blocked_compile_inputs"}:
             return False
-        item["status"] = "replan_required"
+        if isinstance(item.get("swr_review_repair"), dict):
+            item["status"] = "blocked_compile_inputs"
+        else:
+            item["status"] = "replan_required"
+            item.pop("reason", None)
         item["retry_count"] = 0
-        item.pop("reason", None)
         item["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         changed = True
         break

@@ -5523,7 +5523,17 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return self.run_po_and_handle_status(slice_, run)
 
         active_swr_manifest = self.active_swr_manifest_from_state(slice_)
-        if active_swr_manifest is None:
+        if active_swr_manifest is None and isinstance(slice_.get("swr_review_repair"), dict):
+            self.log_event(
+                "slice_readiness_skipped_swr_review_repair",
+                {
+                    "run_manifest": slice_["swr_review_repair"].get("run_manifest"),
+                    "repair_action": slice_["swr_review_repair"].get("repair_action"),
+                    "repair_stage_id": slice_["swr_review_repair"].get("repair_stage_id"),
+                },
+                slice_id=slice_["id"],
+            )
+        elif active_swr_manifest is None:
             readiness = self.run_slice_readiness(slice_["id"])
             if not readiness.ok:
                 failure = self.record_failure(

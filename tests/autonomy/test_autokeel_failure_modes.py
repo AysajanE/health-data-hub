@@ -23,9 +23,17 @@ def copy_autonomy_fixture(dst: Path) -> None:
     slices = json.loads(slices_path.read_text(encoding="utf-8"))
     for item in slices:
         item["status"] = "pending"
-        item.pop("retry_count", None)
-        item.pop("failure_path", None)
-        item.pop("run_id", None)
+        for stale_key in (
+            "retry_count",
+            "failure_path",
+            "reason",
+            "run_id",
+            "swr_run_id",
+            "swr_run_manifest",
+            "swr_review_repair",
+            "swr_validation_repair",
+        ):
+            item.pop(stale_key, None)
     write_json_atomic(slices_path, slices)
     write_json_atomic(
         dst / "ops/autonomy/autonomy_state.json",
