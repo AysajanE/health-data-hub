@@ -69,8 +69,8 @@ def verify(root: Path) -> dict[str, Any]:
     else:
         if repair.get("status") != "planned":
             errors.append(f"S05 repair status must be planned: {repair.get('status')}")
-        if repair.get("repair_action") != "rerun_review_lane":
-            errors.append(f"S05 repair_action must be rerun_review_lane: {repair.get('repair_action')}")
+        if repair.get("repair_action") not in {"rerun_review_lane", "rerun_single_stage"}:
+            errors.append(f"S05 repair_action must be a runnable same-run repair: {repair.get('repair_action')}")
         if repair.get("repair_stage_id") != "source_authority_map":
             errors.append(f"S05 repair_stage_id must be source_authority_map: {repair.get('repair_stage_id')}")
         manifest = str(repair.get("run_manifest") or "")
