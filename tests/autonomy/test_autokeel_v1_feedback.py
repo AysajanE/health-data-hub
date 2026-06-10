@@ -25,6 +25,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def copy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "ops", dst / "ops")
+    # The real repo's state-digest sidecar must never leak into fixtures:
+    # fixture roots hand-edit state, and the first fixture tick re-baselines.
+    (dst / "ops/autonomy/state_digest.json").unlink(missing_ok=True)
     shutil.copytree(ROOT / "scripts", dst / "scripts")
     (dst / ".gitignore").write_text("data/\nprivate/\n.env\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n", encoding="utf-8")
     for rel in ("ops/autonomy/failures/archived_playbooks", "ops/autonomy/failures/archived_autoplans", "ops/autonomy/heartbeats"):

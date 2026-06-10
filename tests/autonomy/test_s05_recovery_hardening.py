@@ -34,6 +34,9 @@ from ops.autonomy.autokeel import (  # noqa: E402
 
 def copy_autonomy_fixture(dst: Path) -> None:
     shutil.copytree(ROOT / "ops", dst / "ops")
+    # The real repo's state-digest sidecar must never leak into fixtures:
+    # fixture roots hand-edit state, and the first fixture tick re-baselines.
+    (dst / "ops/autonomy/state_digest.json").unlink(missing_ok=True)
     shutil.copytree(ROOT / "scripts", dst / "scripts")
     (dst / ".gitignore").write_text(
         "data/\nprivate/\n.env\n.local/\nops/autonomy/.autokeel.lock\nops/autonomy/*.tmp\n",
