@@ -4350,7 +4350,11 @@ Additional validator requirements:
             slice_id=slice_["id"],
         )
         if not classify.ok:
-            return classify
+            return self.swr_review_transport_failure(
+                slice_,
+                classify_output if classify_output.exists() else manifest_path,
+                f"SWR review transport failed: supervisor classify command exited {classify.exit_code}: {classify.stderr[-400:]}",
+            )
         outcome = read_json(classify_output, self.parse_json_stdout(classify, {}))
         if not isinstance(outcome, dict) or not outcome.get("reviewable") or not outcome.get("review_bundle_allowed", True):
             failure = self.record_failure(
@@ -4384,7 +4388,11 @@ Additional validator requirements:
         ]
         operator = self.runner.run(operator_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         if not operator.ok:
-            return operator
+            return self.swr_review_transport_failure(
+                slice_,
+                review_dir / "operator",
+                f"SWR review transport failed: supervisor invoke-operator command exited {operator.exit_code}: {operator.stderr[-400:]}",
+            )
         operator_payload = self.parse_json_stdout(operator, {})
         operator_review = str(operator_payload.get("operator_review")) if isinstance(operator_payload, dict) else ""
         operator_transport = self.swr_decision_transport_error(operator_review, "operator provisional review")
@@ -4427,7 +4435,11 @@ Additional validator requirements:
         ]
         reviewers = self.runner.run(reviewers_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         if not reviewers.ok:
-            return reviewers
+            return self.swr_review_transport_failure(
+                slice_,
+                review_dir / "agents",
+                f"SWR review transport failed: supervisor invoke-reviewers command exited {reviewers.exit_code}: {reviewers.stderr[-400:]}",
+            )
         reviewers_payload = self.parse_json_stdout(reviewers, {})
         codex_review = str(reviewers_payload.get("codex_review")) if isinstance(reviewers_payload, dict) else ""
         claude_review = str(reviewers_payload.get("claude_review")) if isinstance(reviewers_payload, dict) else ""
@@ -4501,7 +4513,11 @@ Additional validator requirements:
         ]
         consolidate = self.runner.run(consolidate_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         if not consolidate.ok:
-            return consolidate
+            return self.swr_review_transport_failure(
+                slice_,
+                consolidated if consolidated.exists() else review_dir,
+                f"SWR review transport failed: supervisor consolidate command exited {consolidate.exit_code}: {consolidate.stderr[-400:]}",
+            )
         consolidation_transport = self.swr_decision_transport_error(
             str(consolidated.relative_to(self.root)), "consolidated review"
         )
@@ -4542,7 +4558,11 @@ Additional validator requirements:
         ]
         accept = self.runner.run(accept_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         if not accept.ok:
-            return accept
+            return self.swr_review_transport_failure(
+                slice_,
+                acceptance if acceptance.exists() else consolidated,
+                f"SWR review transport failed: supervisor accept command exited {accept.exit_code}: {accept.stderr[-400:]}",
+            )
         acceptance_transport = self.swr_decision_transport_error(
             str(acceptance.relative_to(self.root)), "operator acceptance"
         )

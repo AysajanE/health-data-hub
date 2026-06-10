@@ -91,3 +91,5 @@ The first success criterion is S01 running from autonomous brief through Keel va
 - 2026-06-10T14:22:36-04:00 S05 slice_status_updated: status=replan_required, failure_path=ops/autonomy/failures/S05-compile_failure-20260610T142236-0400-20ab1eaa.md
 - 2026-06-10T14:27:39-04:00 S05 slice_status_updated: status=blocked_compile_inputs, reason=SWR review transport failed: operator provisional review transport failure: status=malformed_output; first_error=review decision failed schema validation: $.decision_id: string 'operator_codex_s05_run_20260601_133046_ae09e1ea_source_authority_map_approved_review_20260610T182048Z' does not match '^[a-z0-9][a-z0-9._-]{0,127}$'
 - 2026-06-10T14:41:22-04:00 S05 slice_status_updated: status=waiting_for_playbook, reason=SWR background run in progress
+- 2026-06-10T15:25:44-04:00 S05 slice_status_updated: status=replan_required, failure_path=ops/autonomy/failures/S05-compile_failure-20260610T152544-0400-a9818733.md
+- 2026-06-10T17:52:09-04:00 S05 slice_status_updated: status=waiting_for_playbook

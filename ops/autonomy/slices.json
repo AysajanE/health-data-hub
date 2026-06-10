@@ -167,7 +167,6 @@
     "pre_ship_commands": [
       "python scripts/verify_s05_provider_policy.py --json"
     ],
-    "reason": "SWR background run in progress",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -179,7 +178,7 @@
     "status": "waiting_for_playbook",
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-10T14:41:22-04:00"
+    "updated_at": "2026-06-10T17:52:09-04:00"
   },
   {
     "acceptance": [
