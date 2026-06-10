@@ -1,0 +1,26 @@
+{
+  "details": {
+    "attribution": "Unknown. Provably out-of-band and unlogged; whether a human or an ad-hoc agent session performed it is indeterminable from repo evidence.",
+    "guards_added_so_this_cannot_recur_silently": [
+      "state digest sidecar + fail-closed tick-start verification (verify_state_digest)",
+      "scripts/record_intervention.py as the sanctioned ratify/restore/abandon path",
+      "fresh SWR launches after prior history require a recorded abandonment decision artifact",
+      "swr_repair_malformed dead end gained a sanctioned exit instead of inviting hand edits"
+    ],
+    "intervention_window": "2026-06-01T18:25:33-04:00 to 2026-06-01T18:29:00-04:00",
+    "recovery_decision": "Restore rather than abandon: the archive passed hash verification (stage-1 response markdown and JSON sha256 match the run manifest), the stage-1 artifact was substantively approved by both reviewers in archived raw stdouts, and the recorded closure contracts name the same-run rerun_review_lane repair as the next permitted action. The June-1 reset is reverted; events/ledger/progress are restored verbatim; the cycle-5 row is closed with transport root-cause evidence; a fresh repair plan (new created_at, attempt-unique cycle id) replaces the contaminated 17:57:24 plan.",
+    "what_happened": [
+      "All S05 SWR run dirs, review-lane dirs, and the quarantine under .local/autokeel/swr were archived to .local/cleanup_archives/20260601T182533-0400-pre-s05-reset-cleanup/ and deleted from the live tree",
+      "Uncommitted control-plane appends were reverted to HEAD: events 885-898, the open 2026-06-01T18:17:43 audit_failure ledger row, and one progress.md line",
+      "slices.json was hand-edited: S05 blocked_compile_inputs -> pending; reason, failure_path, swr_review_repair, swr_run_id, swr_run_manifest deleted; autonomy_state.json current_slice -> null",
+      "No event, ledger row, or evidence doc recorded any of this; the working tree was left uncommitted for nine days"
+    ],
+    "why_it_was_wrong": "It violated the framework contract (state in files, record every failure class, no unrecorded escapes), made committed history false by omission (14 recorded stops vs 15 actual), orphaned 7 closed ledger rows' evidence_path artifacts, and silently converted a bounded same-run repair posture into an unguarded fresh SWR launch that the consumed budget release explicitly forbade."
+  },
+  "name": "s05-june1-reset-ratification",
+  "reason": "Ratify and reverse the unrecorded 2026-06-01 18:25-18:28 archive/delete/reset intervention; recovery restores the archived run and executes the planned same-run review-lane repair under the hardened control plane.",
+  "recorded_at": "2026-06-10T13:44:13-04:00",
+  "recorded_by": "claude-code recovery session 2026-06-10 (operator-directed)",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S05"
+}
