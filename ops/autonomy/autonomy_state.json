@@ -1,30 +1,14 @@
 {
   "active_run": null,
-  "active_swr_run": {
-    "current_stage_id": "source_authority_map",
-    "current_stage_status": "in_progress",
-    "last_remote_check_at": "2026-06-10T14:05:20-04:00",
-    "last_remote_check_exit_code": 1,
-    "last_remote_check_stderr": "mExit(main())\n                     ~~~~^^\n  File \"/Users/aeziz-local/keel/tools/staged-workflow-runner/automation/run_responses_v2.py\", line 126, in main\n    result = run_workflow(\n        workflow_file=args.workflow_file,\n    ...<2 lines>...\n        root=root,\n    )\n  File \"/Users/aeziz-local/keel/tools/staged-workflow-runner/automation/responses_runner_v2/workflow.py\", line 1084, in run_workflow\n    response_json = client.wait_for_terminal_response(\n        str(response_json[\"id\"]),\n    ...<2 lines>...\n        checkpoint_callback=lambda polled: artifacts.write_response_latest(stage_paths, polled),\n    )\n  File \"/Users/aeziz-local/keel/tools/staged-workflow-runner/automation/responses_runner_v2/openai_client.py\", line 236, in wait_for_terminal_response\n    raise ApiError(\n    ...<2 lines>...\n    )\nautomation.responses_runner_v2.openai_client.ApiError: Response resp_07e2e84190118344006a29a75ab5b481918395b220308cd6fe did not reach a terminal state within 5.0s (last_status=in_progress).\n",
-    "recorded_at": "2026-06-10T14:05:20-04:00",
-    "response_id": "resp_07e2e84190118344006a29a75ab5b481918395b220308cd6fe",
-    "run_dir": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook",
-    "run_id": "run_20260601_133046_ae09e1ea",
-    "run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "run_name": "autokeel-s05-20260601t093046-0400",
-    "slice": "S05",
-    "status": "running",
-    "supervisor_session_id": null,
-    "workflow_id": "gstack_design_to_po_playbook"
-  },
+  "active_swr_run": null,
   "completed_slices": [
     "S01",
     "S02",
     "S03",
     "S04"
   ],
-  "current_slice": "S05",
-  "last_event_id": 935,
+  "current_slice": null,
+  "last_event_id": 954,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [
