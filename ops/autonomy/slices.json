@@ -156,7 +156,7 @@
     "depends_on": [
       "S04"
     ],
-    "failure_path": "ops/autonomy/failures/S05-swr_review_transport_failure-20260610T180208-0400-c649bfcd.md",
+    "failure_path": "ops/autonomy/failures/S05-provider_auth_failure-20260610T180904-0400-8caf09a2.md",
     "id": "S05",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
@@ -168,7 +168,7 @@
     "pre_ship_commands": [
       "python scripts/verify_s05_provider_policy.py --json"
     ],
-    "reason": "SWR review transport failed: operator provisional review transport failure: status=malformed_output; first_error=review decision failed schema validation: $.recommendations[0].operator_decision: value 'accept' not in enum ['accepted', 'rejected', 'deferred', 'already_satisfied', 'out_of_scope']; $.recommendations[1].operator_decision: value 'accept' not in enum ['accepted', 'rejected', 'deferred', 'already_sat",
+    "reason": "Codex CLI usage limit exhausted (resets 2026-07-10 17:54 or upgrade); review lane cannot run",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -177,11 +177,11 @@
     ],
     "risk": "high",
     "slug": "s05-model-lifecycle",
-    "status": "blocked_compile_inputs",
+    "status": "blocked_external",
     "swr_review_repair": {
-      "created_at": "2026-06-10T18:02:08-04:00",
+      "created_at": "2026-06-10T18:07:12-04:00",
       "rationale": "The stage response artifacts are complete and hash-stable; rerun only the supervisor review lane and reset downstream stages that consumed the tainted handoff.",
-      "reason": "SWR review transport failed: operator provisional review transport failure: status=malformed_output; first_error=review decision failed schema validation: $.recommendations[0].operator_decision: value 'accept' not in enum ['accepted', 'rejected', 'deferred', 'already_satisfied', 'out_of_scope']; $.recommendations[1].operator_decision: value 'accept' not in enum ['accepted', 'rejected', 'deferred', 'already_sat",
+      "reason": "SWR review transport failed: operator provisional review transport failure: status=failed; first_error=Agent command exited with 1.",
       "repair_action": "rerun_review_lane",
       "repair_stage_id": "repo_grounding",
       "review_history_findings": [],
@@ -200,7 +200,7 @@
     },
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-10T18:05:13-04:00"
+    "updated_at": "2026-06-10T18:09:04-04:00"
   },
   {
     "acceptance": [
