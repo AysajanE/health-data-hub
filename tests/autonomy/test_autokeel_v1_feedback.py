@@ -12,6 +12,7 @@ from unittest import mock
 from ops.autonomy.autokeel import AutoKeel, CommandResult, CommandRunner, file_sha256, write_json_atomic
 from scripts.check_no_tracked_data import check_no_tracked_data
 from scripts.evaluate_tripwires import evaluate_tripwires
+from tests.autonomy.test_autokeel_ops_tools import rewrite_tripwire_deadlines
 from scripts.evidence.pyeight_smoke import collect as collect_pyeight
 from scripts.validate_playbook_autonomous import validate_playbook
 from scripts.validate_swr_review_bundle import validate_swr_review_bundle
@@ -77,6 +78,9 @@ def prepare_s02_swr_inputs(root: Path) -> Path:
 
     policy = (root / "ops/autonomy/policy.yaml").read_text(encoding="utf-8")
     policy = policy.replace("keel_root: /Users/aeziz-local/keel", f"keel_root: {fake_keel}")
+    # Fixture kernels are plain temp dirs, not git checkouts; kernel pinning
+    # has its own dedicated test.
+    policy = policy.replace("  require_pinned_kernel: true", "  require_pinned_kernel: false")
     (root / "ops/autonomy/policy.yaml").write_text(policy, encoding="utf-8")
 
     (root / "docs/gstack").mkdir(parents=True, exist_ok=True)
@@ -731,6 +735,7 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
 
             policy = (root / "ops/autonomy/policy.yaml").read_text(encoding="utf-8")
             policy = policy.replace("keel_root: /Users/aeziz-local/keel", f"keel_root: {fake_keel}")
+            policy = policy.replace("  require_pinned_kernel: true", "  require_pinned_kernel: false")
             (root / "ops/autonomy/policy.yaml").write_text(policy, encoding="utf-8")
 
             (root / "docs/gstack").mkdir(parents=True)
@@ -1292,8 +1297,16 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
 
             result = op.ensure_playbook(slice_)
 
-            self.assertEqual(result.exit_code, 32)
-            self.assertIn("operator review failed closed", result.stderr)
+            self.assertEqual(result.exit_code, 33)
+            self.assertIn("review transport failed", result.stderr)
+            ledger_rows = [
+                json.loads(line)
+                for line in (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            transport_rows = [row for row in ledger_rows if row.get("failure_class") == "swr_review_transport_failure"]
+            self.assertTrue(transport_rows, "transport failure must be recorded with its own typed class")
+            self.assertEqual(transport_rows[-1].get("repair_scope"), "autokeel_control_plane")
             updated = next(item for item in op.load_slices() if item["id"] == "S02")
             self.assertEqual(updated["status"], "blocked_compile_inputs")
             calls = [" ".join(call) for call in op.runner.calls]
@@ -1868,6 +1881,7 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
 
             policy = (root / "ops/autonomy/policy.yaml").read_text(encoding="utf-8")
             policy = policy.replace("keel_root: /Users/aeziz-local/keel", f"keel_root: {fake_keel}")
+            policy = policy.replace("  require_pinned_kernel: true", "  require_pinned_kernel: false")
             (root / "ops/autonomy/policy.yaml").write_text(policy, encoding="utf-8")
 
             (root / "docs/gstack").mkdir(parents=True)
@@ -2390,15 +2404,16 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_fixture(root)
-            policy = (root / "ops/autonomy/policy.yaml").read_text(encoding="utf-8")
-            policy = policy.replace("date: 2026-05-30", "date: 2026-01-01")
-            (root / "ops/autonomy/policy.yaml").write_text(policy, encoding="utf-8")
+            # Date-relative deadlines: only the oura deadline is in the past,
+            # so this test never expires as the real policy dates pass.
+            rewrite_tripwire_deadlines(root, {"on_oura_failure_week_1": -30}, default_offset_days=30)
             report_dir = root / "private/evidence/S03/oura_smoke"
             report_dir.mkdir(parents=True)
             (report_dir / "report.json").write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
 
             report = evaluate_tripwires(root)
             self.assertEqual(report["status"], "error")
+            self.assertEqual([item["name"] for item in report["fired"]], ["on_oura_failure_week_1"])
             self.assertEqual(report["fired"][0]["evidence_status"]["status"], "blocked_external")
 
     def test_s03_required_oura_preflight_blocks_before_po_without_token(self) -> None:

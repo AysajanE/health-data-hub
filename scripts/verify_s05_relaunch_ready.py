@@ -77,14 +77,6 @@ def verify(root: Path) -> dict[str, Any]:
         if not manifest or not (root / manifest).exists():
             errors.append(f"S05 repair manifest missing: {manifest}")
 
-    release_path = root / "docs/evidence/s05-swr-review-lane-budget-release.json"
-    release = load_json(release_path, {})
-    checks["release_path"] = str(release_path.relative_to(root))
-    checks["release_verdict"] = release.get("verdict") if isinstance(release, dict) else None
-    checks["release_consumed_at"] = release.get("consumed_at") if isinstance(release, dict) else None
-    if not isinstance(release, dict) or release.get("verdict") != "pass":
-        warnings.append("S05 budget release artifact is absent or not passing; this is acceptable only if budgets are currently within policy")
-
     state = load_json(root / "ops/autonomy/autonomy_state.json", {})
     checks["active_run"] = state.get("active_run")
     checks["active_swr_run"] = state.get("active_swr_run")
@@ -116,6 +108,37 @@ def verify(root: Path) -> dict[str, Any]:
     }
     if budget_result.exit_code != 0:
         errors.append(f"S05 failure budget is not launch-ready: {budget_result.stderr}")
+
+    # Hard release-artifact semantics, conditional on the actual lane count:
+    # over cap -> a valid, unconsumed, unexpired release keyed to the current
+    # plan is REQUIRED; within cap -> a consumed release must not linger at the
+    # canonical path (it must be archived with a timestamped name).
+    repair_policy = operator.policy.get("repair_budget", {})
+    lane_cap = int(repair_policy.get("max_closed_swr_review_lane_repairs_per_slice", 3))
+    lane_rows = [
+        row
+        for row in iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl")
+        if row.get("slice") == "S05"
+        and not row.get("open", True)
+        and operator.failure_closure_evidence_valid(row)
+        and operator.failure_counts_against_closed_repair_budget(row)
+        and operator.repair_budget_scope(row) == "swr_review_lane"
+    ]
+    checks["swr_review_lane_closed_repairs"] = {"count": len(lane_rows), "cap": lane_cap}
+    release_path = root / "docs/evidence/s05-swr-review-lane-budget-release.json"
+    release = load_json(release_path, {})
+    checks["release_path"] = str(release_path.relative_to(root))
+    checks["release_verdict"] = release.get("verdict") if isinstance(release, dict) else None
+    checks["release_consumed_at"] = release.get("consumed_at") if isinstance(release, dict) else None
+    if len(lane_rows) > lane_cap:
+        release_check = operator.swr_review_lane_budget_release_valid(s05)
+        if not release_check.ok:
+            errors.append(f"S05 lane count exceeds cap and no valid budget release exists: {release_check.stderr}")
+    elif isinstance(release, dict) and release.get("consumed_at"):
+        errors.append(
+            "a consumed S05 budget release lingers at the canonical path; archive it with a "
+            "timestamped suffix before relaunch so future budget reasoning cannot misread it"
+        )
 
     commands = [
         "python scripts/verify_failure_ledger.py --slice S05 --json",

@@ -56,6 +56,12 @@ class AutoKeelLock:
         if self.handle:
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
+            # A leftover lock file is indistinguishable from a crash artifact;
+            # remove it on clean exit so its presence is a meaningful signal.
+            try:
+                self.path.unlink()
+            except OSError:
+                pass
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,72 @@ def now_iso() -> str:
 
 def env_present(name: str) -> bool:
     return bool(str(os.environ.get(name, "")).strip())
+
+
+# Decision-record statuses that describe the review TRANSPORT (subprocess,
+# schema plumbing, workspace snapshot), not the reviewer's semantic verdict.
+# These must never be budgeted or reported as a semantic review rejection.
+TRANSPORT_DECISION_STATUSES = {
+    "error",
+    "failed",
+    "interrupted",
+    "malformed_output",
+    "missing_cli",
+    "read_only_violation",
+    "timeout",
+}
+
+STATE_DIGEST_PATHS = (
+    "ops/autonomy/slices.json",
+    "ops/autonomy/events.jsonl",
+    "ops/autonomy/failure_ledger.jsonl",
+)
+
+
+def load_local_env(root: Path) -> list[str]:
+    """Load KEY=VALUE pairs from .env.local / .env into os.environ.
+
+    Existing environment variables always win. Returns the names (never the
+    values) of variables that were loaded, for diagnostics.
+    """
+    loaded: list[str] = []
+    for name in (".env.local", ".env"):
+        path = root / name
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if not key or key in os.environ:
+                continue
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
+def compute_state_digest(root: Path) -> dict[str, Any]:
+    digest: dict[str, Any] = {}
+    for rel in STATE_DIGEST_PATHS:
+        path = root / rel
+        digest[rel] = file_sha256(path) if path.exists() else None
+    return digest
+
+
+def update_state_digest_sidecar(root: Path) -> None:
+    payload = {
+        "schema_version": "autokeel.state_digest.v1",
+        "updated_at": now_iso(),
+        "digests": compute_state_digest(root),
+    }
+    write_json_atomic(root / "ops" / "autonomy" / "state_digest.json", payload)
 
 
 def slug_ts() -> str:
@@ -327,6 +399,9 @@ class AutoKeel:
         self.progress_path = self.autonomy_dir / "progress.md"
         self.policy = load_policy(self.policy_path)
         self.authorization_policy = load_policy(self.authorization_policy_path) if self.authorization_policy_path.exists() else {}
+        # Provider credentials live only in gitignored .env.local; AutoKeel and
+        # every keel-swr subprocess it spawns inherit them via os.environ.
+        self.loaded_env_names = load_local_env(self.root)
         self.runner = CommandRunner(self.root, self.policy, dry_run=dry_run)
         self.dry_run = dry_run
         statuses = self.policy.get("slice_statuses", {})
@@ -380,6 +455,44 @@ class AutoKeel:
 
     def save_slices(self, slices: list[dict[str, Any]]) -> None:
         write_json_atomic(self.slices_path, slices)
+        self.sync_state_digest()
+
+    def sync_state_digest(self) -> None:
+        if self.dry_run:
+            return
+        update_state_digest_sidecar(self.root)
+
+    def verify_state_digest(self) -> CommandResult:
+        """Fail closed when control-plane state was edited out-of-band.
+
+        The sidecar is rewritten by every sanctioned writer (save_slices,
+        log_event, record_failure, scripts/record_intervention.py). A mismatch
+        means slices.json / events.jsonl / failure_ledger.jsonl changed with no
+        sanctioned writer running — the exact shape of the unrecorded 2026-06-01
+        S05 reset.
+        """
+        if not bool(self.policy.get("loop", {}).get("enforce_state_digest", True)):
+            return CommandResult([], 0, "state digest enforcement disabled by policy", "")
+        sidecar = read_json(self.autonomy_dir / "state_digest.json", None)
+        if not isinstance(sidecar, dict) or not isinstance(sidecar.get("digests"), dict):
+            # First run after upgrade: establish the baseline instead of failing.
+            self.sync_state_digest()
+            return CommandResult([], 0, "state digest baseline established", "")
+        recorded = sidecar["digests"]
+        current = compute_state_digest(self.root)
+        mismatched = sorted(rel for rel in current if recorded.get(rel) != current.get(rel))
+        if not mismatched:
+            return CommandResult([], 0, "state digest verified", "")
+        return CommandResult(
+            [],
+            39,
+            "",
+            (
+                "control-plane state changed out-of-band since the last sanctioned write: "
+                + ", ".join(mismatched)
+                + "; ratify via 'python scripts/record_intervention.py ratify ...' before the next tick"
+            ),
+        )
 
     def log_event(self, event_type: str, details: dict[str, Any] | None = None, slice_id: str | None = None) -> dict[str, Any]:
         state = self.load_state()
@@ -394,6 +507,7 @@ class AutoKeel:
         append_jsonl(self.events_path, payload)
         state["last_event_id"] = event_id
         self.save_state(state)
+        self.sync_state_digest()
         return payload
 
     def append_progress(self, slice_id: str | None, event_type: str, details: dict[str, Any] | None = None) -> None:
@@ -690,6 +804,13 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         return root or f"{row.get('failure_class')}:{self.failure_description_key(row)}"
 
     def repair_budget_scope(self, row: dict[str, Any]) -> str:
+        # Explicitly typed scope on the row always wins over free-text
+        # inference; new failures are recorded with this field so budget
+        # classification stops depending on closure-note prose.
+        explicit_scope = str(row.get("repair_scope") or "")
+        if explicit_scope in {"meta_guardrail", "autokeel_control_plane", "swr_review_lane", "product_or_playbook"}:
+            return explicit_scope
+
         failure_class = str(row.get("failure_class") or "")
         origin = str(row.get("failure_origin") or "")
         description = self.failure_description_key(row)
@@ -699,6 +820,8 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
 
         if failure_class in meta_classes:
             return "meta_guardrail"
+        if failure_class in {"swr_review_transport_failure", "swr_kernel_unpinned"}:
+            return "autokeel_control_plane"
         if origin == "autokeel_wrapper":
             return "autokeel_control_plane"
         if "readiness gate" in description or "pre-launch readiness" in description:
@@ -716,6 +839,10 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
                 "invalid review-history",
                 "cycle ids were normalized",
                 "schema adapter",
+                "schema-adapter",
+                "review-decision canonicalization",
+                "transport failure",
+                "reviewer transport",
             )
         ):
             # Safety invariant: malformed review-decision records are
@@ -842,6 +969,10 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             return
         payload["consumed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         write_json_atomic(path, payload)
+        # Preserve the consumption audit trail: a consumed release is archived
+        # under a timestamped name so a re-minted release can never overwrite it.
+        archive = path.with_name(f"{path.stem}-consumed-{now_slug()}{path.suffix}")
+        shutil.copy2(path, archive)
 
         slices = self.load_slices()
         for item in slices:
@@ -862,6 +993,37 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             },
             slice_id=str(slice_.get("id") or ""),
         )
+
+    def stability_checkpoint_error(self, slice_id: str) -> str | None:
+        """Validate the control-plane stability checkpoint by content, not existence.
+
+        A checkpoint is meaningful only if it passed and is fresh; a stale file
+        from a prior incident must not waive a safety budget indefinitely.
+        """
+        repair_policy = self.policy.get("repair_budget", {})
+        max_age_hours = float(repair_policy.get("stability_checkpoint_max_age_hours", 72))
+        checkpoint_path = self.root / "docs" / "evidence" / f"{slice_id.lower()}-autokeel-stability-checkpoint.json"
+        if not checkpoint_path.exists():
+            return f"stability checkpoint missing: {checkpoint_path.relative_to(self.root)}"
+        payload = read_json(checkpoint_path, None)
+        if not isinstance(payload, dict):
+            return "stability checkpoint is not a JSON object"
+        if payload.get("status") != "ok":
+            return f"stability checkpoint status is not ok: {payload.get('status')}"
+        if str(payload.get("slice") or "") not in {"", slice_id}:
+            return "stability checkpoint slice mismatch"
+        created_raw = str(payload.get("created_at") or "")
+        try:
+            created_at = datetime.fromisoformat(created_raw)
+        except ValueError:
+            return "stability checkpoint created_at is invalid"
+        age_hours = (datetime.now().astimezone() - created_at.astimezone()).total_seconds() / 3600
+        if age_hours > max_age_hours:
+            return (
+                f"stability checkpoint is stale ({age_hours:.1f}h > {max_age_hours:.1f}h); "
+                "re-mint via scripts/verify_autokeel_stability_checkpoint.py"
+            )
+        return None
 
     def failure_budget_exceeded(self, slice_: dict[str, Any]) -> CommandResult:
         loop = self.policy.get("loop", {})
@@ -928,9 +1090,18 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             )
 
         if len(by_scope.get("autokeel_control_plane", [])) > max_control:
-            checkpoint = self.root / "docs" / "evidence" / f"{slice_['id'].lower()}-autokeel-stability-checkpoint.json"
-            if repair_policy.get("require_stability_checkpoint_after_control_plane_budget", True) and not checkpoint.exists():
-                return CommandResult([], 37, "", f"control-plane repair checkpoint required for {slice_['id']}: {len(by_scope['autokeel_control_plane'])} > {max_control}")
+            if repair_policy.get("require_stability_checkpoint_after_control_plane_budget", True):
+                checkpoint_error = self.stability_checkpoint_error(slice_["id"])
+                if checkpoint_error:
+                    return CommandResult(
+                        [],
+                        37,
+                        "",
+                        (
+                            f"control-plane repair checkpoint required for {slice_['id']}: "
+                            f"{len(by_scope['autokeel_control_plane'])} > {max_control}; {checkpoint_error}"
+                        ),
+                    )
 
         root_counts: dict[str, int] = {}
         for row in evidence_closed_rows:
@@ -2151,20 +2322,48 @@ and use the recorded `run_dir` and `repair_stage_id` with
                 return False, "required source SWR review bundle is missing"
         max_total = int(policy.get("max_repairs_per_slice", 4))
         max_stage = int(policy.get("max_repairs_per_stage", 2))
+        # Safety invariant: failed repair attempts consume authorization budget
+        # too — otherwise a non-converging repair retries unboundedly. Attempts
+        # are scoped to the CURRENT plan (events at/after its created_at): each
+        # plan gets a bounded number of attempts, and the number of plans is
+        # itself bounded by the failure-ledger budgets.
+        repair_events = {
+            "swr_review_repair_lane_passed",
+            "swr_review_repair_lane_failed",
+            "swr_review_repair_stage_passed",
+            "swr_review_repair_stage_failed",
+        }
+        plan_created_raw = str(repair_plan.get("created_at") or "")
+        try:
+            plan_created = datetime.fromisoformat(plan_created_raw)
+        except ValueError:
+            plan_created = None
+
+        def belongs_to_current_plan(event: dict[str, Any]) -> bool:
+            if plan_created is None:
+                return True
+            try:
+                event_ts = datetime.fromisoformat(str(event.get("ts") or ""))
+            except ValueError:
+                return True
+            return event_ts.astimezone() >= plan_created.astimezone()
+
         repairs = [
             event
             for event in iter_jsonl(self.events_path)
-            if event.get("slice") == slice_["id"] and event.get("event") in {"swr_review_repair_lane_passed", "swr_review_repair_stage_passed"}
+            if event.get("slice") == slice_["id"]
+            and event.get("event") in repair_events
+            and belongs_to_current_plan(event)
         ]
         if len(repairs) >= max_total:
-            return False, "SWR review repair count exceeds policy"
+            return False, "SWR review repair attempt count (including failed attempts) exceeds policy for this plan"
         same_stage = [
             event
             for event in repairs
             if isinstance(event.get("details"), dict) and event["details"].get("repair_stage_id") == stage_id
         ]
         if len(same_stage) >= max_stage:
-            return False, "same-stage SWR review repair count exceeds policy"
+            return False, "same-stage SWR review repair attempt count (including failed attempts) exceeds policy for this plan"
         return True, "policy-authorized same-run SWR review repair"
 
     def reset_swr_manifest_for_review_repair(self, manifest_path: Path, stage_id: str) -> None:
@@ -2433,6 +2632,38 @@ and use the recorded `run_dir` and `repair_stage_id` with
             )
         return CommandResult([], 0, "", "")
 
+    def swr_kernel_pin(self) -> dict[str, Any]:
+        """Identify the SWR execution kernel: nested-repo commit + dirty state.
+
+        The kernel (staged-workflow-runner) lives in a nested git repo that the
+        parent keel repo gitignores; without this pin no run can name the code
+        that produced it.
+        """
+        keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
+        kernel_root = keel_root / "tools" / "staged-workflow-runner"
+        info: dict[str, Any] = {"kernel_root": str(kernel_root), "kernel_commit": None, "kernel_dirty": None}
+        if not kernel_root.exists():
+            return info
+        head = subprocess.run(
+            ["git", "-C", str(kernel_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        status = subprocess.run(
+            ["git", "-C", str(kernel_root), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if head.returncode == 0:
+            info["kernel_commit"] = head.stdout.strip()
+        if status.returncode == 0:
+            dirty_paths = [line[3:].strip() for line in status.stdout.splitlines() if line.strip()]
+            info["kernel_dirty"] = bool(dirty_paths)
+            info["kernel_dirty_paths"] = dirty_paths[:20]
+        return info
+
     def materialize_swr_task_pack(self) -> CommandResult:
         swr_policy = self.policy.get("swr", {})
         keel_root = Path(self.policy.get("keel_root", "/Users/aeziz-local/keel"))
@@ -2443,6 +2674,22 @@ and use the recorded `run_dir` and `repair_stage_id` with
 
         if not source.exists() or not source.is_dir():
             return CommandResult([], 27, "", f"SWR task pack missing: {source}")
+
+        kernel = self.swr_kernel_pin()
+        if bool(swr_policy.get("require_pinned_kernel", True)):
+            if not kernel.get("kernel_commit"):
+                return CommandResult([], 27, "", f"SWR kernel is not a git checkout; refusing unpinned launch: {kernel.get('kernel_root')}")
+            if kernel.get("kernel_dirty"):
+                return CommandResult(
+                    [],
+                    27,
+                    "",
+                    (
+                        "SWR kernel checkout is dirty; commit or revert before launch: "
+                        + ", ".join(kernel.get("kernel_dirty_paths") or [])
+                    ),
+                )
+
         if self.dry_run:
             return CommandResult(["test", "-d", str(source)], 0, "dry run SWR task-pack materialization planned", "")
 
@@ -2455,6 +2702,14 @@ and use the recorded `run_dir` and `repair_stage_id` with
             ignore=shutil.ignore_patterns(".local", ".pytest_cache", "__pycache__", "*.pyc"),
         )
         self.write_swr_autonomous_contract_overlay(target)
+        pack_files = sorted(
+            str(item.relative_to(target)) + ":" + file_sha256(item)
+            for item in target.rglob("*")
+            if item.is_file()
+        )
+        kernel["task_pack_content_sha256"] = hashlib.sha256("\n".join(pack_files).encode("utf-8")).hexdigest()
+        write_json_atomic(target / "kernel_pin.json", {"schema_version": "autokeel.swr_kernel_pin.v1", "pinned_at": now_iso(), **kernel})
+        self.log_event("swr_kernel_pinned", kernel)
         return CommandResult(["cp", "-R", str(source), str(target)], 0, str(target.relative_to(self.root)), "")
 
     def write_swr_autonomous_contract_overlay(self, task_pack_root: Path) -> None:
@@ -2828,9 +3083,11 @@ Additional validator requirements:
         return self.root / ".local/autokeel/swr/review_lane" / safe
 
     def assert_fresh_review_repair_dir(self, review_dir: Path, review_cycle_id: str) -> CommandResult:
-        marker = review_dir / ".autokeel_review_cycle_id"
-        if review_dir.exists() and marker.exists() and marker.read_text(encoding="utf-8").strip() == review_cycle_id:
-            return CommandResult([], 0, "review repair directory belongs to this cycle", "")
+        # Safety invariant: a matching cycle-id marker is NOT sufficient — a
+        # prior attempt of this same cycle may have died mid-review and left
+        # decision sidecars behind. Reviewing on top of those replays the
+        # stale-sidecar contamination failure. Only a sidecar-free directory
+        # is acceptable; retries must mint a new attempt-suffixed cycle id.
         if review_dir.exists() and any(review_dir.rglob("*.json")):
             return CommandResult(
                 [],
@@ -2839,8 +3096,35 @@ Additional validator requirements:
                 f"review repair directory is not fresh and contains prior sidecars: {review_dir}",
             )
         review_dir.mkdir(parents=True, exist_ok=True)
+        marker = review_dir / ".autokeel_review_cycle_id"
         marker.write_text(review_cycle_id + "\n", encoding="utf-8")
         return CommandResult([], 0, "fresh review repair directory prepared", "")
+
+    def fresh_swr_repair_cycle(self, slice_: dict[str, Any], repair_plan: dict[str, Any], stage_id: str) -> tuple[str, Path]:
+        """Choose an attempt-unique review cycle id whose directory is pristine.
+
+        The base id derives from the repair plan's created_at; if that
+        directory already holds sidecars from a failed attempt, suffix the id
+        (_r2, _r3, ...) until a pristine directory is found, so no attempt can
+        ever consume another attempt's reviewer output.
+        """
+        base_cycle_id = self.swr_repair_cycle_id(slice_, stage_id)
+        run_id = str(repair_plan.get("run_id") or "")
+        for attempt in range(1, 10):
+            cycle_id = base_cycle_id if attempt == 1 else f"{base_cycle_id}_r{attempt}"
+            review_dir = self.swr_review_lane_dir(
+                slice_id=slice_["id"],
+                run_id=run_id,
+                stage_id=stage_id,
+                review_cycle_id=cycle_id,
+            )
+            if not review_dir.exists() or not any(review_dir.rglob("*.json")):
+                return cycle_id, review_dir
+        # Ten contaminated attempt dirs means something is systematically
+        # wrong; surface the base dir and let the fail-closed assert stop us.
+        return base_cycle_id, self.swr_review_lane_dir(
+            slice_id=slice_["id"], run_id=run_id, stage_id=stage_id, review_cycle_id=base_cycle_id
+        )
 
     def repo_artifact_path(self, rel_or_abs: str) -> Path | None:
         if not rel_or_abs:
@@ -2986,6 +3270,73 @@ Additional validator requirements:
             if isinstance(stage, dict) and stage.get("stage_id") == current_stage_id:
                 return stage
         return {}
+
+    def swr_decision_transport_error(self, path_value: str | Path, label: str) -> str | None:
+        """Detect a transport-level failure recorded in a decision sidecar.
+
+        Returns a precise human-readable description when the sidecar's status
+        names a subprocess/schema/plumbing failure rather than a semantic
+        reviewer verdict; returns None for genuine reviewer decisions.
+        """
+        if not path_value:
+            return None
+        path = self.repo_artifact_path(str(path_value))
+        if path is None or not path.exists():
+            return None
+        decision = read_json(path, {})
+        if not isinstance(decision, dict):
+            return f"{label} sidecar is not parseable JSON (transport defect)"
+        status = str(decision.get("status") or "")
+        if status not in TRANSPORT_DECISION_STATUSES:
+            return None
+        validation_errors = decision.get("validation_errors")
+        first_error = ""
+        if isinstance(validation_errors, list) and validation_errors:
+            first_error = str(validation_errors[0])[:300]
+        return (
+            f"{label} transport failure: status={status}"
+            + (f"; first_error={first_error}" if first_error else "")
+        )
+
+    def swr_review_transport_failure(self, slice_: dict[str, Any], evidence_path: Path, reason: str) -> CommandResult:
+        """Record a review TRANSPORT failure as a control-plane defect.
+
+        The stage artifact is untouched and no semantic verdict exists, so the
+        bounded same-run review-lane repair is planned exactly as for a review
+        failure — but the ledger row is typed so it consumes the control-plane
+        budget, never the SWR review-lane budget, and the recorded reason never
+        claims the reviewers rejected the work.
+        """
+        manifest_path = (
+            evidence_path
+            if evidence_path.name == "run_manifest.json"
+            else self.active_swr_manifest_from_state(slice_) or self.latest_swr_manifest_for_slice(slice_)
+        )
+        repair_plan = self.plan_swr_review_repair(slice_, manifest_path, reason) if manifest_path is not None else None
+        failure = self.record_failure(
+            slice_["id"],
+            "swr_review_transport_failure",
+            "high",
+            "SWR review transport failed before any semantic reviewer verdict was produced.",
+            (
+                "Stopped before creating or reusing a review bundle and planned a same-run SWR review repair."
+                if isinstance(repair_plan, dict) and repair_plan.get("repair_action") in {"rerun_review_lane", "rerun_single_stage"}
+                else "Stopped before creating or reusing a review bundle and before launching the next SWR stage."
+            ),
+            evidence_path,
+            repair_scope="autokeel_control_plane",
+        )
+        self.mark_slice_status(
+            slice_["id"],
+            "blocked_compile_inputs",
+            failure_path=str(failure.relative_to(self.root)),
+            reason=reason,
+            **({"swr_review_repair": repair_plan} if isinstance(repair_plan, dict) else {}),
+        )
+        if isinstance(repair_plan, dict) and repair_plan.get("repair_action") in {"rerun_review_lane", "rerun_single_stage"}:
+            self.log_event("swr_review_repair_planned", repair_plan, slice_id=slice_["id"])
+        self.clear_active_swr_run(slice_["id"], reason)
+        return CommandResult([], 33, "", reason)
 
     def swr_decision_record_errors(
         self,
@@ -3405,6 +3756,52 @@ Additional validator requirements:
             "response_json": str(stage_summary.get("response_json_path") or stage_summary.get("response_final_json_path") or (f"{stage_dir}/response.final.json" if stage_dir else "")),
         }
 
+    def swr_review_embedded_sources(self, slice_: dict[str, Any], payload: dict[str, Any]) -> list[dict[str, Any]]:
+        """Embed the source text of cited authority files into the review job.
+
+        Read-only reviewers blocked a healthy cycle because the job referenced
+        the primary/contract files by path only. Embedding bounded content plus
+        the full-file sha256 removes that objection deterministically. Only
+        tracked repo docs are embedded — never provider payloads or health data.
+        """
+        max_bytes = int(self.policy.get("swr", {}).get("embedded_source_max_bytes", 65536))
+        artifacts = self.swr_stage_artifacts(payload)
+        workdir_rel = str(self.policy.get("swr", {}).get("task_pack_workdir") or "automation/task_packs/gstack_design_to_po_playbook")
+        candidates = [
+            ("primary_artifact_markdown", artifacts.get("response_markdown")),
+            ("input_manifest_markdown", artifacts.get("input_manifest_markdown")),
+            ("playbook_contract", f"{workdir_rel}/corpus/markdown_playbook_v1_contract.md"),
+            ("autoplan", slice_.get("autoplan")),
+            ("brief", slice_.get("brief")),
+        ]
+        sources: list[dict[str, Any]] = []
+        for label, rel in candidates:
+            if not rel:
+                continue
+            path = self.repo_artifact_path(str(rel))
+            if path is None or not path.is_file():
+                continue
+            rel_str = str(path.relative_to(self.root))
+            if rel_str.startswith(("data/", "private/")) or path.name.startswith(".env"):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            truncated = len(content.encode("utf-8")) > max_bytes
+            if truncated:
+                content = content.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+            sources.append(
+                {
+                    "label": label,
+                    "path": rel_str,
+                    "sha256": file_sha256(path),
+                    "truncated": truncated,
+                    "content": content,
+                }
+            )
+        return sources
+
     def write_swr_stage_review_job(self, slice_: dict[str, Any], manifest_path: Path, review_dir: Path, outcome_path: Path) -> Path:
         payload = read_json(manifest_path, {})
         if not isinstance(payload, dict):
@@ -3434,6 +3831,12 @@ Additional validator requirements:
                 "Reject unsupported claims and any bundle path/hash mismatch.",
             ],
             "next_stage_rule": "If approved, AutoKeel may create an approved review bundle and continue the same SWR run with --review-bundle.",
+            "embedded_sources": self.swr_review_embedded_sources(slice_, payload),
+            "embedded_sources_note": (
+                "Source text of the primary and contract authority files is embedded above "
+                "with full-file sha256 digests; grounding checks must use these instead of "
+                "blocking on missing source text."
+            ),
         }
         path = review_dir / "stage_review_job.json"
         write_json_atomic(path, job)
@@ -3702,13 +4105,7 @@ Additional validator requirements:
                     slice_id=slice_["id"],
                 )
                 return CommandResult([], 0, "dry run SWR review repair planned", "")
-            review_cycle_id = self.swr_repair_cycle_id(slice_, stage_id)
-            review_dir = self.swr_review_lane_dir(
-                slice_id=slice_["id"],
-                run_id=repair_plan["run_id"],
-                stage_id=stage_id,
-                review_cycle_id=review_cycle_id,
-            )
+            review_cycle_id, review_dir = self.fresh_swr_repair_cycle(slice_, repair_plan, stage_id)
             fresh = self.assert_fresh_review_repair_dir(review_dir, review_cycle_id)
             if not fresh.ok:
                 self.record_failure(
@@ -3945,6 +4342,10 @@ Additional validator requirements:
             return operator
         operator_payload = self.parse_json_stdout(operator, {})
         operator_review = str(operator_payload.get("operator_review")) if isinstance(operator_payload, dict) else ""
+        operator_transport = self.swr_decision_transport_error(operator_review, "operator provisional review")
+        if operator_transport:
+            evidence = self.repo_artifact_path(operator_review) or (review_dir / "operator")
+            return self.swr_review_transport_failure(slice_, evidence, "SWR review transport failed: " + operator_transport)
         operator_errors = self.swr_decision_record_errors(
             operator_review,
             label="operator provisional review",
@@ -3980,6 +4381,21 @@ Additional validator requirements:
         reviewers_payload = self.parse_json_stdout(reviewers, {})
         codex_review = str(reviewers_payload.get("codex_review")) if isinstance(reviewers_payload, dict) else ""
         claude_review = str(reviewers_payload.get("claude_review")) if isinstance(reviewers_payload, dict) else ""
+        transport_errors = [
+            error
+            for error in (
+                self.swr_decision_transport_error(codex_review, "Codex reviewer decision"),
+                self.swr_decision_transport_error(claude_review, "Claude reviewer decision"),
+            )
+            if error
+        ]
+        if transport_errors:
+            evidence = self.repo_artifact_path(codex_review) or self.repo_artifact_path(claude_review) or (review_dir / "agents")
+            return self.swr_review_transport_failure(
+                slice_,
+                evidence,
+                "SWR review transport failed: " + "; ".join(transport_errors),
+            )
         reviewer_errors: list[str] = []
         reviewer_errors.extend(
             self.swr_decision_record_errors(
@@ -4028,6 +4444,11 @@ Additional validator requirements:
         consolidate = self.runner.run(consolidate_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         if not consolidate.ok:
             return consolidate
+        consolidation_transport = self.swr_decision_transport_error(
+            str(consolidated.relative_to(self.root)), "consolidated review"
+        )
+        if consolidation_transport:
+            return self.swr_review_transport_failure(slice_, consolidated, "SWR review transport failed: " + consolidation_transport)
         consolidation_errors = self.swr_decision_record_errors(
             str(consolidated.relative_to(self.root)),
             label="consolidated review",
@@ -4059,6 +4480,13 @@ Additional validator requirements:
         accept = self.runner.run(accept_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         if not accept.ok:
             return accept
+        acceptance_transport = self.swr_decision_transport_error(
+            str(acceptance.relative_to(self.root)), "operator acceptance"
+        )
+        if acceptance_transport:
+            return self.swr_review_transport_failure(
+                slice_, acceptance if acceptance.exists() else consolidated, "SWR review transport failed: " + acceptance_transport
+            )
         acceptance_errors = self.swr_decision_record_errors(
             str(acceptance.relative_to(self.root)),
             label="operator acceptance",
@@ -4143,6 +4571,64 @@ Additional validator requirements:
         continued = self.runner.run(continue_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         return self.handle_swr_continue_result(slice_, manifest_path, continued)
 
+    def swr_run_abandonment_artifacts(self, slice_id: str) -> list[Path]:
+        evidence_dir = self.root / "docs" / "evidence"
+        if not evidence_dir.exists():
+            return []
+        return sorted(evidence_dir.glob(f"{slice_id.lower()}-swr-run-abandonment-*.json"))
+
+    def assert_fresh_swr_launch_sanctioned(self, slice_: dict[str, Any]) -> CommandResult:
+        """A fresh SWR launch after prior SWR history requires a recorded decision.
+
+        The June-1 incident escaped a dead-end repair state via an unrecorded
+        hand edit that silently converted a bounded same-run repair into an
+        unguarded fresh launch. Any fresh launch that follows earlier SWR
+        activity for the slice must now cite an explicit abandonment decision
+        artifact under docs/evidence/.
+        """
+        if not bool(self.policy.get("swr", {}).get("require_abandonment_decision_for_relaunch", True)):
+            return CommandResult([], 0, "fresh-launch guard disabled by policy", "")
+        prior_swr_events = [
+            event
+            for event in iter_jsonl(self.events_path)
+            if event.get("slice") == slice_["id"]
+            and str(event.get("event") or "").startswith("swr_")
+            and str(event.get("event") or "") not in {"swr_kernel_pinned"}
+        ]
+        if not prior_swr_events:
+            return CommandResult([], 0, "no prior SWR history; fresh launch allowed", "")
+        artifacts = self.swr_run_abandonment_artifacts(slice_["id"])
+        for artifact in reversed(artifacts):
+            payload = read_json(artifact, {})
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("schema_version") != "autokeel.swr_run_abandonment.v1":
+                continue
+            if payload.get("slice") != slice_["id"]:
+                continue
+            if payload.get("authorizes_fresh_launch") is True and not payload.get("consumed_at"):
+                if not self.dry_run:
+                    payload["consumed_at"] = now_iso()
+                    write_json_atomic(artifact, payload)
+                self.log_event(
+                    "swr_fresh_launch_sanctioned_by_abandonment",
+                    {"artifact": str(artifact.relative_to(self.root)), "abandoned_run_id": payload.get("abandoned_run_id")},
+                    slice_id=slice_["id"],
+                )
+                return CommandResult([], 0, "fresh launch sanctioned by recorded abandonment decision", "")
+        return CommandResult(
+            [],
+            39,
+            "",
+            (
+                f"fresh SWR launch for {slice_['id']} is not sanctioned: prior SWR history exists "
+                "(events) but no unconsumed abandonment decision artifact was found under "
+                f"docs/evidence/{slice_['id'].lower()}-swr-run-abandonment-*.json; "
+                "record one via 'python scripts/record_intervention.py abandon-swr-run ...' "
+                "or restore the prior run and execute its planned repair"
+            ),
+        )
+
     def ensure_swr_playbook(self, slice_: dict[str, Any]) -> CommandResult:
         playbook = self.root / slice_["playbook"]
         if self.swr_evidence_matches_playbook(slice_, playbook):
@@ -4207,6 +4693,10 @@ Additional validator requirements:
                 str(active_manifest.relative_to(self.root)),
                 "SWR background run is still in progress; do not relaunch",
             )
+
+        fresh_guard = self.assert_fresh_swr_launch_sanctioned(slice_)
+        if not fresh_guard.ok:
+            return fresh_guard
 
         if playbook.exists():
             if self.dry_run:
@@ -5622,7 +6112,17 @@ Use local files and commands only. If evidence is missing, write a failing revie
         }
         return mapping.get(failure_class, "autokeel_wrapper")
 
-    def record_failure(self, slice_id: str, failure_class: str, severity: str, description: str, action_taken: str, evidence_path: Path | None, run_id: str | None = None) -> Path:
+    def record_failure(
+        self,
+        slice_id: str,
+        failure_class: str,
+        severity: str,
+        description: str,
+        action_taken: str,
+        evidence_path: Path | None,
+        run_id: str | None = None,
+        repair_scope: str | None = None,
+    ) -> Path:
         failure_dir = self.root / "ops" / "autonomy" / "failures"
         failure_dir.mkdir(parents=True, exist_ok=True)
         failure_file = failure_dir / f"{slice_id}-{failure_class}-{slug_ts()}-{uuid.uuid4().hex[:8]}.md"
@@ -5651,6 +6151,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             "description": description,
             "action_taken": action_taken,
             "evidence_path": evidence_text or str(failure_file.relative_to(self.root)),
+            "evidence_sha256": file_sha256(evidence_path) if evidence_path is not None and evidence_path.is_file() else None,
             "root_cause_id": root_cause_id,
             "failure_origin": failure_origin,
             "supersedes": [],
@@ -5659,6 +6160,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
             "closure_validation_command": "",
             "open": True,
         }
+        if repair_scope:
+            payload["repair_scope"] = repair_scope
         append_jsonl(self.failure_path, redact(payload))
         self.log_event("failure_recorded", payload, slice_id=slice_id)
         return failure_file
@@ -5796,6 +6299,22 @@ Use local files and commands only. If evidence is missing, write a failing revie
     def _run_once_impl(self, requested_slice: str | None = None, force_slice: bool = False) -> int:
         self.log_heartbeat()
 
+        digest_check = self.verify_state_digest()
+        if not digest_check.ok:
+            failure = self.record_failure(
+                "GLOBAL",
+                "state_divergence",
+                "high",
+                "Control-plane state was modified outside sanctioned AutoKeel writers.",
+                "Stopped the tick before any slice work; the out-of-band change must be ratified with recorded evidence.",
+                self.autonomy_dir / "state_digest.json",
+            )
+            self.log_event(
+                "state_digest_divergence",
+                {"stderr": digest_check.stderr, "failure_path": str(failure.relative_to(self.root))},
+            )
+            return digest_check.exit_code or 39
+
         invariants = self.run_autokeel_invariants("start")
         if not invariants.ok:
             return invariants.exit_code or 38
@@ -5839,12 +6358,50 @@ Use local files and commands only. If evidence is missing, write a failing revie
         )
 
         if phase == "swr_repair_malformed":
+            # Sanctioned exit from the dead end: if a recorded abandonment
+            # decision covers this repair's run, archive the broken plan and
+            # requeue the slice instead of blocking forever.
+            repair = slice_.get("swr_review_repair") if isinstance(slice_.get("swr_review_repair"), dict) else {}
+            abandonment = next(
+                (
+                    artifact
+                    for artifact in reversed(self.swr_run_abandonment_artifacts(slice_["id"]))
+                    if isinstance(read_json(artifact, None), dict)
+                    and read_json(artifact, {}).get("schema_version") == "autokeel.swr_run_abandonment.v1"
+                    and str(read_json(artifact, {}).get("abandoned_run_id") or "") == str(repair.get("run_id") or "")
+                ),
+                None,
+            )
+            if abandonment is not None:
+                slices = self.load_slices()
+                for item in slices:
+                    if item.get("id") != slice_["id"]:
+                        continue
+                    abandoned = item.setdefault("swr_review_repair_abandoned", [])
+                    if isinstance(abandoned, list):
+                        abandoned.append({**repair, "abandoned_at": now_iso(), "abandonment_evidence": str(abandonment.relative_to(self.root))})
+                    for stale_key in ("swr_review_repair", "swr_run_id", "swr_run_manifest"):
+                        item.pop(stale_key, None)
+                    item["updated_at"] = now_iso()
+                    break
+                self.save_slices(slices)
+                self.log_event(
+                    "swr_review_repair_abandoned_by_decision",
+                    {"abandonment_evidence": str(abandonment.relative_to(self.root)), "abandoned_run_id": repair.get("run_id")},
+                    slice_id=slice_["id"],
+                )
+                self.mark_slice_status(slice_["id"], "pending")
+                return 0
             self.record_failure(
                 slice_["id"],
                 "state_divergence",
                 "high",
                 "SWR review repair plan is malformed or references a missing manifest.",
-                "Stopped before launch/resume; repair plan must be fixed with local evidence.",
+                (
+                    "Stopped before launch/resume. Sanctioned exits: restore the run directory the plan references, "
+                    "or record an abandonment decision via 'python scripts/record_intervention.py abandon-swr-run' "
+                    "and rerun; never hand-edit slices.json."
+                ),
                 self.root / "ops/autonomy/slices.json",
             )
             self.mark_slice_status(slice_["id"], "blocked", reason="malformed SWR review repair plan")
@@ -6095,95 +6652,105 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     lock_path = root / "ops" / "autonomy" / ".autokeel.lock"
 
+    read_only_invocation = bool(args.doctor or args.status or args.next_slice or args.replay_events)
+    if read_only_invocation:
+        # Diagnostics must not create or contend on the run lock; a lock file's
+        # presence should always mean a mutating AutoKeel process ran.
+        return _main_dispatch(args, root)
+
     with AutoKeelLock(lock_path):
-        autokeel = AutoKeel(root=root, dry_run=args.dry_run)
-        if args.doctor:
-            cmd = ["python", "-m", "scripts.verify_autonomy_preflight", "--json"]
-            if args.strict:
-                cmd.extend(["--strict-tools", "--strict-clean"])
-            result = autokeel.runner.run(cmd, cwd=root, execute_in_dry_run=True)
-            if args.strict_swr:
-                slice_ = autokeel.find_slice(args.strict_swr)
-                if slice_ is None:
-                    print(json.dumps({"status": "error", "errors": [f"unknown slice: {args.strict_swr}"]}, indent=2, sort_keys=True))
-                    return 1
-                swr = autokeel.strict_swr_provider_preflight(slice_)
-                try:
-                    preflight_payload = json.loads(result.stdout) if result.stdout.strip() else {}
-                except json.JSONDecodeError:
-                    preflight_payload = {"status": "error", "errors": ["verify_autonomy_preflight emitted invalid JSON"]}
-                swr_payload = autokeel.parse_json_stdout(swr, {})
-                errors = list(preflight_payload.get("errors", []) if isinstance(preflight_payload, dict) else [])
-                if not swr.ok:
-                    errors.append(swr.stderr or "strict SWR provider preflight failed")
-                combined = {
-                    "status": "ok" if result.ok and swr.ok and not errors else "error",
-                    "errors": errors,
-                    "warnings": preflight_payload.get("warnings", []) if isinstance(preflight_payload, dict) else [],
-                    "checks": preflight_payload.get("checks", {}) if isinstance(preflight_payload, dict) else {},
-                    "strict_swr": swr_payload,
-                }
-                print(json.dumps(combined, indent=2, sort_keys=True))
-                return 0 if combined["status"] == "ok" else 1
-            print(result.stdout, end="")
-            if result.stderr:
-                print(result.stderr, file=sys.stderr, end="")
-            return result.exit_code
-        if args.readiness == "S02":
-            from scripts.verify_s02_readiness import verify_s02_readiness
+        return _main_dispatch(args, root)
 
-            report = verify_s02_readiness(root)
-            print(json.dumps(report, indent=2, sort_keys=True))
-            return 0 if report["status"] == "ok" else 1
-        if args.readiness == "S03":
-            from scripts.verify_s03_readiness import verify_s03_readiness
 
-            report = verify_s03_readiness(root)
-            print(json.dumps(report, indent=2, sort_keys=True))
-            return 0 if report["status"] == "ok" else 1
-        if args.readiness == "S04":
-            from scripts.verify_s04_readiness import verify_s04_readiness
+def _main_dispatch(args: argparse.Namespace, root: Path) -> int:
+    autokeel = AutoKeel(root=root, dry_run=args.dry_run)
+    if args.doctor:
+        cmd = ["python", "-m", "scripts.verify_autonomy_preflight", "--json"]
+        if args.strict:
+            cmd.extend(["--strict-tools", "--strict-clean"])
+        result = autokeel.runner.run(cmd, cwd=root, execute_in_dry_run=True)
+        if args.strict_swr:
+            slice_ = autokeel.find_slice(args.strict_swr)
+            if slice_ is None:
+                print(json.dumps({"status": "error", "errors": [f"unknown slice: {args.strict_swr}"]}, indent=2, sort_keys=True))
+                return 1
+            swr = autokeel.strict_swr_provider_preflight(slice_)
+            try:
+                preflight_payload = json.loads(result.stdout) if result.stdout.strip() else {}
+            except json.JSONDecodeError:
+                preflight_payload = {"status": "error", "errors": ["verify_autonomy_preflight emitted invalid JSON"]}
+            swr_payload = autokeel.parse_json_stdout(swr, {})
+            errors = list(preflight_payload.get("errors", []) if isinstance(preflight_payload, dict) else [])
+            if not swr.ok:
+                errors.append(swr.stderr or "strict SWR provider preflight failed")
+            combined = {
+                "status": "ok" if result.ok and swr.ok and not errors else "error",
+                "errors": errors,
+                "warnings": preflight_payload.get("warnings", []) if isinstance(preflight_payload, dict) else [],
+                "checks": preflight_payload.get("checks", {}) if isinstance(preflight_payload, dict) else {},
+                "strict_swr": swr_payload,
+            }
+            print(json.dumps(combined, indent=2, sort_keys=True))
+            return 0 if combined["status"] == "ok" else 1
+        print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+        return result.exit_code
+    if args.readiness == "S02":
+        from scripts.verify_s02_readiness import verify_s02_readiness
 
-            report = verify_s04_readiness(root)
-            print(json.dumps(report, indent=2, sort_keys=True))
-            return 0 if report["status"] == "ok" else 1
-        if args.readiness == "S05":
-            from scripts.verify_s05_readiness import verify_s05_readiness
+        report = verify_s02_readiness(root)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["status"] == "ok" else 1
+    if args.readiness == "S03":
+        from scripts.verify_s03_readiness import verify_s03_readiness
 
-            report = verify_s05_readiness(root)
-            print(json.dumps(report, indent=2, sort_keys=True))
-            return 0 if report["status"] == "ok" else 1
-        if args.next_slice:
-            print(json.dumps(autokeel.choose_next_slice(args.slice_id, force=args.force), indent=2, sort_keys=True))
-            return 0
-        if args.replay_events:
-            print(json.dumps(list(iter_jsonl(autokeel.events_path) or []), indent=2, sort_keys=True))
-            return 0
-        if args.unblock_evidence:
-            slice_id, evidence_dir = args.unblock_evidence
-            evidence_path = root / evidence_dir
-            if not evidence_path.exists():
-                raise AutoKeelError(f"evidence directory missing: {evidence_dir}")
-            autokeel.mark_slice_status(slice_id, "evidence_ready", evidence_request=str(evidence_path.relative_to(root)))
-            print(json.dumps({"status": "ok", "slice": slice_id, "evidence_request": str(evidence_path.relative_to(root))}, indent=2, sort_keys=True))
-            return 0
-        if args.close_failure:
-            if not args.closure_evidence or not args.closure_note:
-                raise AutoKeelError("--close-failure requires --closure-evidence and --closure-note")
-            from scripts.close_failure import close_failure
+        report = verify_s03_readiness(root)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["status"] == "ok" else 1
+    if args.readiness == "S04":
+        from scripts.verify_s04_readiness import verify_s04_readiness
 
-            report = close_failure(root, args.close_failure[0], args.close_failure[1], args.closure_evidence, args.closure_note)
-            print(json.dumps(report, indent=2, sort_keys=True))
-            return 0 if report["status"] == "ok" else 1
-        if args.status:
-            payload = {"state": autokeel.load_state(), "slices": autokeel.load_slices()}
-            if args.failures:
-                payload["failures"] = list(iter_jsonl(autokeel.failure_path) or [])
-            print(json.dumps(payload, indent=2, sort_keys=True))
-            return 0
-        if args.once:
-            return autokeel.run_once(requested_slice=args.slice_id, force_slice=args.force)
-        return autokeel.run_loop(max_loops=args.max_loops, requested_slice=args.slice_id, force_slice=args.force)
+        report = verify_s04_readiness(root)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["status"] == "ok" else 1
+    if args.readiness == "S05":
+        from scripts.verify_s05_readiness import verify_s05_readiness
+
+        report = verify_s05_readiness(root)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["status"] == "ok" else 1
+    if args.next_slice:
+        print(json.dumps(autokeel.choose_next_slice(args.slice_id, force=args.force), indent=2, sort_keys=True))
+        return 0
+    if args.replay_events:
+        print(json.dumps(list(iter_jsonl(autokeel.events_path) or []), indent=2, sort_keys=True))
+        return 0
+    if args.unblock_evidence:
+        slice_id, evidence_dir = args.unblock_evidence
+        evidence_path = root / evidence_dir
+        if not evidence_path.exists():
+            raise AutoKeelError(f"evidence directory missing: {evidence_dir}")
+        autokeel.mark_slice_status(slice_id, "evidence_ready", evidence_request=str(evidence_path.relative_to(root)))
+        print(json.dumps({"status": "ok", "slice": slice_id, "evidence_request": str(evidence_path.relative_to(root))}, indent=2, sort_keys=True))
+        return 0
+    if args.close_failure:
+        if not args.closure_evidence or not args.closure_note:
+            raise AutoKeelError("--close-failure requires --closure-evidence and --closure-note")
+        from scripts.close_failure import close_failure
+
+        report = close_failure(root, args.close_failure[0], args.close_failure[1], args.closure_evidence, args.closure_note)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["status"] == "ok" else 1
+    if args.status:
+        payload = {"state": autokeel.load_state(), "slices": autokeel.load_slices()}
+        if args.failures:
+            payload["failures"] = list(iter_jsonl(autokeel.failure_path) or [])
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    if args.once:
+        return autokeel.run_once(requested_slice=args.slice_id, force_slice=args.force)
+    return autokeel.run_loop(max_loops=args.max_loops, requested_slice=args.slice_id, force_slice=args.force)
 
 
 if __name__ == "__main__":

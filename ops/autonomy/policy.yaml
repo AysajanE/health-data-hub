@@ -32,30 +32,19 @@ swr:
     - OPENAI_API_KEY
   provider_auth_preflight: true
   provider_auth_failure_status: blocked_external
+  # The SWR execution kernel (nested staged-workflow-runner repo) must be a
+  # clean, committed checkout; runs against uncommitted kernel code are refused.
+  require_pinned_kernel: true
+  # A fresh SWR launch after prior SWR history requires a recorded abandonment
+  # decision artifact (docs/evidence/<slice>-swr-run-abandonment-*.json).
+  require_abandonment_decision_for_relaunch: true
+  # Per-file cap for source text embedded into stage review jobs.
+  embedded_source_max_bytes: 65536
 
-swr_repair_authorization:
-  auto_authorize_single_stage_repair: true
-
-  # Existing raw stage-rerun authorization stays narrow.
-  allowed_repair_stages:
-    - gate_and_contract_review
-    - final_markdown_playbook
-
-  # New: review-lane-only repair authorization. This is safe for
-  # source_authority_map because it reruns reviewers on an existing raw artifact;
-  # it does not regenerate the stage response.
-  allowed_review_lane_repair_stages:
-    - source_authority_map
-    - repo_grounding
-    - execution_row_draft
-    - gate_and_contract_review
-    - final_markdown_playbook
-
-  require_existing_stage_artifact_for_review_lane_repair: true
-  require_existing_run_manifest: true
-  require_no_open_high_failures: true
-  max_same_stage_repairs: 1
-  max_total_swr_repairs_per_slice: 2
+# SWR repair authorization is defined canonically in
+# ops/autonomy/authorization_policy.yaml (swr_single_stage_repair,
+# swr_review_history_repair). The duplicate block that previously lived here
+# was dead config and has been removed.
 
 swr_review_lane_budget_release:
   auto_authorized: true
@@ -241,6 +230,9 @@ loop:
   po_max_auto_resume_attempts: 0
   po_repaired_escalation_resume_attempts: 1
   heartbeat_path: ops/autonomy/heartbeats/latest.json
+  # Fail closed when slices.json/events.jsonl/failure_ledger.jsonl change
+  # outside sanctioned writers (see scripts/record_intervention.py).
+  enforce_state_digest: true
 
 repair_budget:
   schema_version: autokeel.repair_budget.v1
@@ -262,6 +254,10 @@ repair_budget:
   # Too many control-plane repairs means the autonomous harness must pass a
   # stabilization checkpoint before relaunch. This is not a bypass.
   max_closed_control_plane_repairs_before_stability_checkpoint: 3
+
+  # A stability checkpoint waives the control-plane budget only while it is
+  # passing AND fresh; stale checkpoints must be re-minted.
+  stability_checkpoint_max_age_hours: 72
 
   require_stability_checkpoint_after_control_plane_budget: true
 

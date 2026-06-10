@@ -55,6 +55,16 @@ def verify_swr_review_history(root: Path, manifest_path: Path) -> dict[str, Any]
     warnings: list[str] = []
     checks: list[dict[str, Any]] = []
 
+    if not manifest_path.exists():
+        # Fail closed: a missing manifest means the run history cannot be
+        # verified at all; it must never read as "no findings".
+        return {
+            "status": "error",
+            "errors": [f"run manifest does not exist: {manifest_path}"],
+            "warnings": [],
+            "checks": [],
+        }
+
     manifest = load_json(manifest_path, {})
     if not isinstance(manifest, dict):
         return {"status": "error", "errors": [f"manifest is not a JSON object: {manifest_path}"], "warnings": [], "checks": []}

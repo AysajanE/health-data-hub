@@ -165,6 +165,12 @@ def close_failure(
         }
         with event_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, sort_keys=True) + "\n")
+        try:
+            from ops.autonomy.autokeel import update_state_digest_sidecar
+
+            update_state_digest_sidecar(root)
+        except ImportError:
+            pass
     return {"status": "ok" if closed else "error", "errors": [] if closed else ["no matching open failure"], "closed": closed}
 
 

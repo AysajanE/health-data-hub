@@ -68,9 +68,26 @@ def verify_s05_readiness(root: Path) -> dict[str, Any]:
         errors.extend(f"provider policy: {error}" for error in provider["errors"])
     warnings.extend(f"provider policy: {warning}" for warning in provider.get("warnings", []))
 
+    # Credentials live in gitignored .env.local; load names-only before the
+    # presence check so readiness matches the environment AutoKeel launches with.
+    from ops.autonomy.autokeel import load_local_env
+
+    load_local_env(root)
     if not os.environ.get("OPENAI_API_KEY", "").strip():
         errors.append("OPENAI_API_KEY is required for S05 keel-swr launch; secret_values_logged=false")
     checks["swr_required_env"] = {"OPENAI_API_KEY": "[SET]" if os.environ.get("OPENAI_API_KEY", "").strip() else "[UNSET]"}
+
+    # The SWR review lane shells out to both reviewer CLIs; a missing binary
+    # must stop the launch here, not crash the supervisor mid-review.
+    import shutil as _shutil
+
+    reviewer_clis = {}
+    for cli in ("codex", "claude"):
+        located = _shutil.which(cli)
+        reviewer_clis[cli] = "[FOUND]" if located else "[MISSING]"
+        if not located:
+            errors.append(f"reviewer CLI '{cli}' not found on PATH; SWR review lane cannot run")
+    checks["reviewer_clis"] = reviewer_clis
 
     tracked = check_no_tracked_data(root)
     if tracked["status"] != "ok":

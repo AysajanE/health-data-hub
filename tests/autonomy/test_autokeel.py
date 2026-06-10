@@ -723,8 +723,12 @@ Manual gates are forbidden.
             evidence_dir = root / "docs/evidence"
             evidence_dir.mkdir(parents=True, exist_ok=True)
             (evidence_dir / "root-cause.md").write_text("Root cause fixed.\n", encoding="utf-8")
-            (evidence_dir / "s05-autokeel-stability-checkpoint.json").write_text('{"status":"ok"}\n', encoding="utf-8")
             now = datetime.now().astimezone().isoformat(timespec="seconds")
+            # The checkpoint waiver requires a passing AND fresh checkpoint.
+            (evidence_dir / "s05-autokeel-stability-checkpoint.json").write_text(
+                json.dumps({"status": "ok", "slice": "S05", "created_at": now}) + "\n",
+                encoding="utf-8",
+            )
             rows = [
                 {
                     "ts": now,
