@@ -1,22 +1,6 @@
 {
   "active_run": null,
-  "active_swr_run": {
-    "current_stage_id": "repo_grounding",
-    "current_stage_status": "in_progress",
-    "last_remote_check_at": "2026-06-10T15:14:42-04:00",
-    "last_remote_check_exit_code": 0,
-    "last_remote_check_stderr": "",
-    "recorded_at": "2026-06-10T14:41:22-04:00",
-    "response_id": "resp_0f83c9ed10ce79ef006a29afcb433c819e89d8d8e39e67b533",
-    "run_dir": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook",
-    "run_id": "run_20260601_133046_ae09e1ea",
-    "run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "run_name": "autokeel-s05-20260601t093046-0400",
-    "slice": "S05",
-    "status": "running",
-    "supervisor_session_id": null,
-    "workflow_id": "gstack_design_to_po_playbook"
-  },
+  "active_swr_run": null,
   "completed_slices": [
     "S01",
     "S02",
@@ -24,7 +8,7 @@
     "S04"
   ],
   "current_slice": "S05",
-  "last_event_id": 984,
+  "last_event_id": 998,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [
