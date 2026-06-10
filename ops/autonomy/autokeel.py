@@ -3138,9 +3138,38 @@ Additional validator requirements:
             return None
         return path
 
-    def swr_review_failure(self, slice_: dict[str, Any], evidence_path: Path, reason: str) -> CommandResult:
+    def swr_decision_semantic_rejection(self, path_value: str | Path) -> bool:
+        """True when a decision record is a genuine reviewer NO.
+
+        A semantic rejection has transport status succeeded but a
+        non-approving verdict or substantive blocking issues — as opposed to
+        record-shape drift or transport failures.
+        """
+        if not path_value:
+            return False
+        path = self.repo_artifact_path(str(path_value))
+        if path is None or not path.exists():
+            return False
+        decision = read_json(path, {})
+        if not isinstance(decision, dict) or decision.get("status") != "succeeded":
+            return False
+        approval = str(decision.get("approval_decision") or "")
+        return approval in {"do_not_approve", "blocked"} or bool(decision.get("blocking_issues"))
+
+    def swr_review_failure(
+        self,
+        slice_: dict[str, Any],
+        evidence_path: Path,
+        reason: str,
+        *,
+        semantic_rejection: bool = False,
+    ) -> CommandResult:
         manifest_path = evidence_path if evidence_path.name == "run_manifest.json" else self.active_swr_manifest_from_state(slice_) or self.latest_swr_manifest_for_slice(slice_)
-        repair_plan = self.plan_swr_review_repair(slice_, manifest_path, reason) if manifest_path is not None else None
+        repair_plan = (
+            self.plan_swr_review_repair(slice_, manifest_path, reason, semantic_rejection=semantic_rejection)
+            if manifest_path is not None
+            else None
+        )
         failure = self.record_failure(
             slice_["id"],
             "audit_failure",
@@ -3167,7 +3196,14 @@ Additional validator requirements:
         self.clear_active_swr_run(slice_["id"], reason)
         return CommandResult([], 32, "", reason)
 
-    def plan_swr_review_repair(self, slice_: dict[str, Any], manifest_path: Path | None, reason: str) -> dict[str, Any] | None:
+    def plan_swr_review_repair(
+        self,
+        slice_: dict[str, Any],
+        manifest_path: Path | None,
+        reason: str,
+        *,
+        semantic_rejection: bool = False,
+    ) -> dict[str, Any] | None:
         if manifest_path is not None and not manifest_path.is_absolute():
             manifest_path = self.root / manifest_path
         if manifest_path is None or not manifest_path.exists():
@@ -3196,7 +3232,16 @@ Additional validator requirements:
             if source_review_stage_id is not None
             else None
         )
-        if not artifact_errors:
+        if not artifact_errors and semantic_rejection and (target_index == 0 or source_review_bundle):
+            # Convergence rule: a genuine reviewer NO on a hash-stable artifact
+            # can never be cured by re-reviewing identical content. Regenerate
+            # the stage from its current inputs and reset downstream stages.
+            repair_action = "rerun_single_stage"
+            rationale = (
+                "Reviewers semantically rejected the hash-stable stage artifact; re-reviewing identical "
+                "content cannot converge. Regenerate the stage from current inputs and reset downstream stages."
+            )
+        elif not artifact_errors:
             repair_action = "rerun_review_lane"
             rationale = "The stage response artifacts are complete and hash-stable; rerun only the supervisor review lane and reset downstream stages that consumed the tainted handoff."
         elif target_index == 0 or source_review_bundle:
@@ -4356,7 +4401,12 @@ Additional validator requirements:
         )
         if operator_errors:
             evidence = self.repo_artifact_path(operator_review) or (review_dir / "operator")
-            return self.swr_review_failure(slice_, evidence, "SWR operator review failed closed: " + "; ".join(operator_errors))
+            return self.swr_review_failure(
+                slice_,
+                evidence,
+                "SWR operator review failed closed: " + "; ".join(operator_errors),
+                semantic_rejection=self.swr_decision_semantic_rejection(operator_review),
+            )
 
         reviewers_cmd = [
             str(self.keel_swr_path()),
@@ -4419,7 +4469,15 @@ Additional validator requirements:
         )
         if reviewer_errors:
             evidence = self.repo_artifact_path(codex_review) or self.repo_artifact_path(claude_review) or (review_dir / "agents")
-            return self.swr_review_failure(slice_, evidence, "SWR independent review failed closed: " + "; ".join(reviewer_errors))
+            return self.swr_review_failure(
+                slice_,
+                evidence,
+                "SWR independent review failed closed: " + "; ".join(reviewer_errors),
+                semantic_rejection=(
+                    self.swr_decision_semantic_rejection(codex_review)
+                    or self.swr_decision_semantic_rejection(claude_review)
+                ),
+            )
 
         consolidated = review_dir / "consolidated_review.json"
         consolidate_cmd = [
@@ -4459,7 +4517,12 @@ Additional validator requirements:
             required_next_action="proceed_to_operator_acceptance",
         )
         if consolidation_errors:
-            return self.swr_review_failure(slice_, consolidated, "SWR consolidation failed closed: " + "; ".join(consolidation_errors))
+            return self.swr_review_failure(
+                slice_,
+                consolidated,
+                "SWR consolidation failed closed: " + "; ".join(consolidation_errors),
+                semantic_rejection=self.swr_decision_semantic_rejection(str(consolidated.relative_to(self.root))),
+            )
 
         acceptance = review_dir / "operator_acceptance.json"
         accept_cmd = [
@@ -4497,7 +4560,14 @@ Additional validator requirements:
             required_next_action="create_review_bundle",
         )
         if acceptance_errors:
-            return self.swr_review_failure(slice_, acceptance if acceptance.exists() else consolidated, "SWR acceptance failed closed: " + "; ".join(acceptance_errors))
+            return self.swr_review_failure(
+                slice_,
+                acceptance if acceptance.exists() else consolidated,
+                "SWR acceptance failed closed: " + "; ".join(acceptance_errors),
+                semantic_rejection=self.swr_decision_semantic_rejection(
+                    str(acceptance.relative_to(self.root)) if acceptance.exists() else str(consolidated.relative_to(self.root))
+                ),
+            )
 
         decision_records = {
             "operator_review": operator_review,

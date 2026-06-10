@@ -122,6 +122,85 @@ class TransportVsVerdictTests(unittest.TestCase):
             self.assertEqual(op.repair_budget_scope(row), "autokeel_control_plane")
 
 
+class SemanticRejectionEscalationTests(unittest.TestCase):
+    def _manifest(self, root: Path) -> Path:
+        import hashlib
+
+        run_dir = root / ".local/autokeel/swr/runs/test-run"
+        stage_dir = run_dir / "stages/01_source_authority_map"
+        stage_dir.mkdir(parents=True)
+        markdown = stage_dir / "response.final.md"
+        response_json = stage_dir / "response.final.json"
+        markdown.write_text("artifact\n", encoding="utf-8")
+        response_json.write_text("{}", encoding="utf-8")
+        manifest = run_dir / "run_manifest.json"
+        write_json_atomic(
+            manifest,
+            {
+                "run_id": "run_test",
+                "run_dir": str(run_dir.relative_to(root)),
+                "status": "waiting_for_review",
+                "current_stage_id": "source_authority_map",
+                "stages": [
+                    {
+                        "stage_id": "source_authority_map",
+                        "stage_number": 1,
+                        "status": "waiting_for_review",
+                        "response_status": "completed",
+                        "stage_dir": str(stage_dir.relative_to(root)),
+                        "response_markdown_path": str(markdown.relative_to(root)),
+                        "response_markdown_sha256": hashlib.sha256(markdown.read_bytes()).hexdigest(),
+                        "response_json_path": str(response_json.relative_to(root)),
+                        "response_json_sha256": hashlib.sha256(response_json.read_bytes()).hexdigest(),
+                    },
+                    {"stage_id": "repo_grounding", "stage_number": 2, "status": "prepared"},
+                ],
+            },
+        )
+        return manifest
+
+    def test_semantic_rejection_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            rejection = root / "rejection.json"
+            write_json_atomic(
+                rejection,
+                {"status": "succeeded", "approval_decision": "do_not_approve", "blocking_issues": [{"description": "stale scope"}]},
+            )
+            approval = root / "approval.json"
+            write_json_atomic(approval, {"status": "succeeded", "approval_decision": "approve", "blocking_issues": []})
+            transport = root / "transport.json"
+            write_json_atomic(transport, {"status": "malformed_output", "approval_decision": "blocked"})
+            self.assertTrue(op.swr_decision_semantic_rejection("rejection.json"))
+            self.assertFalse(op.swr_decision_semantic_rejection("approval.json"))
+            self.assertFalse(op.swr_decision_semantic_rejection("transport.json"))
+
+    def test_semantic_rejection_escalates_to_stage_rerun(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            manifest = self._manifest(root)
+            slice_ = {"id": "S05"}
+            plan = op.plan_swr_review_repair(slice_, manifest, "reviewers rejected", semantic_rejection=True)
+            self.assertIsNotNone(plan)
+            self.assertEqual(plan["repair_action"], "rerun_single_stage")
+            self.assertIn("cannot converge", plan["rationale"])
+
+    def test_shape_drift_still_plans_review_lane_rerun(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            manifest = self._manifest(root)
+            slice_ = {"id": "S05"}
+            plan = op.plan_swr_review_repair(slice_, manifest, "record shape drift", semantic_rejection=False)
+            self.assertIsNotNone(plan)
+            self.assertEqual(plan["repair_action"], "rerun_review_lane")
+
+
 class StaleSidecarTests(unittest.TestCase):
     def test_marker_match_does_not_admit_dir_with_sidecars(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
