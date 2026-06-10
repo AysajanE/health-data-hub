@@ -35,3 +35,6 @@ ops/autonomy/heartbeats/*.json
 docs/local/**
 !docs/local/
 !docs/local/README.md
+
+# Local Python virtualenv.
+.venv/
