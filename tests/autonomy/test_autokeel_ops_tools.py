@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
 import unittest
+from datetime import date, datetime, timedelta
 from pathlib import Path
+
+import yaml
 
 from ops.autonomy.autokeel import write_json_atomic
 from scripts.close_failure import close_failure
@@ -13,6 +17,34 @@ from scripts.evaluate_tripwires import evaluate_tripwires
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def rewrite_tripwire_deadlines(
+    root: Path,
+    offsets_by_name: dict[str, int] | None = None,
+    default_offset_days: int = 30,
+) -> None:
+    """Pin the fixture's tripwire deadlines relative to today.
+
+    The fixture copies the real ops/autonomy/policy.yaml, whose deadlines are
+    fixed calendar dates that eventually pass. Tests must encode intent
+    (future deadlines do not fire; newest report wins) without ever expiring,
+    so they rewrite every deadline relative to today. Positive offsets are
+    future deadlines; negative offsets are already-past deadlines.
+    """
+    policy_path = root / "ops/autonomy/policy.yaml"
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    deadlines = policy.get("tripwire_deadlines") or {}
+    for name, config in deadlines.items():
+        if not isinstance(config, dict):
+            continue
+        offset = (offsets_by_name or {}).get(name, default_offset_days)
+        config["date"] = (date.today() + timedelta(days=offset)).isoformat()
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+
+def iso_days_ago(days: int) -> str:
+    return (datetime.now().astimezone() - timedelta(days=days)).isoformat(timespec="seconds")
 
 
 def copy_autonomy_fixture(dst: Path) -> None:
@@ -220,29 +252,91 @@ class AutoKeelOpsToolTests(unittest.TestCase):
             self.assertTrue(any("retarget closure evidence invalid" in error for error in report["errors"]))
 
     def test_tripwires_future_deadlines_do_not_fire(self) -> None:
+        # Intent: a deadline that is still in the future must not fire, even
+        # when the configured evidence is entirely missing.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_autonomy_fixture(root)
-            evidence = root / "private/evidence/S03/oura_smoke/report.json"
-            evidence.parent.mkdir(parents=True)
-            evidence.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+            rewrite_tripwire_deadlines(root, default_offset_days=30)
+
             report = evaluate_tripwires(root)
+
             self.assertEqual(report["status"], "ok", report)
             self.assertEqual(report["fired"], [])
 
-    def test_tripwires_use_newest_ok_report_before_newer_blocked_report(self) -> None:
+    def test_tripwires_newest_blocked_report_beats_older_ok_report(self) -> None:
+        # Intent: newest report wins regardless of status. An older `ok`
+        # report must never mask a newer failure report once the deadline has
+        # passed. File names and mtimes deliberately oppose the embedded
+        # timestamps to prove `created_at` drives selection.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_autonomy_fixture(root)
+            rewrite_tripwire_deadlines(root, {"on_oura_failure_week_1": -5}, default_offset_days=30)
             evidence_dir = root / "private/evidence/S03/oura_smoke"
             evidence_dir.mkdir(parents=True)
-            (evidence_dir / "older-ok.json").write_text(json.dumps({"status": "ok"}), encoding="utf-8")
-            (evidence_dir / "newer-blocked.json").write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
+            (evidence_dir / "a-newer-blocked.json").write_text(
+                json.dumps({"status": "blocked_external", "created_at": iso_days_ago(1)}), encoding="utf-8"
+            )
+            (evidence_dir / "z-older-ok.json").write_text(
+                json.dumps({"status": "ok", "created_at": iso_days_ago(2)}), encoding="utf-8"
+            )
+
+            report = evaluate_tripwires(root)
+
+            self.assertEqual(report["status"], "error", report)
+            self.assertEqual([item["name"] for item in report["fired"]], ["on_oura_failure_week_1"])
+            evidence_status = report["fired"][0]["evidence_status"]
+            self.assertEqual(evidence_status["status"], "blocked_external")
+            self.assertFalse(evidence_status["ok"])
+            self.assertTrue(str(evidence_status["report"]).endswith("a-newer-blocked.json"), evidence_status)
+
+    def test_tripwires_newest_ok_report_beats_older_blocked_report(self) -> None:
+        # Intent: newest report wins in the other direction too. A newer `ok`
+        # report clears an older failure, so nothing fires even though the
+        # deadline has passed.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            rewrite_tripwire_deadlines(root, {"on_oura_failure_week_1": -5}, default_offset_days=30)
+            evidence_dir = root / "private/evidence/S03/oura_smoke"
+            evidence_dir.mkdir(parents=True)
+            (evidence_dir / "a-newer-ok.json").write_text(
+                json.dumps({"status": "ok", "created_at": iso_days_ago(1)}), encoding="utf-8"
+            )
+            (evidence_dir / "z-older-blocked.json").write_text(
+                json.dumps({"status": "blocked_external", "created_at": iso_days_ago(2)}), encoding="utf-8"
+            )
 
             report = evaluate_tripwires(root)
 
             self.assertEqual(report["status"], "ok", report)
             self.assertEqual(report["fired"], [])
+
+    def test_tripwires_fall_back_to_file_mtime_when_reports_lack_timestamps(self) -> None:
+        # Intent: reports without an embedded timestamp are ordered by file
+        # mtime, so a newer-by-mtime failure still beats an older `ok`.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            rewrite_tripwire_deadlines(root, {"on_oura_failure_week_1": -5}, default_offset_days=30)
+            evidence_dir = root / "private/evidence/S03/oura_smoke"
+            evidence_dir.mkdir(parents=True)
+            older_ok = evidence_dir / "z-older-ok.json"
+            newer_blocked = evidence_dir / "a-newer-blocked.json"
+            older_ok.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+            newer_blocked.write_text(json.dumps({"status": "blocked_external"}), encoding="utf-8")
+            now = datetime.now().timestamp()
+            os.utime(older_ok, (now - 2 * 86400, now - 2 * 86400))
+            os.utime(newer_blocked, (now - 86400, now - 86400))
+
+            report = evaluate_tripwires(root)
+
+            self.assertEqual(report["status"], "error", report)
+            self.assertEqual([item["name"] for item in report["fired"]], ["on_oura_failure_week_1"])
+            evidence_status = report["fired"][0]["evidence_status"]
+            self.assertEqual(evidence_status["status"], "blocked_external")
+            self.assertTrue(str(evidence_status["report"]).endswith("a-newer-blocked.json"), evidence_status)
 
     def test_preflight_checks_git_repo_and_policy_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

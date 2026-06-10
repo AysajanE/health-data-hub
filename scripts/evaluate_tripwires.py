@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,30 +18,72 @@ from ops.autonomy.autokeel import load_policy
 
 OK_STATUSES = {"ok", "fallback_accepted"}
 
+# Collectors stamp reports with `created_at` (see scripts/evidence/_collector_common.py).
+# The remaining keys are accepted as fallbacks for hand-written or legacy reports.
+REPORT_TIMESTAMP_KEYS = ("created_at", "generated_at", "collected_at", "timestamp", "ts")
+
+
+def _report_timestamp(path: Path, payload: dict[str, Any]) -> float:
+    """Ordering key for newest-wins selection.
+
+    Prefer the report's own timestamp; fall back to the file's mtime when the
+    report does not carry a parseable timestamp.
+    """
+    for key in REPORT_TIMESTAMP_KEYS:
+        raw = payload.get(key)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        # Naive timestamps are interpreted as local time, matching how the
+        # evidence collectors stamp `created_at`.
+        return parsed.timestamp()
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return float("-inf")
+
 
 def latest_json_report(path: Path) -> dict[str, Any] | None:
+    """Return the newest evidence report, regardless of its status.
+
+    Selection is newest-first by the report's own timestamp (falling back to
+    file mtime), with the file name as a deterministic tie-breaker. Status
+    must never influence selection: an older `ok` report must not mask a
+    newer failure report, and an older failure must not mask a newer `ok`.
+    Neither ops/autonomy/policy.yaml nor the design-doc Tripwires section
+    defines an evidence staleness window, so newest-wins is the whole rule.
+    """
     if path.is_file() and path.suffix.lower() == ".json":
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return None
+        if not isinstance(payload, dict):
+            return None
+        payload["_report_path"] = str(path)
+        return payload
 
     if not path.exists() or not path.is_dir():
         return None
 
-    reports = sorted(path.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
-    newest: dict[str, Any] | None = None
-    for report in reports:
+    candidates: list[tuple[float, str, dict[str, Any]]] = []
+    for report in path.glob("*.json"):
         try:
             payload = json.loads(report.read_text(encoding="utf-8"))
-            payload["_report_path"] = str(report)
-            if newest is None:
-                newest = payload
-            if str(payload.get("status", "unknown")) in OK_STATUSES:
-                return payload
         except Exception:
             continue
-    return newest
+        if not isinstance(payload, dict):
+            continue
+        payload["_report_path"] = str(report)
+        candidates.append((_report_timestamp(report, payload), report.name, payload))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][2]
 
 
 def evidence_status(root: Path, evidence_rel: str | None) -> dict[str, Any]:
