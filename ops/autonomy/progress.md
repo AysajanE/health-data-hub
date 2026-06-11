@@ -98,3 +98,6 @@ The first success criterion is S01 running from autonomous brief through Keel va
 - 2026-06-10T18:09:04-04:00 S05 slice_status_updated: status=blocked_external, reason=Codex CLI usage limit exhausted (resets 2026-07-10 17:54 or upgrade); review lane cannot run, failure_path=ops/autonomy/failures/S05-provider_auth_failure-20260610T180904-0400-8caf09a2.md
 - 2026-06-10T18:15:35-04:00 S05 slice_status_updated: status=blocked_compile_inputs, reason=Resume planned stage-2 review-lane repair after Codex capacity restoration (docs/evidence/s05-codex-capacity-restored-20260610.md)
 - 2026-06-10T18:29:08-04:00 S05 slice_status_updated: status=waiting_for_playbook, reason=SWR background run in progress
+- 2026-06-10T18:31:16-04:00 S05 slice_status_updated: status=waiting_for_playbook, reason=SWR background run in progress
+- 2026-06-10T18:37:57-04:00 S05 slice_status_updated: status=waiting_for_playbook, reason=SWR background run in progress
+- 2026-06-10T18:53:08-04:00 S05 slice_status_updated: status=blocked_compile_inputs, reason=SWR review transport failed: Claude reviewer decision transport failure: status=failed; first_error=Agent command exited with 1., failure_path=ops/autonomy/failures/S05-swr_review_transport_failure-20260610T185308-0400-3384d8c9.md
