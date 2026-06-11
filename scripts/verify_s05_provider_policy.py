@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable, Mapping
 import json
 import re
 import sys
@@ -17,11 +18,13 @@ from src.warehouse.features import load_sleep_provider_policy
 
 
 MODEL_DIRS = ("src/model", "src/models", "src/ml")
+EIGHT_SLEEP_SOURCES = {"8sleep", "eight_sleep", "pyeight"}
 FORBIDDEN_MODEL_PATTERNS = (
     re.compile(r"""source\s*={1,2}\s*['"]8sleep['"]""", re.I),
     re.compile(r"""hrv_merge_method\s*={1,2}\s*['"]eight_fallback['"]""", re.I),
     re.compile(r"""eight_fallback""", re.I),
 )
+REQUIRED_TRAINING_INPUT_FIELDS = ("source", "sleep_source_count", "hrv_merge_method")
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -46,6 +49,103 @@ def scan_model_training_code(root: Path) -> list[str]:
     return violations
 
 
+def _row_value(row: Any, field: str) -> Any:
+    if isinstance(row, Mapping):
+        return row.get(field)
+    return getattr(row, field, None)
+
+
+def _normalized_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return text or None
+
+
+def collect_model_training_input_violations(rows: Iterable[Any]) -> list[str]:
+    violations: list[str] = []
+    for index, row in enumerate(rows):
+        missing_fields = [field for field in REQUIRED_TRAINING_INPUT_FIELDS if _row_value(row, field) is None]
+        if missing_fields:
+            violations.append(
+                f"training input row {index} is missing required fields: {', '.join(missing_fields)}"
+            )
+            continue
+
+        source = _normalized_text(_row_value(row, "source"))
+        sleep_source_count = _row_value(row, "sleep_source_count")
+        hrv_merge_method = _normalized_text(_row_value(row, "hrv_merge_method"))
+
+        if source in EIGHT_SLEEP_SOURCES:
+            violations.append(f"training input row {index} uses source=8sleep under Oura-only v1")
+        if not isinstance(sleep_source_count, int):
+            violations.append(
+                f"training input row {index} has non-integer sleep_source_count: {sleep_source_count!r}"
+            )
+        elif sleep_source_count > 1:
+            violations.append(f"training input row {index} has sleep_source_count > 1: {sleep_source_count}")
+        if hrv_merge_method == "eight_fallback":
+            violations.append(
+                f"training input row {index} uses hrv_merge_method=eight_fallback under Oura-only v1"
+            )
+    return violations
+
+
+def training_input_policy_contract_report() -> dict[str, Any]:
+    allowed_rows = [
+        {
+            "feature_date": "2026-06-01",
+            "source": "oura",
+            "sleep_source_count": 1,
+            "hrv_merge_method": "oura_primary",
+        }
+    ]
+    rejected_rows = [
+        {
+            "feature_date": "2026-06-02",
+            "source": "8sleep",
+            "sleep_source_count": 1,
+            "hrv_merge_method": "missing",
+        },
+        {
+            "feature_date": "2026-06-03",
+            "source": "oura",
+            "sleep_source_count": 2,
+            "hrv_merge_method": "oura_primary",
+        },
+        {
+            "feature_date": "2026-06-04",
+            "source": "oura",
+            "sleep_source_count": 1,
+            "hrv_merge_method": "eight_fallback",
+        },
+    ]
+    expected_rejections = [
+        "training input row 0 uses source=8sleep under Oura-only v1",
+        "training input row 1 has sleep_source_count > 1: 2",
+        "training input row 2 uses hrv_merge_method=eight_fallback under Oura-only v1",
+    ]
+    allowed_violations = collect_model_training_input_violations(allowed_rows)
+    rejected_violations = collect_model_training_input_violations(rejected_rows)
+
+    errors: list[str] = []
+    if allowed_violations:
+        errors.append(
+            "training input policy contract rejected an allowed Oura-only fixture row"
+        )
+    if rejected_violations != expected_rejections:
+        errors.append("training input policy contract did not reject the expected fallback breakers")
+
+    return {
+        "status": "ok" if not errors else "error",
+        "errors": errors,
+        "checks": {
+            "allowed_fixture_violations": allowed_violations,
+            "rejected_fixture_violations": rejected_violations,
+        },
+    }
+
+
 def warehouse_provider_violations(root: Path) -> tuple[list[str], dict[str, Any]]:
     checks: dict[str, Any] = {"warehouse_database": None}
     database = root / "data/warehouse.duckdb"
@@ -58,12 +158,16 @@ def warehouse_provider_violations(root: Path) -> tuple[list[str], dict[str, Any]
     violations: list[str] = []
     conn = duckdb.connect(str(database), read_only=True)
     try:
-        blended_count = conn.execute(
-            "SELECT count(*) FROM daily_features WHERE sleep_source_count > 1"
-        ).fetchone()[0]
-        eight_hrv_count = conn.execute(
-            "SELECT count(*) FROM sleep_merge_diagnostics WHERE hrv_merge_method = 'eight_fallback'"
-        ).fetchone()[0]
+        try:
+            blended_count = conn.execute(
+                "SELECT count(*) FROM daily_features WHERE sleep_source_count > 1"
+            ).fetchone()[0]
+            eight_hrv_count = conn.execute(
+                "SELECT count(*) FROM sleep_merge_diagnostics WHERE hrv_merge_method = 'eight_fallback'"
+            ).fetchone()[0]
+        except duckdb.Error as error:
+            checks["warehouse_policy_query_error"] = str(error)
+            return [f"warehouse provider-policy evidence query failed: {error}"], checks
     finally:
         conn.close()
 
@@ -113,11 +217,49 @@ def verify_s05_provider_policy(root: Path) -> dict[str, Any]:
     if not any((root / rel_dir).exists() for rel_dir in MODEL_DIRS):
         warnings.append("model source directory is not present yet; source scan skipped")
 
+    contract_report = training_input_policy_contract_report()
+    checks["training_input_policy_contract"] = contract_report["checks"]
+    errors.extend(contract_report["errors"])
+
     warehouse_violations, warehouse_checks = warehouse_provider_violations(root)
     checks.update(warehouse_checks)
     errors.extend(warehouse_violations)
 
+    entrypoint_errors, entrypoint_checks = retrain_entrypoint_violations(root)
+    checks.update(entrypoint_checks)
+    errors.extend(entrypoint_errors)
+
     return {"status": "ok" if not errors else "error", "errors": errors, "warnings": warnings, "checks": checks}
+
+
+def retrain_entrypoint_violations(root: Path) -> tuple[list[str], dict[str, Any]]:
+    """Inspect the shipped retrain entrypoint for verified-loading discipline.
+
+    The nightly entrypoint must source training rows exclusively through the
+    verified S04 model-ready loader: no CLI flag may inject alternate feature
+    rows, and the verified loader must be the default data path.
+    """
+    errors: list[str] = []
+    checks: dict[str, Any] = {}
+    entrypoint = root / "scripts" / "retrain_model.py"
+    checks["retrain_entrypoint"] = "scripts/retrain_model.py"
+    if not entrypoint.exists():
+        checks["retrain_entrypoint_present"] = False
+        return errors, checks
+    checks["retrain_entrypoint_present"] = True
+    source = entrypoint.read_text(encoding="utf-8")
+    banned_flags = ("--feature-rows-json", "--rows-json", "--input-rows", "--feature-rows")
+    exposed = [flag for flag in banned_flags if flag in source]
+    checks["retrain_entrypoint_bypass_flags"] = exposed
+    if exposed:
+        errors.append(
+            "retrain entrypoint exposes alternate feature-row input paths that bypass "
+            "verified S04 row loading: " + ", ".join(exposed)
+        )
+    if "load_verified_feature_rows" not in source:
+        errors.append("retrain entrypoint does not use the verified S04 model-ready row loader")
+    checks["retrain_entrypoint_uses_verified_loader"] = "load_verified_feature_rows" in source
+    return errors, checks
 
 
 def main(argv: list[str] | None = None) -> int:
