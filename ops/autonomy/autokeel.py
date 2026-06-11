@@ -4159,7 +4159,11 @@ Additional validator requirements:
             if text and text not in seen:
                 seen.add(text)
                 findings.append(f"- {text}")
-        for cycle_dir in cycle_dirs[:3]:
+        # Aggregate across ALL recent cycles, never stopping at the newest: a
+        # regeneration that fixes the latest finding can regress an earlier
+        # one (observed live: banned-language fix re-introduced the untracked
+        # repo_surface), so every previously-caught defect must ride along.
+        for cycle_dir in cycle_dirs[:6]:
             sidecars = sorted(cycle_dir.glob("agents/cmd_*_review_agent_*.json")) + sorted(
                 cycle_dir.glob("operator/cmd_operator_codex_*.json")
             )
@@ -4177,8 +4181,6 @@ Additional validator requirements:
                     seen.add(description)
                     affected = ", ".join(str(a) for a in (issue.get("affected_artifacts") or [])[:4])
                     findings.append(f"- [{actor}] {description}" + (f" (affected: {affected})" if affected else ""))
-            if findings:
-                break
         if not findings:
             return None
         run_dir = self.root / run_dir_rel
