@@ -1,0 +1,34 @@
+{
+  "closure_evidence": "docs/evidence/s05-po-item01-br-separator-repair-20260611.md",
+  "created_at": "2026-06-11T10:40:00-04:00",
+  "item_checkpoint_ancestry_proof": {
+    "checkpoint_merge_base_with_new_target": "cb781f270f692fb9a8b2ae206ad131a03ef3cefd",
+    "item_01_attempt_1_checkpoint": "9930c4916eb03c62fa07ad33949e2c7aef82bffe",
+    "statement": "Item 01 attempt-1 checkpoint descends from the old run branch head; the new target commit descends from the same head (merge-base equals old head), so no item work is orphaned by the retarget."
+  },
+  "merge_base": "cb781f270f692fb9a8b2ae206ad131a03ef3cefd",
+  "new_target_commit": "378b87443ab2ee3c57c44a7e5079b9ce7a6fff66",
+  "old_run_branch_head": "cb781f270f692fb9a8b2ae206ad131a03ef3cefd",
+  "reason": "Item 01 escalated because the PO markdown adapter split verification command cells on semicolons only, while the SWR-generated playbook separates commands with <br>; the cell parsed as one literal garbage command, verification stayed red, and fix lanes could not edit the normalized plan. The adapter now also splits on <br> (plan-orchestrator commit d68f6a6, branch fix/split-br-verification-commands) and the AutoKeel overlay mandates semicolon separators for future generations (repaired file in this repo). refresh-run rebuilt the normalized plan from the playbook snapshot - item 01 now carries two clean commands - and retargeted the run branch onto the descendant commit.",
+  "repaired_files": [
+    "ops/autonomy/autokeel.py"
+  ],
+  "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",
+  "schema_version": "autokeel.run_retarget.v1",
+  "skipped_item_count": 0,
+  "slice": "S05",
+  "terminal_counts_after": {
+    "awaiting_human_gate": 0,
+    "blocked_external": 0,
+    "escalated": 1,
+    "none": 4,
+    "passed": 0
+  },
+  "terminal_counts_before": {
+    "awaiting_human_gate": 0,
+    "blocked_external": 0,
+    "escalated": 1,
+    "none": 4,
+    "passed": 0
+  }
+}
