@@ -131,3 +131,5 @@ The first success criterion is S01 running from autonomous brief through Keel va
 - 2026-06-11T13:19:48-04:00 S05 slice_status_updated: status=pending, run_id=RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6, failure_path=ops/autonomy/failures/S05-audit_failure-20260611T131948-0400-b3fc360a.md
 - 2026-06-11T13:26:11-04:00 S05 slice_status_updated: status=blocked, reason=run retarget budget exceeded for S05: 3 > 2, failure_path=ops/autonomy/failures/S05-failure_budget_exceeded-20260611T132611-0400-198932a3.md
 - 2026-06-11T13:29:10-04:00 S05 slice_status_updated: status=pending, run_id=RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6, failure_path=ops/autonomy/failures/S05-audit_failure-20260611T132910-0400-112a6024.md
+- 2026-06-11T13:31:54-04:00 S05 slice_status_updated: status=blocked, reason=closed product/playbook repair budget exceeded for S05: 6 > 5, failure_path=ops/autonomy/failures/S05-failure_budget_exceeded-20260611T133154-0400-7d73a590.md
+- 2026-06-11T13:32:31-04:00 S05 slice_status_updated: status=pending
