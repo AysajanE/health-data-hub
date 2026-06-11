@@ -156,7 +156,7 @@
     "depends_on": [
       "S04"
     ],
-    "failure_path": "ops/autonomy/failures/S05-audit_failure-20260611T084245-0400-97df24c6.md",
+    "failure_path": "ops/autonomy/failures/S05-failure_budget_exceeded-20260611T084429-0400-9f6b17ed.md",
     "id": "S05",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
@@ -168,7 +168,7 @@
     "pre_ship_commands": [
       "python scripts/verify_s05_provider_policy.py --json"
     ],
-    "reason": "SWR operator review failed closed: operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains blocking_issues",
+    "reason": "root-cause repair budget exceeded for S05: audit_failure:swr supervisor review did not satisfy the fail-closed review-bundle contract.=3",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -203,7 +203,7 @@
     },
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-11T08:44:24-04:00"
+    "updated_at": "2026-06-11T08:45:24-04:00"
   },
   {
     "acceptance": [
