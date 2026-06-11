@@ -574,9 +574,16 @@ def validate_playbook(path: Path, policy_path: Path | None = None, risk: str | N
                 errors.append(f"row {idx}: external_check must name private/evidence or docs/evidence local path")
 
         if is_ui_row(row):
+            row_blob = row_text(row)
             for pattern in ui_banned_patterns:
-                if re.search(pattern, row_text(row), re.I):
-                    errors.append(f"row {idx}: forbidden v1 UI language matched /{pattern}/")
+                for match in re.finditer(pattern, row_blob, re.I):
+                    # Same negation/exclusion allowance the V2 patterns have:
+                    # S06/S07 rows necessarily DISCUSS the avoided phrases when
+                    # forbidding them ("must not say ...", exclusion bullets);
+                    # only unexcused occurrences are scope violations.
+                    if not allowed_v2_scope_context(row_blob.lower(), match):
+                        errors.append(f"row {idx}: forbidden v1 UI language matched /{pattern}/")
+                        break
 
         lower_row = row_text(row).lower()
         for pattern in UNVERIFIED_DEPENDENCY_PATTERNS:

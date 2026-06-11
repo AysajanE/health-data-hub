@@ -94,6 +94,17 @@ def evidence_status(root: Path, evidence_rel: str | None) -> dict[str, Any]:
     if not evidence_path.exists():
         return {"status": "missing", "path": evidence_rel}
 
+    if evidence_path.is_file() and evidence_path.suffix == ".md":
+        # Review-artifact tripwires (week 8/9) point at autonomous review docs,
+        # not collector JSON reports. The deadline question those tripwires ask
+        # is "does the gated review artifact exist with its required marker?" -
+        # answered by the doc itself; fabricating a JSON wrapper would be the
+        # forbidden kind of synthetic evidence.
+        text = evidence_path.read_text(encoding="utf-8", errors="replace")
+        if "autonomous_gate_review" in text:
+            return {"status": "ok", "path": evidence_rel, "ok": True, "kind": "review_artifact"}
+        return {"status": "present_without_report", "path": evidence_rel, "kind": "review_artifact"}
+
     report = latest_json_report(evidence_path)
     if report is None:
         return {"status": "present_without_report", "path": evidence_rel}

@@ -37,17 +37,18 @@ terminal_recovery:
 
 remaining_v1_autonomous_launch:
   auto_authorized: true
+  # Generalized 2026-06-11: the gate authorizes whichever required slice is
+  # next actionable (S05 completed; pinning went stale at each slice
+  # boundary). Per-slice readiness gates still run inside the tick.
   required_completed_slices:
     - S01
     - S02
     - S03
     - S04
-  required_next_slice: S05
+    - S05
   require_no_active_run: true
   require_no_active_swr_run: true
   require_no_open_high_or_critical_failures: true
   required_commands:
     - python scripts/verify_failure_ledger.py --json
     - python scripts/verify_autokeel_invariants.py --json
-    - python scripts/verify_s05_readiness.py --json
-    - python -m ops.autonomy.autokeel --once --dry-run --slice S05

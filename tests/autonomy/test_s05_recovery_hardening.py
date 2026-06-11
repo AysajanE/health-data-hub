@@ -475,3 +475,126 @@ class ExternalDependencyScopeTests(unittest.TestCase):
                 "description": "Codex CLI usage limit exhausted",
             }
             self.assertEqual(op.repair_budget_scope(row), "external_dependency")
+
+
+class UIBannedLanguageCalibrationTests(unittest.TestCase):
+    def test_ui_rows_forbidding_banned_phrases_are_not_violations(self) -> None:
+        import re
+
+        from scripts.validate_playbook_autonomous import (
+            UI_BANNED_PATTERNS,
+            allowed_v2_scope_context,
+            row_text,
+        )
+
+        row = {"action": "UI copy must not use the phrase biggest drivers anywhere", "phase": "ui"}
+        blob = row_text(row)
+        unexcused = [
+            pattern
+            for pattern in UI_BANNED_PATTERNS
+            for match in re.finditer(pattern, blob, re.I)
+            if not allowed_v2_scope_context(blob.lower(), match)
+        ]
+        self.assertEqual(unexcused, [])
+
+    def test_ui_rows_using_banned_phrases_stay_flagged(self) -> None:
+        import re
+
+        from scripts.validate_playbook_autonomous import (
+            UI_BANNED_PATTERNS,
+            allowed_v2_scope_context,
+            row_text,
+        )
+
+        row = {"action": "Header copy: discover the biggest drivers of your mood", "phase": "ui"}
+        blob = row_text(row)
+        unexcused = [
+            pattern
+            for pattern in UI_BANNED_PATTERNS
+            for match in re.finditer(pattern, blob, re.I)
+            if not allowed_v2_scope_context(blob.lower(), match)
+        ]
+        self.assertTrue(unexcused)
+
+
+class TripwireReviewArtifactEvidenceTests(unittest.TestCase):
+    def test_md_evidence_with_gate_marker_is_ok(self) -> None:
+        from scripts.evaluate_tripwires import evidence_status
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            doc = root / "docs/reviews/s07-autonomous-ui-language-review.md"
+            doc.parent.mkdir(parents=True)
+            doc.write_text("# Review\n\nautonomous_gate_review evidence here.\n", encoding="utf-8")
+            status = evidence_status(root, "docs/reviews/s07-autonomous-ui-language-review.md")
+            self.assertTrue(status.get("ok"))
+            self.assertEqual(status.get("kind"), "review_artifact")
+
+    def test_md_evidence_without_marker_is_not_ok(self) -> None:
+        from scripts.evaluate_tripwires import evidence_status
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            doc = root / "docs/reviews/s07-autonomous-ui-language-review.md"
+            doc.parent.mkdir(parents=True)
+            doc.write_text("placeholder\n", encoding="utf-8")
+            status = evidence_status(root, "docs/reviews/s07-autonomous-ui-language-review.md")
+            self.assertFalse(status.get("ok"))
+
+    def test_missing_md_evidence_stays_missing(self) -> None:
+        from scripts.evaluate_tripwires import evidence_status
+
+        with tempfile.TemporaryDirectory() as temp:
+            status = evidence_status(Path(temp), "docs/reviews/s07-autonomous-ui-language-review.md")
+            self.assertEqual(status.get("status"), "missing")
+
+
+class SwrSpendStopLossTests(unittest.TestCase):
+    def test_spend_gate_blocks_at_cap_and_grants_raise_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            copy_autonomy_fixture(root)
+            runs = root / ".local/autokeel/swr/runs/2026-01-01_000000_autokeel-s06-x_gstack_design_to_po_playbook"
+            for index in range(12):
+                stage_dir = runs / f"stages/{index:02d}_stage"
+                stage_dir.mkdir(parents=True)
+                (stage_dir / "response.final.md").write_text(
+                    f"# Out\n\n- response_id: resp_{'a' * 39}{index:03x}\n- model: test\n- input_tokens: 10\n- output_tokens: 5\n",
+                    encoding="utf-8",
+                )
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = {"id": "S06"}
+            result = op.swr_spend_within_budget(slice_)
+            self.assertFalse(result.ok)
+            self.assertEqual(result.exit_code, 41)
+            self.assertIn("usage-billed", result.stderr)
+
+            write_json_atomic(
+                root / "docs/evidence/s06-swr-spend-release-20260611t1.json",
+                {
+                    "schema_version": "autokeel.swr_spend_release.v1",
+                    "slice": "S06",
+                    "additional_generations": 3,
+                    "reason": "test grant",
+                },
+            )
+            granted = op.swr_spend_within_budget(slice_)
+            self.assertTrue(granted.ok, granted.stderr)
+
+    def test_spend_gate_passes_under_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            result = op.swr_spend_within_budget({"id": "S06"})
+            self.assertTrue(result.ok, result.stderr)
+
+    def test_missing_readiness_gate_fails_closed_for_required_slices(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            result = op.run_slice_readiness("S08")
+            self.assertFalse(result.ok)
+            self.assertEqual(result.exit_code, 35)
+            self.assertIn("verify_s08_readiness", result.stderr)

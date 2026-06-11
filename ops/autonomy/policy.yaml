@@ -40,6 +40,19 @@ swr:
   require_abandonment_decision_for_relaunch: true
   # Per-file cap for source text embedded into stage review jobs.
   embedded_source_max_bytes: 65536
+  # STOP-LOSS for usage-billed SWR stage generations (the only usage-billed
+  # resource; review lanes run on subscription CLIs). The count is recomputed
+  # from on-disk run evidence (scripts/swr_spend_ledger.py); raising the
+  # ceiling for a slice requires an explicit operator spend-release artifact
+  # (docs/evidence/<slice>-swr-spend-release-*.json). The 5-stage minimum plus
+  # bounded repair headroom fits well inside 12; S05's pathological 17 would
+  # have been stopped five generations earlier.
+  max_billed_generations_per_slice: 12
+  # SWR-lane slices that may not launch without a dedicated readiness gate
+  # script wired into run_slice_readiness (fail-closed pre-spend check).
+  readiness_gate_required_slices:
+    - S06
+    - S08
 
 # SWR repair authorization is defined canonically in
 # ops/autonomy/authorization_policy.yaml (swr_single_stage_repair,

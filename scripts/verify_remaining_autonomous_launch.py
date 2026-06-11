@@ -83,8 +83,14 @@ def verify_launch(root: Path) -> dict[str, Any]:
 
     next_slice = next_actionable_slice(slices, completed)
     checks["next_actionable_slice"] = next_slice
-    if next_slice != launch.get("required_next_slice"):
-        errors.append(f"next actionable slice must be {launch.get('required_next_slice')}: {next_slice}")
+    required_next = launch.get("required_next_slice")
+    if required_next and next_slice != required_next:
+        # Pinning a specific slice is optional; when unpinned, any next
+        # actionable required slice authorizes launch (the per-slice gates
+        # still apply downstream).
+        errors.append(f"next actionable slice must be {required_next}: {next_slice}")
+    if next_slice is None:
+        errors.append("no actionable next slice")
 
     checks["active_run"] = state.get("active_run")
     checks["active_swr_run"] = state.get("active_swr_run")

@@ -2667,6 +2667,27 @@ and use the recorded `run_dir` and `repair_stage_id` with
             dirty_paths = [line[3:].strip() for line in status.stdout.splitlines() if line.strip()]
             info["kernel_dirty"] = bool(dirty_paths)
             info["kernel_dirty_paths"] = dirty_paths[:20]
+        # The plan-orchestrator kernel executes every PO item; pin it alongside
+        # the SWR kernel so a silent sync to push-protected origin/main (which
+        # lacks the recovery fixes) is detectable from the run record.
+        po_root = Path(self.plan_orchestrator_root())
+        po_repo = po_root if (po_root / ".git").exists() else po_root.parent
+        po_head = subprocess.run(
+            ["git", "-C", str(po_repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        po_status = subprocess.run(
+            ["git", "-C", str(po_repo), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if po_head.returncode == 0:
+            info["plan_orchestrator_commit"] = po_head.stdout.strip()
+        if po_status.returncode == 0:
+            info["plan_orchestrator_dirty"] = bool(po_status.stdout.strip())
         return info
 
     def materialize_swr_task_pack(self) -> CommandResult:
@@ -4110,6 +4131,14 @@ Additional validator requirements:
             )
             return CommandResult(cmd, 0, "dry run SWR validation repair planned", "")
 
+        spend_gate = self.swr_spend_within_budget(slice_)
+        if not spend_gate.ok:
+            self.log_event(
+                "swr_spend_stop_loss",
+                {"context": "validation_repair_stage_rerun", "stderr": spend_gate.stderr},
+                slice_id=slice_["id"],
+            )
+            return spend_gate
         self.reset_swr_manifest_for_stage_rerun(manifest_path, stage_id)
         result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         self.log_event(
@@ -4316,6 +4345,14 @@ Additional validator requirements:
                 slice_id=slice_["id"],
             )
             return CommandResult(cmd, 0, "dry run SWR review stage rerun planned", "")
+        spend_gate = self.swr_spend_within_budget(slice_)
+        if not spend_gate.ok:
+            self.log_event(
+                "swr_spend_stop_loss",
+                {"context": "review_repair_stage_rerun", "stderr": spend_gate.stderr},
+                slice_id=slice_["id"],
+            )
+            return spend_gate
         self.reset_swr_manifest_for_stage_rerun(manifest_path, stage_id)
         result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         self.log_event(
@@ -4794,6 +4831,68 @@ Additional validator requirements:
         continued = self.runner.run(continue_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
         return self.handle_swr_continue_result(slice_, manifest_path, continued)
 
+    def swr_spend_grants(self, slice_id: str) -> int:
+        """Sum operator-recorded spend grants for a slice (docs/evidence)."""
+        evidence_dir = self.root / "docs" / "evidence"
+        if not evidence_dir.exists():
+            return 0
+        total = 0
+        for artifact in sorted(evidence_dir.glob(f"{slice_id.lower()}-swr-spend-release-*.json")):
+            payload = read_json(artifact, None)
+            if (
+                isinstance(payload, dict)
+                and payload.get("schema_version") == "autokeel.swr_spend_release.v1"
+                and payload.get("slice") == slice_id
+            ):
+                try:
+                    total += int(payload.get("additional_generations") or 0)
+                except (TypeError, ValueError):
+                    continue
+        return total
+
+    def swr_spend_within_budget(self, slice_: dict[str, Any]) -> CommandResult:
+        """Stop-loss for usage-billed SWR stage generations.
+
+        Every stage generation is a billed OpenAI call (the only usage-billed
+        resource in this project; review lanes run on subscription CLIs). The
+        count is recomputed from on-disk evidence each time, so it cannot
+        drift, and the ceiling can be raised per-slice only by an explicit
+        operator-recorded spend-release artifact.
+        """
+        swr_policy = self.policy.get("swr", {})
+        base_cap = int(swr_policy.get("max_billed_generations_per_slice", 12))
+        slice_id = str(slice_.get("id") or "")
+        from scripts.swr_spend_ledger import collect_slice_spend
+
+        spend = collect_slice_spend(self.root, slice_id)
+        billed = int(spend.get("billed_generations") or 0)
+        cap = base_cap + self.swr_spend_grants(slice_id)
+        self.log_event(
+            "swr_spend_checked",
+            {
+                "billed_generations": billed,
+                "cap": cap,
+                "base_cap": base_cap,
+                "input_tokens_measured": spend.get("input_tokens_measured"),
+                "output_tokens_measured": spend.get("output_tokens_measured"),
+            },
+            slice_id=slice_id,
+        )
+        if billed >= cap:
+            return CommandResult(
+                [],
+                41,
+                "",
+                (
+                    f"SWR spend stop-loss for {slice_id}: {billed} billed generations >= cap {cap}; "
+                    "every further stage generation is a usage-billed OpenAI call. Record an explicit "
+                    f"operator spend release (docs/evidence/{slice_id.lower()}-swr-spend-release-*.json, "
+                    "schema autokeel.swr_spend_release.v1, additional_generations: N) only after root-cause "
+                    "diagnosis shows another generation is absolutely necessary and inevitable."
+                ),
+            )
+        return CommandResult([], 0, f"SWR spend within budget: {billed} < {cap}", "")
+
     def swr_run_abandonment_artifacts(self, slice_id: str) -> list[Path]:
         evidence_dir = self.root / "docs" / "evidence"
         if not evidence_dir.exists():
@@ -4974,6 +5073,19 @@ Additional validator requirements:
                 reason="missing required SWR provider environment",
             )
             return provider_preflight
+
+        spend_gate = self.swr_spend_within_budget(slice_)
+        if not spend_gate.ok:
+            failure = self.record_failure(
+                slice_["id"],
+                "failure_budget_exceeded",
+                "high",
+                spend_gate.stderr,
+                "Stopped before launching a usage-billed SWR generation; an explicit operator spend release is required.",
+                None,
+            )
+            self.mark_slice_status(slice_["id"], "blocked", failure_path=str(failure.relative_to(self.root)), reason=spend_gate.stderr)
+            return spend_gate
 
         cmd = self.build_swr_command(slice_)
         if self.dry_run:
@@ -5251,9 +5363,25 @@ Additional validator requirements:
         command_by_slice = {
             "S04": ["python", "scripts/verify_s04_readiness.py", "--json"],
             "S05": ["python", "scripts/verify_s05_readiness.py", "--json"],
+            "S06": ["python", "scripts/verify_s06_readiness.py", "--json"],
         }
         command = command_by_slice.get(slice_id)
         if command is None:
+            # Fail closed when policy names this slice as requiring a
+            # readiness gate: a missing gate must never silently authorize a
+            # usage-billed launch (S06/S08 are SWR-lane; their gates are
+            # mandatory pre-spend checks).
+            required = {str(item) for item in self.policy.get("swr", {}).get("readiness_gate_required_slices", []) or []}
+            if slice_id in required:
+                return CommandResult(
+                    [],
+                    35,
+                    "",
+                    (
+                        f"no readiness gate exists for SWR-lane slice {slice_id}; add "
+                        f"scripts/verify_{slice_id.lower()}_readiness.py before launching paid generations"
+                    ),
+                )
             return CommandResult([], 0, "no slice-specific readiness gate", "")
         result = self.runner.run(command, cwd=self.root, execute_in_dry_run=True)
         self.log_event(
