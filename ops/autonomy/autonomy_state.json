@@ -1,5 +1,6 @@
 {
   "active_run": {
+    "last_seen_at": "2026-06-11T10:52:13-04:00",
     "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",
     "slice": "S05",
     "started_at": "2026-06-11T10:12:13-04:00"
@@ -12,7 +13,7 @@
     "S04"
   ],
   "current_slice": "S05",
-  "last_event_id": 1391,
+  "last_event_id": 1395,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [
