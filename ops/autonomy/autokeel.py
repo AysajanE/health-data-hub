@@ -4136,6 +4136,15 @@ Additional validator requirements:
         )
         findings: list[str] = []
         seen: set[str] = set()
+        # Findings carried explicitly on the plan come first — they may
+        # originate from another stage's review cycle (e.g. a downstream gate
+        # stage rejecting this stage's rows) that the sidecar scan below
+        # cannot reach.
+        for carried in repair_plan.get("corrective_findings") or []:
+            text = str(carried).strip()
+            if text and text not in seen:
+                seen.add(text)
+                findings.append(f"- {text}")
         for cycle_dir in cycle_dirs[:3]:
             sidecars = sorted(cycle_dir.glob("agents/cmd_*_review_agent_*.json")) + sorted(
                 cycle_dir.glob("operator/cmd_operator_codex_*.json")

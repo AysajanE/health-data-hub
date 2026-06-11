@@ -3,7 +3,7 @@
 Slice ID: S05
 Lane: swr_preferred
 Risk: high
-Revision: 2 (2026-06-10 scope reconciliation; see docs/evidence/s05-autoplan-scope-reconciliation-20260610.json)
+Revision: 3 (2026-06-11: removed the .gitignore write root — the models/ exclusion already exists at HEAD and .gitignore is a validator-forbidden sensitive write root; rows assert the exclusion via verification commands only. Revision 2: 2026-06-10 scope reconciliation; see docs/evidence/s05-autoplan-scope-reconciliation-20260610.json)
 
 ## Scope
 
@@ -28,7 +28,7 @@ SHAP" to this slice.
 - No training query may read `source = '8sleep'`.
 - No training query may use `hrv_merge_method = 'eight_fallback'`.
 - Model features are exactly `total_sleep_min`, `hrv_z`, `deep_sleep_pct`, and `prior_day_feeling`.
-- Model artifacts and evaluation logs contain derived health data: `models/` must be gitignored and never tracked.
+- Model artifacts and evaluation logs contain derived health data: `models/` must remain gitignored and never tracked. The `models/` exclusion ALREADY EXISTS in `.gitignore` at HEAD; no S05 row may edit `.gitignore` (it is a validator-forbidden sensitive write root) — rows assert the exclusion via verification commands only.
 - The retrain entrypoint no-ops gracefully when N_model < 30 paired days: it appends a skipped record to `models/eval.jsonl` and exits 0; no model file is required to exist before that point.
 - Baseline gate (both must hold): ridge walk-forward RMSE at most 0.95 times the better of the rolling-7-day-mean and prior-day baselines, and ridge beats the best baseline on at least 65 percent of eval days (ceil rule from the design doc).
 - Eval window by N_model: below 37 no gate and no UI output; 37 to 43 uses the last 7 days; 44 and above uses the last 14 days; every fold trains on at least 30 prior model-ready days.
@@ -45,7 +45,6 @@ SHAP" to this slice.
 - `tests/model/`
 - `docs/reviews/s05-autonomous-model-gate-review.md`
 - `docs/reviews/s05-autonomous-statistical-validity-review.md`
-- `.gitignore` (only to add the `models/` exclusion)
 
 ## Out of Scope
 
@@ -97,9 +96,9 @@ SHAP" to this slice.
 
 ### Nightly retrain entrypoint and eval logging
 
-- [ ] Implement `scripts/retrain_model.py` and `src/model/eval_log.py`: run the provider-policy preflight, no-op gracefully below N_model 30 (append a skipped eval.jsonl record and exit 0), otherwise train, run walk-forward evaluation and the baseline gate, persist the model with its fitted scaler under `models/` (gitignored), and append a schema-complete eval.jsonl record including ablation RMSEs and sign-stable feature tiers.
-  Files: `scripts/retrain_model.py`; `src/model/eval_log.py`; `tests/model/test_retrain_entrypoint.py`; `.gitignore`
-  Verify: `python -m pytest tests/model/test_retrain_entrypoint.py -q`; `python scripts/check_no_tracked_data.py`
+- [ ] Implement `scripts/retrain_model.py` and `src/model/eval_log.py`: run the provider-policy preflight, no-op gracefully below N_model 30 (append a skipped eval.jsonl record and exit 0), otherwise train, run walk-forward evaluation and the baseline gate, persist the model with its fitted scaler under `models/` (already gitignored at HEAD; assert via verification, never edit `.gitignore`), and append a schema-complete eval.jsonl record including ablation RMSEs and sign-stable feature tiers.
+  Files: `scripts/retrain_model.py`; `src/model/eval_log.py`; `tests/model/test_retrain_entrypoint.py`
+  Verify: `python -m pytest tests/model/test_retrain_entrypoint.py -q`; `python scripts/check_no_tracked_data.py`; `python -c "from pathlib import Path; lines={l.strip() for l in Path('.gitignore').read_text(encoding='utf-8').splitlines()}; assert 'models/' in lines, 'models/ ignore entry missing'"
 
 ### Autonomous model reviews
 
