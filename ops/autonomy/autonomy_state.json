@@ -1,20 +1,15 @@
 {
-  "active_run": {
-    "last_seen_at": "2026-06-11T15:04:04-04:00",
-    "restored_after_failure": "evidence_closed_escalation",
-    "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",
-    "slice": "S05",
-    "started_at": "2026-06-11T13:32:37-04:00"
-  },
+  "active_run": null,
   "active_swr_run": null,
   "completed_slices": [
     "S01",
     "S02",
     "S03",
-    "S04"
+    "S04",
+    "S05"
   ],
-  "current_slice": "S05",
-  "last_event_id": 1513,
+  "current_slice": null,
+  "last_event_id": 1519,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [

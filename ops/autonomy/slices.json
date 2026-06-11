@@ -153,10 +153,10 @@
     ],
     "autoplan": "docs/gstack/s05-model-lifecycle-autoplan.md",
     "brief": "docs/briefs/s05-model-lifecycle.autonomous-brief.md",
+    "completed_at": "2026-06-11T15:04:12-04:00",
     "depends_on": [
       "S04"
     ],
-    "failure_path": "ops/autonomy/failures/S05-audit_failure-20260611T143123-0400-0638d8af.md",
     "id": "S05",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
@@ -176,11 +176,13 @@
     ],
     "risk": "high",
     "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",
+    "ship_branch": "ship/s05",
+    "ship_commit": "6dce352ead0729f9bfde9a52a5aa28e08161acb6",
     "slug": "s05-model-lifecycle",
-    "status": "pending",
+    "status": "complete",
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-11T14:31:23-04:00"
+    "updated_at": "2026-06-11T15:04:12-04:00"
   },
   {
     "acceptance": [
