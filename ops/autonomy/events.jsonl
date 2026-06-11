@@ -1485,3 +1485,4 @@
 {"details": {"exit_code": 0, "stderr": "", "stdout": "{\n  \"errors\": [],\n  \"fired\": [],\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n"}, "event": "tripwires_ok", "event_id": 1483, "slice": null, "ts": "2026-06-11T13:32:37-04:00"}
 {"details": {"phase": "fresh_launch", "status": "pending"}, "event": "slice_execution_phase_determined", "event_id": 1484, "slice": "S05", "ts": "2026-06-11T13:32:37-04:00"}
 {"details": {"closed_audit_failures": 5, "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6", "terminal_state": "escalated"}, "event": "po_escalated_run_recovered_for_repaired_resume", "event_id": 1485, "slice": "S05", "ts": "2026-06-11T13:32:37-04:00"}
+{"details": {"max_auto_resume_attempts": 2, "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6"}, "event": "po_escalated_resume_after_repair_authorized", "event_id": 1486, "slice": "S05", "ts": "2026-06-11T13:32:37-04:00"}
