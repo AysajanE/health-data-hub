@@ -4423,6 +4423,23 @@ Additional validator requirements:
             return session_result
         cycle = review_cycle_id or f"{stage_id}_stage_review"
         review_dir = self.swr_review_dir(slice_, payload, review_cycle_id=cycle)
+        if review_cycle_id is None and review_dir.exists() and any(review_dir.rglob("*.json")):
+            # A fresh review of a (re)generated artifact must never share a
+            # directory with a previous cycle's sidecars and bundle — reviewers
+            # see the stale bundle (hashed against the replaced artifact) and
+            # correctly block on it. Mint an attempt-suffixed cycle instead.
+            for attempt in range(2, 10):
+                candidate_cycle = f"{stage_id}_stage_review_c{attempt}"
+                candidate_dir = self.swr_review_dir(slice_, payload, review_cycle_id=candidate_cycle)
+                if not candidate_dir.exists() or not any(candidate_dir.rglob("*.json")):
+                    cycle = candidate_cycle
+                    review_dir = candidate_dir
+                    self.log_event(
+                        "swr_review_cycle_rolled_for_freshness",
+                        {"stage_id": stage_id, "review_cycle_id": cycle},
+                        slice_id=slice_["id"],
+                    )
+                    break
         review_dir.mkdir(parents=True, exist_ok=True)
         classify_output = review_dir / "stage_outcome.json"
         classify_cmd = [
