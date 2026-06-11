@@ -2752,6 +2752,16 @@ Additional validator requirements:
   validation commands or content checks in `required_verification_commands`.
 - Do not emit active manual gates, human approval claims, or
   `keel-run mark-manual-gate`.
+- The validator denylists these terms anywhere in the playbook text (prose,
+  row cells, and verification-command strings alike) unless the occurrence
+  sits in an explicit negation/out-of-scope clause within the same sentence:
+  `biggest drivers`, `drivers`, `what made you tired`, `caused`,
+  `you should`, `you would have felt`, `tomorrow's feeling prediction`,
+  `prospective`, `tomorrow prediction`, `recommendations/today`, `garmin`,
+  `withings`, `chest-strap`, `diet`, `nutrition`, `training_load`, `zone4`,
+  `dinner timing`, `manual approval`, `human approval`. Do not write these
+  terms at all — including inside python -c denylist literals; assert only
+  positive markers in verification commands.
 """.rstrip()
 
         for rel in (
