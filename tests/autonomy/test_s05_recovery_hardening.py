@@ -427,3 +427,36 @@ class KernelPinTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class V2ScopeNegationCalibrationTests(unittest.TestCase):
+    def test_exclusion_list_bullets_inherit_negation_lead_in(self) -> None:
+        import re
+
+        from scripts.validate_playbook_autonomous import allowed_v2_scope_context
+
+        text = (
+            "s05 explicitly does not own:\n\n"
+            "- counterfactual generation.\n"
+            "- causal, medical, prospective, recommendation, or customer-facing claims.\n"
+        )
+        match = re.search(r"\bprospective\b", text)
+        self.assertTrue(allowed_v2_scope_context(text, match))
+
+    def test_bare_prose_usage_stays_flagged(self) -> None:
+        import re
+
+        from scripts.validate_playbook_autonomous import allowed_v2_scope_context
+
+        text = "the model will support prospective analysis next quarter.\n"
+        match = re.search(r"\bprospective\b", text)
+        self.assertFalse(allowed_v2_scope_context(text, match))
+
+    def test_positive_lead_in_bullets_stay_flagged(self) -> None:
+        import re
+
+        from scripts.validate_playbook_autonomous import allowed_v2_scope_context
+
+        text = "s05 will deliver:\n\n- prospective dashboards.\n"
+        match = re.search(r"\bprospective\b", text)
+        self.assertFalse(allowed_v2_scope_context(text, match))

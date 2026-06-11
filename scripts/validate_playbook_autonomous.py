@@ -348,6 +348,40 @@ def temporal_dependency_errors(playbook_path: Path, rows: list[dict[str, str]]) 
     return errors
 
 
+NEGATION_LEAD_IN_PATTERN = re.compile(
+    r"\b(?:does not own|does not include|not in scope|out of scope|outside scope|"
+    r"excluded|exclusions|must not|do not|never|prohibited|forbidden|deferred)\b",
+    re.I,
+)
+
+
+def bullet_under_negation_lead_in(text: str, match_start: int) -> bool:
+    """A bullet item inherits the exclusion context of its list's lead-in line.
+
+    Exclusion lists ("S05 explicitly does not own:" followed by bullets) are
+    the standard way scope documents name what they exclude; per-line sentence
+    logic cannot see the lead-in, so walk back through consecutive bullet or
+    blank lines to the nearest non-bullet line and test it for negation.
+    """
+    line_start = text.rfind("\n", 0, match_start) + 1
+    line = text[line_start : text.find("\n", line_start) if text.find("\n", line_start) != -1 else len(text)]
+    if not line.lstrip().startswith(("-", "*")):
+        return False
+    cursor = line_start
+    for _ in range(40):
+        if cursor <= 0:
+            return False
+        prev_end = cursor - 1
+        prev_start = text.rfind("\n", 0, prev_end) + 1
+        prev_line = text[prev_start:prev_end]
+        stripped = prev_line.strip()
+        if not stripped or stripped.startswith(("-", "*")):
+            cursor = prev_start
+            continue
+        return bool(NEGATION_LEAD_IN_PATTERN.search(stripped))
+    return False
+
+
 def allowed_v2_scope_context(text: str, match: re.Match[str]) -> bool:
     start = max(0, match.start() - 120)
     end = min(len(text), match.end() + 120)
@@ -356,6 +390,8 @@ def allowed_v2_scope_context(text: str, match: re.Match[str]) -> bool:
     sentence_start = max(text.rfind(".", 0, match.start()) + 1, text.rfind("\n", 0, match.start()) + 1)
     prefix = text[sentence_start : match.start()]
     if re.search(r"\b(?:no|not|never|without|do not|must not|must never|should not|cannot)\b[^.\n|]{0,500}$", prefix, re.I):
+        return True
+    if bullet_under_negation_lead_in(text, match.start()):
         return True
     allowed_patterns = (
         rf"\b(?:no|not|never|without)\b[^.\n|]{{0,100}}{matched}",
