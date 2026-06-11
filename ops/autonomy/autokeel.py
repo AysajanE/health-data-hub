@@ -4111,6 +4111,68 @@ Additional validator requirements:
         self.record_active_swr_run(slice_, manifest_path, "SWR validation repair in progress")
         return CommandResult(result.argv, 31, result.stdout, "SWR validation repair is still in progress; do not relaunch")
 
+    def write_swr_corrective_findings(self, slice_: dict[str, Any], repair_plan: dict[str, Any]) -> Path | None:
+        """Collect the rejecting reviewers' blocking issues for a stage rerun.
+
+        Scans the newest review-lane cycle directories for the repaired stage,
+        extracts every blocking issue from semantic (status=succeeded)
+        reviewer/operator decisions, and writes a bounded corrective-findings
+        document inside the run directory for --reference-context injection.
+        Returns None when no blocking findings exist.
+        """
+        stage_id = str(repair_plan.get("repair_stage_id") or "")
+        run_id = str(repair_plan.get("run_id") or "")
+        run_dir_rel = str(repair_plan.get("run_dir") or "")
+        if not stage_id or not run_id or not run_dir_rel:
+            return None
+        lane_root = self.root / ".local/autokeel/swr/review_lane"
+        if not lane_root.exists():
+            return None
+        prefix = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{slice_['id']}-{run_id}-{stage_id}")
+        cycle_dirs = sorted(
+            (d for d in lane_root.iterdir() if d.is_dir() and d.name.startswith(prefix)),
+            key=lambda d: d.stat().st_mtime,
+            reverse=True,
+        )
+        findings: list[str] = []
+        seen: set[str] = set()
+        for cycle_dir in cycle_dirs[:3]:
+            sidecars = sorted(cycle_dir.glob("agents/cmd_*_review_agent_*.json")) + sorted(
+                cycle_dir.glob("operator/cmd_operator_codex_*.json")
+            )
+            for sidecar in sidecars:
+                decision = read_json(sidecar, None)
+                if not isinstance(decision, dict) or decision.get("status") != "succeeded":
+                    continue
+                actor = str(decision.get("actor_role") or "reviewer")
+                for issue in decision.get("blocking_issues") or []:
+                    if not isinstance(issue, dict):
+                        continue
+                    description = str(issue.get("description") or "").strip()
+                    if not description or description in seen:
+                        continue
+                    seen.add(description)
+                    affected = ", ".join(str(a) for a in (issue.get("affected_artifacts") or [])[:4])
+                    findings.append(f"- [{actor}] {description}" + (f" (affected: {affected})" if affected else ""))
+            if findings:
+                break
+        if not findings:
+            return None
+        run_dir = self.root / run_dir_rel
+        if not run_dir.exists():
+            return None
+        path = run_dir / f"corrective_findings_{stage_id}.md"
+        text = (
+            f"# Corrective Findings for {stage_id} Regeneration\n\n"
+            "A prior draft of this stage was REJECTED by independent fail-closed review.\n"
+            "The regenerated output MUST resolve every finding below; reproducing any of\n"
+            "them will fail review again.\n\n"
+            + "\n".join(findings[:20])
+            + "\n"
+        )
+        path.write_text(text, encoding="utf-8")
+        return path
+
     def run_swr_review_repair(self, slice_: dict[str, Any], repair_plan: dict[str, Any]) -> CommandResult:
         authorized, auth_reason = self.swr_review_repair_authorized_by_policy(slice_, repair_plan)
         if repair_plan.get("status") == "authorized":
@@ -4193,6 +4255,18 @@ Additional validator requirements:
             return CommandResult([], 34, "", "SWR review repair plan is not runnable")
 
         cmd = self.build_swr_stage_rerun_command(repair_plan)
+        findings_file = None
+        if not self.dry_run:
+            findings_file = self.write_swr_corrective_findings(slice_, repair_plan)
+        if findings_file is not None:
+            # Convergence: the regenerated stage must see why its predecessor
+            # was rejected, or nondeterminism can reproduce the same defect.
+            cmd.extend(["--reference-context", str(findings_file.relative_to(self.root))])
+            self.log_event(
+                "swr_stage_rerun_corrective_findings_attached",
+                {"findings": str(findings_file.relative_to(self.root)), "repair_stage_id": stage_id},
+                slice_id=slice_["id"],
+            )
         if self.dry_run:
             self.log_event(
                 "dry_run_swr_review_stage_rerun_planned",
