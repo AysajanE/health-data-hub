@@ -156,7 +156,6 @@
     "depends_on": [
       "S04"
     ],
-    "failure_path": "ops/autonomy/failures/S05-audit_failure-20260611T090629-0400-32509b10.md",
     "id": "S05",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
@@ -168,7 +167,7 @@
     "pre_ship_commands": [
       "python scripts/verify_s05_provider_policy.py --json"
     ],
-    "reason": "SWR operator review failed closed: operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains blocking_issues",
+    "reason": "SWR background run in progress",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -177,34 +176,10 @@
     ],
     "risk": "high",
     "slug": "s05-model-lifecycle",
-    "status": "blocked_compile_inputs",
-    "swr_review_repair": {
-      "corrective_findings": [
-        "FIX RULE 1 (held last attempt - keep holding): automation/task_packs/gstack_design_to_po_playbook/corpus/markdown_playbook_v1_contract.md must NOT appear in any row's repo_surfaces, deliverable, or allowed_write_roots; prose-only formatting authority.",
-        "FIX RULE 2 (held last attempt - keep holding): never write 'human approval/approved', 'human signoff', 'manual approval/signoff', 'manual gate', or mark-...-gate commands anywhere, including python -c literals.",
-        "FIX RULE 3 (NEW - the last attempt failed on this): the validator denylists ALL of these terms anywhere in the playbook (prose, row cells, verification-command strings) unless inside an explicit negation/out-of-scope clause in the same sentence: 'biggest drivers', 'drivers', 'what made you tired', 'caused', 'you should', 'you would have felt', \"tomorrow's feeling prediction\", 'prospective', 'tomorrow prediction', 'recommendations/today', 'garmin', 'withings', 'chest-strap', 'diet', 'nutrition', 'training_load', 'zone4', 'dinner timing'. The last attempt was rejected for the word 'prospective'. Use 'retrospective' framing exclusively; do not name v2 providers or features at all, not even to exclude them - the Out of Scope listing style 'X (deferred)' is acceptable only when the negation is in the same sentence.",
-        "ALL THREE RULES must hold simultaneously. Each has been satisfied individually in prior attempts."
-      ],
-      "created_at": "2026-06-11T09:06:29-04:00",
-      "rationale": "Reviewers semantically rejected the hash-stable stage artifact; re-reviewing identical content cannot converge. Regenerate the stage from current inputs and reset downstream stages.",
-      "reason": "SWR operator review failed closed: operator provisional review approval_decision must be one of ['approve', 'approve_with_conditions']; operator provisional review contains blocking_issues",
-      "repair_action": "rerun_single_stage",
-      "repair_stage_id": "gate_and_contract_review",
-      "review_history_findings": [],
-      "run_dir": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook",
-      "run_id": "run_20260601_133046_ae09e1ea",
-      "run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-      "source_review_bundle": ".local/autokeel/swr/review_lane/S05-run_20260601_133046_ae09e1ea-execution_row_draft-execution_row_draft_stage_review_repair_20260611t0751200400/execution_row_draft.review_bundle.json",
-      "source_review_stage_id": "execution_row_draft",
-      "stage_artifact_errors": [],
-      "stale_downstream_stage_ids": [
-        "final_markdown_playbook"
-      ],
-      "status": "planned"
-    },
+    "status": "waiting_for_playbook",
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-11T09:08:44-04:00"
+    "updated_at": "2026-06-11T09:29:02-04:00"
   },
   {
     "acceptance": [
