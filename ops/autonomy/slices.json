@@ -156,7 +156,6 @@
     "depends_on": [
       "S04"
     ],
-    "failure_path": "ops/autonomy/failures/S05-audit_failure-20260611T074919-0400-156c0b7f.md",
     "id": "S05",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
@@ -168,7 +167,7 @@
     "pre_ship_commands": [
       "python scripts/verify_s05_provider_policy.py --json"
     ],
-    "reason": "Re-run the stage-3 review lane in a pristine rolled cycle: the regenerated rev-3 artifact is hash-stable and resolved all corrective findings; the prior lane attempt blocked only on the previous cycle's stale bundle contaminating the shared default review directory.",
+    "reason": "SWR background run in progress",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -177,42 +176,10 @@
     ],
     "risk": "high",
     "slug": "s05-model-lifecycle",
-    "status": "blocked_compile_inputs",
-    "swr_review_repair": {
-      "created_at": "2026-06-11T07:51:20-04:00",
-      "rationale": "The stage response artifacts are complete and hash-stable; rerun only the supervisor review lane and reset downstream stages that consumed the tainted handoff.",
-      "reason": "Re-run the stage-3 review lane in a pristine rolled cycle: the regenerated rev-3 artifact is hash-stable and resolved all corrective findings; the prior lane attempt blocked only on the previous cycle's stale bundle contaminating the shared default review directory.",
-      "repair_action": "rerun_review_lane",
-      "repair_stage_id": "execution_row_draft",
-      "review_history_findings": [
-        {
-          "bundle": ".local/autokeel/swr/review_lane/S05-run_20260601_133046_ae09e1ea-execution_row_draft/execution_row_draft.review_bundle.json",
-          "errors": [
-            "execution_row_draft: review bundle response_id does not match current SWR stage",
-            "execution_row_draft: review bundle primary_artifact_markdown_sha256 does not match artifact",
-            "execution_row_draft: review bundle response_artifact_json_sha256 does not match artifact",
-            "execution_row_draft: review bundle reviewer_notes_sha256 does not match artifact",
-            "execution_row_draft: review bundle input_sha256 does not match artifact",
-            "execution_row_draft: review bundle output_sha256 does not match artifact"
-          ],
-          "stage_id": "execution_row_draft"
-        }
-      ],
-      "run_dir": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook",
-      "run_id": "run_20260601_133046_ae09e1ea",
-      "run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-      "source_review_bundle": ".local/autokeel/swr/review_lane/S05-run_20260601_133046_ae09e1ea-repo_grounding-repo_grounding_stage_review_repair_20260610t1807120400/repo_grounding.review_bundle.json",
-      "source_review_stage_id": "repo_grounding",
-      "stage_artifact_errors": [],
-      "stale_downstream_stage_ids": [
-        "gate_and_contract_review",
-        "final_markdown_playbook"
-      ],
-      "status": "planned"
-    },
+    "status": "waiting_for_playbook",
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-11T07:51:20-04:00"
+    "updated_at": "2026-06-11T08:03:54-04:00"
   },
   {
     "acceptance": [
