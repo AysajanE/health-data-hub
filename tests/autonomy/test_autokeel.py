@@ -774,13 +774,15 @@ Manual gates are forbidden.
 
             self.assertTrue(result.ok, result.stderr)
 
-    def test_run_retarget_budget_blocks_third_retarget(self) -> None:
+    def test_run_retarget_budget_blocks_sixth_retarget(self) -> None:
+        # Cap calibrated to 5 against the S03 precedent (five validated
+        # retargets, successful ship); the sixth still stops the line.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_autonomy_fixture(root)
             evidence_dir = root / "docs/evidence"
             evidence_dir.mkdir(parents=True, exist_ok=True)
-            for index in range(3):
+            for index in range(6):
                 (evidence_dir / f"S01-run-retarget-{index}.json").write_text("{}", encoding="utf-8")
             op = AutoKeel(root=root, dry_run=True)
 
@@ -788,6 +790,20 @@ Manual gates are forbidden.
 
             self.assertFalse(result.ok)
             self.assertIn("run retarget budget exceeded", result.stderr)
+
+    def test_run_retarget_budget_allows_precedent_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence_dir = root / "docs/evidence"
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            for index in range(5):
+                (evidence_dir / f"S01-run-retarget-{index}.json").write_text("{}", encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=True)
+
+            result = op.failure_budget_exceeded(op.load_slices()[0])
+
+            self.assertTrue(result.ok, result.stderr)
 
     def test_repaired_escalated_run_can_be_restored_from_slice_run_id(self) -> None:
         seen: dict[str, object] = {}
