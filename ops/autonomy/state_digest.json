@@ -1,6 +1,6 @@
 {
   "digests": {
-    "ops/autonomy/events.jsonl": "a163dfa8302aac9333741c69dd52dfef0d80f74b42b2bbcf61822b80a0301c02",
+    "ops/autonomy/events.jsonl": "35265da65de133073421629bb4769f09867ffa72e031309c564e40f27209351d",
     "ops/autonomy/failure_ledger.jsonl": "5872492af2ca43199ce074b3cf157aa4d380c6d2d73472ccc0f51e96216c5329",
     "ops/autonomy/slices.json": "2cbb9ffd66e601cc128b7a62d564a22ee49b8288986e6392333ee00fc33431b4"
   },
