@@ -234,7 +234,14 @@ loop:
   po_timeout_seconds: 7200
   po_supervisor_wait_seconds: 5
   po_max_auto_resume_attempts: 0
-  po_repaired_escalation_resume_attempts: 1
+  # Calibrated 1 -> 2 on 2026-06-11: each repaired escalation resume is
+  # already evidence-gated by AutoKeel (open audit rows block with exit 54;
+  # closure requires root-cause evidence, retarget proofs validate ancestry).
+  # Item 04 legitimately needed two resumes for two DISTINCT diagnosed
+  # defects (kernel quote-splitting, then data-provenance repair); the
+  # per-item supervisor count must not park an item whose second repair is
+  # independently evidenced. Bounded at 2.
+  po_repaired_escalation_resume_attempts: 2
   heartbeat_path: ops/autonomy/heartbeats/latest.json
   # Fail closed when slices.json/events.jsonl/failure_ledger.jsonl change
   # outside sanctioned writers (see scripts/record_intervention.py).
