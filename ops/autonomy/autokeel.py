@@ -2745,7 +2745,9 @@ Additional validator requirements:
   earlier rows. Do not list same-row or future deliverables as repo surfaces;
   plan-orchestrator refuses to materialize missing inputs into its worktree.
 - Every executable code, script, or test deliverable must have a non-empty
-  `required_verification_commands` cell.
+  `required_verification_commands` cell. Separate multiple commands with
+  semicolons (`cmd1; cmd2`); `<br>` separators are tolerated by the runtime
+  but semicolons are the contract.
 - Rows with `requires_red_green=true` must have a non-empty
   `required_verification_commands` cell.
 - Docs-only rows with `requires_red_green=false` still need concrete reviewable
