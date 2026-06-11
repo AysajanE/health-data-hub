@@ -156,7 +156,6 @@
     "depends_on": [
       "S04"
     ],
-    "failure_path": "ops/autonomy/failures/S05-compile_failure-20260611T093622-0400-19618060.md",
     "id": "S05",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
@@ -168,6 +167,7 @@
     "pre_ship_commands": [
       "python scripts/verify_s05_provider_policy.py --json"
     ],
+    "reason": "SWR playbook revalidated after validator false-positive fix",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -176,40 +176,10 @@
     ],
     "risk": "high",
     "slug": "s05-model-lifecycle",
-    "status": "replan_required",
+    "status": "pending",
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "swr_validation_repair": {
-      "created_at": "2026-06-11T09:36:22-04:00",
-      "diagnosis_status": "blocked_pending_diagnosis",
-      "rationale": "Validation failure did not map to a deterministic Stage 4 or Stage 5 contract diff.",
-      "reason": "SWR-generated playbook failed autonomous validation before PO.",
-      "rejected_evidence_archive": null,
-      "rejected_playbook_archive": "ops/autonomy/failures/archived_playbooks/S05-20260611T093622-0400-s05-model-lifecycle.playbook.md",
-      "repair_action": "blocked_pending_diagnosis",
-      "repair_stage_id": null,
-      "run_dir": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook",
-      "run_id": "run_20260601_133046_ae09e1ea",
-      "run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-      "source_review_bundle": null,
-      "source_review_stage_id": null,
-      "stage4_missing_terms": [],
-      "stage5_missing_terms": [],
-      "status": "planned",
-      "swr_source": {
-        "manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-        "response_json": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/stages/05_final_markdown_playbook/response.final.json",
-        "response_markdown": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/stages/05_final_markdown_playbook/response.final.md",
-        "run_dir": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook",
-        "run_id": "run_20260601_133046_ae09e1ea",
-        "stage_id": "final_markdown_playbook"
-      },
-      "validation_errors": [
-        "playbook v2 scope creep matched /\\bprospective\\b/"
-      ],
-      "validation_exit_code": 1
-    },
-    "updated_at": "2026-06-11T09:41:44-04:00"
+    "updated_at": "2026-06-11T09:41:50-04:00"
   },
   {
     "acceptance": [

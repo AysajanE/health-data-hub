@@ -124,3 +124,4 @@ The first success criterion is S01 running from autonomous brief through Keel va
 - 2026-06-11T09:09:03-04:00 S05 slice_status_updated: status=waiting_for_playbook, reason=SWR review repair stage rerun in progress
 - 2026-06-11T09:29:02-04:00 S05 slice_status_updated: status=waiting_for_playbook, reason=SWR background run in progress
 - 2026-06-11T09:36:22-04:00 S05 slice_status_updated: status=blocked_compile_inputs, reason=SWR playbook validation failed; minimal stage repair required, failure_path=ops/autonomy/failures/S05-compile_failure-20260611T093622-0400-19618060.md
+- 2026-06-11T09:41:50-04:00 S05 slice_status_updated: status=pending, reason=SWR playbook revalidated after validator false-positive fix

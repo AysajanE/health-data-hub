@@ -1,0 +1,27 @@
+{
+  "command": [
+    "restore-revalidated-swr-playbook",
+    "ops/autonomy/failures/archived_playbooks/S05-20260611T093622-0400-s05-model-lifecycle.playbook.md",
+    "docs/playbooks/s05-model-lifecycle.playbook.md"
+  ],
+  "playbook": "docs/playbooks/s05-model-lifecycle.playbook.md",
+  "playbook_sha256": "2f8580e8a8c7698ffef78785c4423a567b71b40bafe2c7cf18169cf551ff7f98",
+  "recorded_at": "2026-06-11T09:41:51-04:00",
+  "slice": "S05",
+  "status": "ok",
+  "swr_source": {
+    "manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
+    "response_json": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/stages/05_final_markdown_playbook/response.final.json",
+    "response_markdown": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/stages/05_final_markdown_playbook/response.final.md",
+    "run_dir": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook",
+    "run_id": "run_20260601_133046_ae09e1ea",
+    "stage_id": "final_markdown_playbook"
+  },
+  "tool": "keel-swr",
+  "validation": {
+    "command": "python -m scripts.validate_playbook_autonomous /Users/aeziz-local/health-data-hub/docs/playbooks/s05-model-lifecycle.playbook.md --risk high --json",
+    "exit_code": 0,
+    "stderr_tail": "",
+    "stdout_tail": "{\n  \"errors\": [],\n  \"row_count\": 5,\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n"
+  }
+}
