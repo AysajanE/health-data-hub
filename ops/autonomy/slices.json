@@ -197,6 +197,7 @@
     ],
     "id": "S06",
     "lane": "swr_preferred",
+    "lane_decision": "ops/autonomy/decisions/S06-lane-decision-20260611T185826-0400.json",
     "name": "Counterfactual generator",
     "playbook": "docs/playbooks/s06-counterfactual-generator.playbook.md",
     "required": true,
@@ -206,7 +207,8 @@
     ],
     "risk": "high",
     "slug": "s06-counterfactual-generator",
-    "status": "pending"
+    "status": "pending",
+    "updated_at": "2026-06-11T18:58:26-04:00"
   },
   {
     "acceptance": [
