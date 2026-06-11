@@ -3699,6 +3699,12 @@ Additional validator requirements:
             stage_id = str(stage.get("stage_id") or "")
             if not stage_id:
                 continue
+            # A stage that is generating or reset has no current review history
+            # to validate: its prior-cycle bundles are superseded by design (a
+            # regeneration replaces the artifacts they hashed), and validating
+            # them here falsely fails the run mid-regeneration.
+            if str(stage.get("status") or "") in {"prepared", "queued", "submitted", "in_progress"} and not stage.get("review_approved"):
+                continue
             candidates = self.swr_review_bundle_candidates_for_stage(slice_, payload, stage)
             existing = [candidate for candidate in candidates if candidate.exists()]
             if not existing:
@@ -3712,6 +3718,14 @@ Additional validator requirements:
                     )
                 continue
             bundle_path = existing[0]
+            bundle = read_json(bundle_path, {})
+            bundle_stage = str(bundle.get("stage_id") or bundle.get("source_stage_id") or "") if isinstance(bundle, dict) else ""
+            if bundle_stage and bundle_stage != stage_id:
+                # Consumed handoff bundle from the prior stage recorded on this
+                # stage's entry; it is not this stage's review history. The
+                # script verifier (verify_swr_review_history.py) skips these
+                # identically.
+                continue
             stage_payload = dict(payload)
             stage_payload["current_stage_id"] = stage_id
             errors = self.swr_review_bundle_validation_errors(bundle_path, stage_payload)

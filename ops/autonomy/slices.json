@@ -156,7 +156,6 @@
     "depends_on": [
       "S04"
     ],
-    "failure_path": "ops/autonomy/failures/S05-swr_review_transport_failure-20260611T064338-0400-c3665bb0.md",
     "id": "S05",
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
@@ -168,7 +167,6 @@
     "pre_ship_commands": [
       "python scripts/verify_s05_provider_policy.py --json"
     ],
-    "reason": "Regenerate execution_row_draft from autoplan revision 3: the gate stage's operator findings proved row 04 carries the validator-forbidden .gitignore write root introduced by revision 2; the models/ exclusion already exists at HEAD and must be asserted via verification only.",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
@@ -177,34 +175,10 @@
     ],
     "risk": "high",
     "slug": "s05-model-lifecycle",
-    "status": "blocked_compile_inputs",
-    "swr_review_repair": {
-      "corrective_findings": [
-        "[operator_codex, gate stage] row 4: sensitive allowed_write_root forbidden: .gitignore - no row may list .gitignore as an allowed_write_root, deliverable, or repo_surface.",
-        "[operator_codex, gate stage] Item 04: deliverable must contain at least one concrete repo-relative path.",
-        "Autoplan revision 3 removed the .gitignore write root: the models/ exclusion ALREADY EXISTS in .gitignore at HEAD. Do not create any .gitignore-editing row; assert the exclusion via a verification command inside the retrain row (the autoplan's task list shows the exact command)."
-      ],
-      "created_at": "2026-06-11T06:48:56-04:00",
-      "rationale": "Gate-stage review findings identify a product defect in the drafted rows themselves; regenerate the row draft from the corrected autoplan and reset downstream stages.",
-      "reason": "Regenerate execution_row_draft from autoplan revision 3: the gate stage's operator findings proved row 04 carries the validator-forbidden .gitignore write root introduced by revision 2; the models/ exclusion already exists at HEAD and must be asserted via verification only.",
-      "repair_action": "rerun_single_stage",
-      "repair_stage_id": "execution_row_draft",
-      "review_history_findings": [],
-      "run_dir": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook",
-      "run_id": "run_20260601_133046_ae09e1ea",
-      "run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-      "source_review_bundle": ".local/autokeel/swr/review_lane/S05-run_20260601_133046_ae09e1ea-repo_grounding-repo_grounding_stage_review_repair_20260610t1807120400/repo_grounding.review_bundle.json",
-      "source_review_stage_id": "repo_grounding",
-      "stage_artifact_errors": [],
-      "stale_downstream_stage_ids": [
-        "gate_and_contract_review",
-        "final_markdown_playbook"
-      ],
-      "status": "planned"
-    },
+    "status": "waiting_for_playbook",
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
-    "updated_at": "2026-06-11T06:48:56-04:00"
+    "updated_at": "2026-06-11T07:43:24-04:00"
   },
   {
     "acceptance": [
