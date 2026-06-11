@@ -1,9 +1,9 @@
 {
   "digests": {
-    "ops/autonomy/events.jsonl": "6811908e57f9f268792767249dc409b38b3eee3fad4b02a2c8337f3d15b014be",
-    "ops/autonomy/failure_ledger.jsonl": "124455d845fbc67ecd047d37ba349023bcd6e5604c2db6724cbd43fd440973d0",
-    "ops/autonomy/slices.json": "f3924fceac613167c3e8cc5297a3a341f3c8cb5276a028999cdc3c619fa3435b"
+    "ops/autonomy/events.jsonl": "36091d6d3f1602cc3735e7fabc451c3134d218f259d2ee92826b4c96c04628fe",
+    "ops/autonomy/failure_ledger.jsonl": "22948de0c0ad1fa0507ddbcf6bfa270da6947fea4f6bc37dcf99f90f003369fb",
+    "ops/autonomy/slices.json": "8a3727265cb1dfac36243c73518ce5e94b9da6372a7cd69802e00597942b3468"
   },
   "schema_version": "autokeel.state_digest.v1",
-  "updated_at": "2026-06-11T12:18:09-04:00"
+  "updated_at": "2026-06-11T13:26:06-04:00"
 }

@@ -820,6 +820,11 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
 
         if failure_class in meta_classes:
             return "meta_guardrail"
+        if origin == "external_provider":
+            # External dependency outages (provider quotas, credentials) are
+            # not repairs of this system; they must never consume the bounded
+            # repair budgets that measure product or control-plane churn.
+            return "external_dependency"
         if failure_class in {"swr_review_transport_failure", "swr_kernel_unpinned"}:
             return "autokeel_control_plane"
         if origin == "autokeel_wrapper":

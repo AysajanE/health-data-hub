@@ -460,3 +460,18 @@ class V2ScopeNegationCalibrationTests(unittest.TestCase):
         text = "s05 will deliver:\n\n- prospective dashboards.\n"
         match = re.search(r"\bprospective\b", text)
         self.assertFalse(allowed_v2_scope_context(text, match))
+
+
+class ExternalDependencyScopeTests(unittest.TestCase):
+    def test_external_provider_rows_do_not_consume_repair_budgets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            row = {
+                "failure_class": "provider_auth_failure",
+                "failure_origin": "external_provider",
+                "slice": "S05",
+                "description": "Codex CLI usage limit exhausted",
+            }
+            self.assertEqual(op.repair_budget_scope(row), "external_dependency")
