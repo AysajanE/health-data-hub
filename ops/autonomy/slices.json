@@ -269,8 +269,7 @@
     "retry_count": 0,
     "review_artifacts": [
       "docs/reviews/s05-autonomous-model-gate-review.md",
-      "docs/reviews/s05-autonomous-statistical-validity-review.md",
-      "docs/reviews/s05-autonomous-integration-reconciliation-review.md"
+      "docs/reviews/s05-autonomous-statistical-validity-review.md"
     ],
     "risk": "high",
     "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",

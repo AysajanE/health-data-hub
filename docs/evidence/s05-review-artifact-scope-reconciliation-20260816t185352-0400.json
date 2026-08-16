@@ -1,0 +1,25 @@
+{
+  "details": {
+    "continuation_commit_before_scope_fix": "238742c3d970b12791e10458e19eb29d5a8b63cd",
+    "historical_lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
+    "historical_lane_decision_sha256": "f10f3da255db280c4961122126266d760fb05c26c00ae14af2e73a9ceb87eee7",
+    "historical_review_artifacts": [
+      "docs/reviews/s05-autonomous-model-gate-review.md",
+      "docs/reviews/s05-autonomous-statistical-validity-review.md"
+    ],
+    "integration_receipt": "docs/evidence/s05-canonical-integration-reconciliation.json",
+    "integration_review_artifacts": [
+      "docs/reviews/s05-autonomous-integration-reconciliation-review.md"
+    ],
+    "previous_slices_sha256": "b0536daa260458c98778c31b1e1f97b663ee0f89644f792156ef13959de961a8",
+    "reason": "The high-risk lane decision must retain its exact two historical review artifacts. The later reconciliation review is independently receipt-bound through integration_review_artifacts and must not be retroactively inserted into the historical lane-decision review set.",
+    "reconciled_s05_config_sha256": "ec90e921d61e15855631d48c87796923ec82e3ba13719f0327d30bd82811044e",
+    "reconciled_slices_sha256": "2b78b91d2f4b342229ccea973fdf09c8450f20c84c1e154c8a0209cc19c3d294"
+  },
+  "name": "s05-review-artifact-scope-reconciliation",
+  "reason": "Restore the exact historical S05 lane-review set while retaining the later reconciliation review exclusively in the receipt-bound integration review field.",
+  "recorded_at": "2026-08-16T18:53:52-04:00",
+  "recorded_by": "codex-owner",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S05"
+}
