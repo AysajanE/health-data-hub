@@ -1,6 +1,6 @@
 {
   "schema_version": "autokeel_command_evidence_v1",
-  "created_at": "2026-08-16T19:41:47Z",
+  "created_at": "2026-08-16T22:20:05.459272Z",
   "slice": "S02",
   "status": "ok",
   "evidence_kind": "post_completion_integration_reconciliation",
@@ -8,13 +8,14 @@
   "historical_ship_branch": "ship/s02",
   "historical_ship_commit": "9b9a72bd9201eca69f94949d66aba9b71ee30b5c",
   "integration_base_commit": "c16964f6d5d6610e6305a652de46896e79417fed",
-  "canonical_base_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+  "canonical_base_head": "be6b264ee35140192b92cb3f983c8faad615d742",
   "surface_summary": {
     "ship_changed_paths": 85,
-    "identical_candidate_entries": 61,
-    "evolved_candidate_entries": 24,
-    "retired_candidate_entries": 0,
-    "reverted_candidate_entries": 0
+    "identical_verified_entries": 60,
+    "evolved_verified_entries": 25,
+    "retired_verified_entries": 0,
+    "reverted_verified_entries": 0,
+    "classification_basis": "exact committed Git entries at tested_commit"
   },
   "reviewed_files": [
     {
@@ -26,6 +27,10 @@
       "sha256": "866d12e22b466c16450eadf542213121441cc8a4e0d3f396698d67bce67ac3f5"
     },
     {
+      "path": "docs/evidence/s02-po-item07-closure-repair-20260527.md",
+      "sha256": "2c325c09d52b2dc4749a4468eb63b1e4ba3ae577dae955595b037c28532efa59"
+    },
+    {
       "path": "docs/gstack/s02-mood-api-autoplan.md",
       "sha256": "2ed75e792de8c88aeb2f37bf39bee18ab895be92ce78018e555fa38f7602aa78"
     },
@@ -34,56 +39,44 @@
       "sha256": "3f2b64184e29fd4f88800bf69c5cb4257cfa22aa2a02f486d75dc31f747d80d9"
     },
     {
-      "path": "docs/evidence/s02-po-item07-closure-repair-20260527.md",
-      "sha256": "2c325c09d52b2dc4749a4468eb63b1e4ba3ae577dae955595b037c28532efa59"
+      "path": "docs/reviews/s02-autonomous-privacy-review.md",
+      "sha256": "223eda2f72f2e5a191d0f861251e17097eb8a840b7a8d78be0b6315b9f060bff"
     },
     {
       "path": "docs/reviews/s02-autonomous-security-review.md",
       "sha256": "2afb1330365d9238845eaa36a3bf0db92714ef9f0e3d5b87a69ba33f50b408ec"
     },
     {
-      "path": "docs/reviews/s02-autonomous-privacy-review.md",
-      "sha256": "223eda2f72f2e5a191d0f861251e17097eb8a840b7a8d78be0b6315b9f060bff"
-    },
-    {
       "path": "ops/autonomy/README.md",
-      "sha256": "b7ae3efdbd6e931ba9545435fa24eceebef1f1609ceeebb5e1670bd35d3fd3b9"
+      "sha256": "1881868bbf0c29f0d9fc0c99c031ae3d8098b0939060bb8dd58d1c893f1dcb92"
     },
     {
       "path": "ops/autonomy/autokeel.py",
-      "sha256": "23f92fdf5854da2d52d5df26100a5c1f3a2c08ef321ce80682d030ed4c4734d2"
-    },
-    {
-      "path": "ops/autonomy/autonomy_state.json",
-      "sha256": "cca4e378298cb9b378d65fad90f8f6f1917f07a07a1725363fca405a82ee683e"
-    },
-    {
-      "path": "ops/autonomy/events.jsonl",
-      "sha256": "c363835256e6ebd1d596f7808940ce641417504a495f1e5e0f8cc859b6c17f67"
-    },
-    {
-      "path": "ops/autonomy/failure_ledger.jsonl",
-      "sha256": "79c98859e3bec39c867de3fc6ccfd28dfaec13ee918cfd885fd1757f2a123081"
+      "sha256": "81ac84079a16794d8e7cbf61be1a9da475f50225afedf3ec043410656f9afabe"
     },
     {
       "path": "ops/autonomy/policy.yaml",
-      "sha256": "cee283f9b65ac80a39172237da77aad111512d0e6f4c01c29573e0f29802e17f"
+      "sha256": "3f3546c7236a4434e13b0458a1ad88d17049b8acd143735a7918b903a38ea6a8"
     },
     {
-      "path": "ops/autonomy/progress.md",
-      "sha256": "235e7af08fcb6174dd3abf4f8743657c9f16474f9a91a671196c1bbe2b7a4138"
+      "path": "ops/autonomy/schemas/slice_integration_receipt_v2.schema.json",
+      "sha256": "d381fe8df879ac470ab9802b10b185398a793664c364b7c4b6fb05c3d80091b0"
     },
     {
       "path": "ops/autonomy/schemas/slices.schema.json",
-      "sha256": "0a9006b5e9b7b9e02b90ea88dc67eab48ff2e3b42b57aaaac44802efd6f7aa19"
-    },
-    {
-      "path": "ops/autonomy/slices.json",
-      "sha256": "3ddceea64044bc5b2c9374565f4e0f400ec82ba676046653b92bc6839f8b6b29"
+      "sha256": "157d4569f35a49887988f3add53c9fbe2f9adea4e95c1c47bb6ea0d04c081368"
     },
     {
       "path": "scripts/acceptance_policy.py",
       "sha256": "620de8b5e6b5622143e5b5484a453eab649bdd05759b429b54259b705f6421ce"
+    },
+    {
+      "path": "scripts/build_slice_integration_receipt.py",
+      "sha256": "12b684a15b7f1906fb6ca42f51d3c875b23f5c77ee636c849d31ff897706c91e"
+    },
+    {
+      "path": "scripts/check_autonomous_review_exists.py",
+      "sha256": "269f759de39c93baacbe13c5374e2449d16895019f082ef34ddb767b073158e1"
     },
     {
       "path": "scripts/check_no_tracked_data.py",
@@ -94,12 +87,32 @@
       "sha256": "f3d0e248c2b8a3fcafa76980b72d41c725f97b7388aa5b8098c0f551d8e4dd23"
     },
     {
+      "path": "scripts/slice_integration.py",
+      "sha256": "74b4a8a1007a728e074aee55358733b562674333af0efb52a0026818f34772c7"
+    },
+    {
       "path": "scripts/validate_playbook_autonomous.py",
       "sha256": "968e676da5f57791e873f14fc1ef039cbe61375400c709cf468d4b147558e5fe"
     },
     {
+      "path": "scripts/verify_event_log.py",
+      "sha256": "bd4db0edca9f5e7766699683c83c1a03d7a1b0d528b5cac1fa4847e30e1c24b3"
+    },
+    {
+      "path": "scripts/verify_failure_ledger.py",
+      "sha256": "8f251803eacd575727215586e0d2893ee8c33a0fb2eacb647a83071514c447d0"
+    },
+    {
+      "path": "scripts/verify_ship_invariants.py",
+      "sha256": "d6ef932c8b0fe15b5582113379354c34f770fcfcebd85f800aaa4a0c1e47f536"
+    },
+    {
+      "path": "scripts/verify_slice_integration.py",
+      "sha256": "cdc899362e0f75bbb752e0bc0367ada8c4df0d1cdb10a7fae8eefcce443342f7"
+    },
+    {
       "path": "scripts/verify_v1.py",
-      "sha256": "2d5f01a493b95ab9c67ae2f038a076e6ef32c2389313162de0d1118e771c9a64"
+      "sha256": "6e1d00438079dfab47b401e9cb9620048b1e5183f5b5e53da4d72a4df54e44c0"
     },
     {
       "path": "src/api/__init__.py",
@@ -126,20 +139,36 @@
       "sha256": "8089dda04740b848bab0763d1785a54cfb137154a8843689068a3f30fe942014"
     },
     {
+      "path": "src/db/schema.sql",
+      "sha256": "0dae7a8da5177cd0623bc49a69ab72fd9a3c57b284434bb01cd053cdcd316086"
+    },
+    {
+      "path": "src/warehouse/models.py",
+      "sha256": "7cdeb93c417b9bb3468106c1f3bb0b8582ccef89ddffa9b16ee0838df3d06455"
+    },
+    {
+      "path": "src/warehouse/warehouse.py",
+      "sha256": "ddbcdcf43c4ce344099666fac58383a9401b8c6dfc457b718e087a0d4d23fa29"
+    },
+    {
       "path": "tests/autonomy/test_autokeel.py",
-      "sha256": "6c75c53b79db921eca722fcfcc738be71055dce34f682d81d187be20458234c2"
+      "sha256": "3be7381584dfafb2e2c6ab0f989c2c51146351052039f687df9a4fe32f6d2224"
     },
     {
       "path": "tests/autonomy/test_autokeel_ops_tools.py",
-      "sha256": "83d02981e8c6eb10f92e804ba4a88cead33de06177052bb31e74c191bf568008"
+      "sha256": "118b26a80ef8c443ec8d368a73dfc09cc8f25abfcefc95aefa3fa2bd91ce64f0"
     },
     {
       "path": "tests/autonomy/test_autokeel_v1_feedback.py",
-      "sha256": "2e51433acfa50283c1ccf9a62c12f99520368877e94db2c896b2d6db5270c0b7"
+      "sha256": "0158418136e6d65593a93d97ea8b9f251572907ba4fc0fd69fad54ef663ef47c"
     },
     {
       "path": "tests/autonomy/test_autokeel_v2_remaining.py",
       "sha256": "b1f830f95d0ba560a9b20622d5a20d3a29ee2b329e30239104bd22341bda81c5"
+    },
+    {
+      "path": "tests/autonomy/test_slice_integration.py",
+      "sha256": "96dffbfac9c54e8b99c33713d7dee31c0bebdda356ad53af0186a83b5df1d6e5"
     },
     {
       "path": "tests/autonomy/test_validate_playbook_autonomous.py",
@@ -147,26 +176,26 @@
     },
     {
       "path": "tests/autonomy/test_verify_scripts.py",
-      "sha256": "d4f95555076de4b32003e9b4356a5028130e2b54fcb4f5488238671fd8175d3f"
+      "sha256": "dda22bc9eebcaee638103ae096b741ac235676a33870a2dd4710c66a01391626"
     },
     {
       "path": "tests/test_api_security.py",
       "sha256": "7cdb25a09935ed3981ef9929623790e81f628d34a297f96857d77a2d90a4929a"
     },
     {
-      "path": "tests/test_mood_date.py",
-      "sha256": "c88493209ebc0881666e8d13dd5d940200326fae0326ca3c7865254f0299e763"
-    },
-    {
       "path": "tests/test_mood_correction.py",
       "sha256": "c9a68b6d04bec2c361ac3041739c345d2e8d40aacf06ac044d998e3c5f5b6b38"
+    },
+    {
+      "path": "tests/test_mood_date.py",
+      "sha256": "c88493209ebc0881666e8d13dd5d940200326fae0326ca3c7865254f0299e763"
     }
   ],
   "commands": [
     {
       "command": "python -m pytest tests/test_api_security.py tests/test_mood_date.py tests/test_mood_correction.py -q",
       "exit_code": 0,
-      "stdout_tail": "........................                                                 [100%]\n24 passed in 4.02s\n",
+      "stdout_tail": "........................                                                 [100%]\n24 passed in 2.59s\n",
       "stderr_tail": ""
     },
     {
@@ -180,25 +209,29 @@
       "exit_code": 0,
       "stdout_tail": "ok\n",
       "stderr_tail": ""
-    },
+    }
+  ],
+  "redaction": "Command tails contain only sanitized local verification summaries. No raw health data, private evidence contents, provider payloads, credentials, database files, snapshots, or quarantine payloads are included.",
+  "tested_commit": "be6b264ee35140192b92cb3f983c8faad615d742",
+  "supplemental_commands": [
     {
-      "command": "PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/autonomy -q",
+      "command": "PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/autonomy/test_slice_integration.py -q",
       "exit_code": 0,
-      "stdout_tail": "........................................................................ [ 92%]\n.......................                                                  [100%]\n311 passed in 93.05s (0:01:33)\n",
+      "stdout_tail": "........................................................................ [ 87%]\n..........                                                               [100%]\n82 passed in 326.04s (0:05:26)\n",
       "stderr_tail": ""
     },
     {
       "command": "python scripts/verify_event_log.py --json",
       "exit_code": 0,
-      "stdout_tail": "status=ok; event_rows=1535; unique_event_ids=1533; max_event_id=1533; reconciled_duplicate_ids=347,348\n",
+      "stdout_tail": "status=ok; event_rows=1536; unique_event_ids=1534; max_event_id=1534; reconciled_duplicate_ids=347,348\n",
       "stderr_tail": ""
     },
     {
       "command": "python scripts/verify_failure_ledger.py --json",
       "exit_code": 0,
-      "stdout_tail": "status=ok; rows=83; warnings are limited to identified legacy-v1 semantics\n",
+      "stdout_tail": "status=ok; rows=83; scoped_external_blockers=0; warnings limited to identified legacy semantics\n",
       "stderr_tail": ""
     }
   ],
-  "redaction": "Command tails contain only sanitized local verification summaries. No raw health data, private evidence contents, provider payloads, credentials, database files, snapshots, or quarantine payloads are included."
+  "commit_boundary": "Acceptance and supplemental verification were executed against the clean, committed tested_commit. Living append-only/state surfaces are bound by receipt retention semantics and their dedicated verifiers, not by immutable reviewed_files hashes."
 }

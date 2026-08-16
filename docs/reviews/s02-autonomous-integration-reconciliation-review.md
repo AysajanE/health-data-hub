@@ -11,7 +11,7 @@ Blocking findings: none
 
 ## Scope and historical boundary
 
-This review compares every path changed by S02 between its recorded integration base and ship commit with the current candidate tree. It also re-evaluates the frozen S02 acceptance contract, product security and privacy behavior, control-plane evolution, and historical evidence integrity. It is a post-completion review: it does not claim that this artifact existed during the historical PO run, rewrite the 2026-05-28 completion, or represent human approval.
+This review compares every path changed by S02 between its recorded integration base and ship commit with committed verification point `be6b264ee35140192b92cb3f983c8faad615d742`. It also re-evaluates the frozen S02 acceptance contract, product security and privacy behavior, control-plane evolution, and historical evidence integrity. It is a post-completion review: it does not claim that this artifact existed during the historical PO run, rewrite the 2026-05-28 completion, or represent human approval.
 
 The historical identifiers remain:
 
@@ -52,7 +52,7 @@ The historical identifiers remain:
 - `tests/autonomy/test_slice_integration.py`
 - `docs/evidence/s02-post-completion-integration-reconciliation-command-evidence-20260816.json`
 
-The preliminary command-evidence artifact records SHA-256 values for the reviewed product, test, contract, and evolved control-plane files. Those values are explicitly pre-anchor and must be refreshed at the frozen verification commit. A transient working-tree surface table was deliberately retired rather than preserve stale object IDs; only the canonical v2 builder may enumerate authoritative continuation entries.
+The command-evidence artifact names the clean tested commit and records SHA-256 values for the reviewed product, test, contract, and evolved control-plane files. Living event, ledger, progress, slice-registry, and runtime-state surfaces are deliberately excluded from immutable reviewed-file hashes; the receipt binds them through typed retention modes and their dedicated verifiers. Only the canonical v2 builder enumerates authoritative continuation entries.
 
 ## Exact commands run
 
@@ -67,7 +67,7 @@ Command evidence: `docs/evidence/s02-post-completion-integration-reconciliation-
 
 ## Exhaustive landed-surface finding
 
-The recorded S02 range changes 85 paths. Because the continuation is still moving, this pre-anchor review intentionally does not assert a ship-identical/evolved count or retain mutable candidate object IDs. The final B02 review and canonical receipt must recompute the exact sorted 85-path set from committed Git objects, reject retirement or restoration to the pre-ship object, and bind every resulting continuation entry.
+The recorded S02 range changes 85 paths. At clean verification commit `be6b264ee35140192b92cb3f983c8faad615d742`, 60 paths are identical to the historical ship and 25 are reviewed later evolutions; none is retired or restored to its pre-ship object. The canonical receipt independently recomputes the exact sorted 85-path set from committed Git objects and binds every resulting continuation entry.
 
 All six S02 production API modules remain byte-for-byte identical to the ship commit: application routing, dependency injection, mood-date derivation, schemas, and security controls have not drifted. The S02 brief, autoplan, playbook, lane decision, both historical autonomous reviews, and their original command evidence are also exact ship-object matches.
 
@@ -88,7 +88,7 @@ The currently evolved surfaces preserve S02 while adding later slices and strict
 - `close_failure.py` retains closure evidence requirements and adds exact failure targeting and recovery protections.
 - `verify_v1.py`, the slice schema, and the slice registry retain S02 as a required completed slice with its exact acceptance, historical run, branch, and ship commit, while adding integration metadata and later slice gates.
 - Runtime state and progress advance beyond S02 without changing the historical S02 identifiers. The event log preserves all substantive S02 ship-era rows and appends later events; its verifier passes with only the hash-reconciled legacy duplicate IDs 347 and 348. The legacy S02 open state-divergence row was later closed with explicit closure evidence, and the 83-row failure ledger passes its verifier with documented legacy-v1 warnings.
-- The evolved autonomy test modules retain the S02 cases and add regression coverage for later control-plane hardening. Earlier broad autonomy verification was green; the final frozen-commit evidence must supersede that checkpoint with current results.
+- The evolved autonomy test modules retain the S02 cases and add regression coverage for later control-plane hardening. The focused anchored-receipt suite passed all 82 tests against the clean verification parent; event-log and failure-ledger verifiers also returned `ok`.
 
 No evolved path removes the shipped API behavior, weakens the S02 security/privacy acceptance contract, fabricates external evidence, or authorizes a human-gate substitution.
 
@@ -111,9 +111,9 @@ The focused and adversarial integration tests exercise receipt rewrite and re-ad
 
 ## Limits and durability conditions
 
-- This remains a pre-anchor review of the candidate tree. It cannot itself make S02 integrated, and it intentionally does not invent a verification-commit hash.
+- This review is bound to verification commit `be6b264ee35140192b92cb3f983c8faad615d742`. It cannot itself make S02 integrated; the canonical receipt created with this review and evidence in the single-parent audit commit provides that authority.
 - No canonical S02 receipt has been issued yet. Preliminary worktree enumeration is not landed-state proof.
-- The command evidence must be refreshed against the actual frozen verification commit before the single-parent audit commit is created. The canonical receipt must then be generated from that frozen commit rather than from mutable worktree bytes.
+- The command evidence has been refreshed against the frozen verification commit. The canonical receipt is generated from that commit rather than from mutable product/control worktree bytes.
 - After the audit commit, committed-object integration verification and post-completion ratification must pass without changing the historical run, branch, or ship commit. Any later immutable-surface change requires a reviewed successor receipt at a new path.
 - No AutoKeel, Keel, Plan Orchestrator, or paid compiler execution was used for this review.
 - No real mobile/LAN transport, long-window mood compliance, or model baseline evidence is asserted.
