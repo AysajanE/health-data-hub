@@ -1,0 +1,148 @@
+{
+  "schema_version": "autokeel_command_evidence_v1",
+  "created_at": "2026-08-16T22:44:54Z",
+  "slice": "S05",
+  "status": "ok",
+  "evidence_kind": "post_completion_integration_reconciliation",
+  "historical_run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",
+  "historical_ship_commit": "6dce352ead0729f9bfde9a52a5aa28e08161acb6",
+  "historical_integration_base_commit": "378b87443ab2ee3c57c44a7e5079b9ce7a6fff66",
+  "canonical_base_head": "400b0d1768cc23ec04103f6ff0ffc755c0c1a430",
+  "tested_commit": "400b0d1768cc23ec04103f6ff0ffc755c0c1a430",
+  "reviewed_files": [
+    {
+      "path": "docs/briefs/s05-model-lifecycle.autonomous-brief.md",
+      "sha256": "2ec7eb6532d96ee802588d5af4832ce1694a0dcfec20a3af93da68a574da6312"
+    },
+    {
+      "path": "docs/gstack/health-data-hub-office-hours.md",
+      "sha256": "9ae81c24e1550bb4f1d6e97c092a4665ab1e2222b091ddfe3a9b0c9bcd21c564"
+    },
+    {
+      "path": "docs/gstack/s05-model-lifecycle-autoplan.md",
+      "sha256": "f1c2930dafbc224929dc63d5593c9c67d149f875395a98f2e8e1726ac4a063e1"
+    },
+    {
+      "path": "docs/playbooks/s05-model-lifecycle.playbook.md",
+      "sha256": "2f8580e8a8c7698ffef78785c4423a567b71b40bafe2c7cf18169cf551ff7f98"
+    },
+    {
+      "path": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
+      "sha256": "f10f3da255db280c4961122126266d760fb05c26c00ae14af2e73a9ceb87eee7"
+    },
+    {
+      "path": "ops/autonomy/schemas/slice_integration_receipt_v2.schema.json",
+      "sha256": "d381fe8df879ac470ab9802b10b185398a793664c364b7c4b6fb05c3d80091b0"
+    },
+    {
+      "path": "scripts/build_slice_integration_receipt.py",
+      "sha256": "12b684a15b7f1906fb6ca42f51d3c875b23f5c77ee636c849d31ff897706c91e"
+    },
+    {
+      "path": "scripts/check_autonomous_review_exists.py",
+      "sha256": "269f759de39c93baacbe13c5374e2449d16895019f082ef34ddb767b073158e1"
+    },
+    {
+      "path": "scripts/check_no_tracked_data.py",
+      "sha256": "0934116e13c0b489e691f19baa84defef38d854dbab675d10c2d167625afd803"
+    },
+    {
+      "path": "scripts/retrain_model.py",
+      "sha256": "0292f960d55f8e6da50f68e2a019dde9d0a8deae0501f2d5b5081bdd3509cbae"
+    },
+    {
+      "path": "scripts/slice_integration.py",
+      "sha256": "74b4a8a1007a728e074aee55358733b562674333af0efb52a0026818f34772c7"
+    },
+    {
+      "path": "scripts/verify_s05_provider_policy.py",
+      "sha256": "e72d2d2f4929699c5f044b19745ad45961499f3ea1f5711a2d348212778e21b7"
+    },
+    {
+      "path": "scripts/verify_ship_invariants.py",
+      "sha256": "d6ef932c8b0fe15b5582113379354c34f770fcfcebd85f800aaa4a0c1e47f536"
+    },
+    {
+      "path": "scripts/verify_slice_integration.py",
+      "sha256": "cdc899362e0f75bbb752e0bc0367ada8c4df0d1cdb10a7fae8eefcce443342f7"
+    },
+    {
+      "path": "src/model/baseline_gate.py",
+      "sha256": "f4fe643799317f032e822f7f42edd7901dbd297e3cb511d71fb99d0123bca614"
+    },
+    {
+      "path": "src/model/eval_log.py",
+      "sha256": "74ec80873a99233e4ea8e53acef0f3e47ad94dd43d3b43a5e7104062ba5cebd6"
+    },
+    {
+      "path": "src/model/ridge.py",
+      "sha256": "4aedb14d62620a537f52770fd7d98b7beed4e131ba1a0413f54c109a30cee765"
+    },
+    {
+      "path": "src/warehouse/features.py",
+      "sha256": "71b2bb24fec6ebc1b7ed7eb875375cce3ff5fde36649f5bece7458dc5e1d398b"
+    },
+    {
+      "path": "tests/autonomy/test_slice_integration.py",
+      "sha256": "96dffbfac9c54e8b99c33713d7dee31c0bebdda356ad53af0186a83b5df1d6e5"
+    },
+    {
+      "path": "tests/model/test_baseline_gate.py",
+      "sha256": "f311672b6c5e3dbfe19246143a48613a54ecf8df344d7130232b6e6f217babe8"
+    },
+    {
+      "path": "tests/model/test_provider_policy.py",
+      "sha256": "18861b302f78bc9efa9e98cc23c4284210d97eabdfc5ab2d54f2b6fab0f80207"
+    },
+    {
+      "path": "tests/model/test_retrain_entrypoint.py",
+      "sha256": "e7d0d3147b2b77a01ae9ce964e803a489c361abf5ff1c3592ccb74282e8c8bfd"
+    },
+    {
+      "path": "tests/model/test_ridge.py",
+      "sha256": "57a2301011b8f694d01a60a85baf8fadf9ab0da220529fe1fd70a686aa822171"
+    }
+  ],
+  "commands": [
+    {
+      "command": "python scripts/verify_s05_provider_policy.py --json",
+      "exit_code": 0,
+      "status": "ok",
+      "stdout_tail": "status=ok; active_sleep_provider=oura; eight_sleep_state=fallback_active; exact persisted Oura provenance fixtures accepted and aliases/fallback/multiple-source rows rejected; warehouse_database=null",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python -m pytest tests/model -q",
+      "exit_code": 0,
+      "status": "ok",
+      "stdout_tail": "...................................                                      [100%]\n35 passed in 7.23s\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_autonomous_review_exists.py S05",
+      "exit_code": 0,
+      "status": "ok",
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "status": "ok",
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    }
+  ],
+  "surface_summary": {
+    "ship_changed_paths": 11,
+    "identical_verified_entries": 7,
+    "evolved_verified_entries": 4,
+    "retired_verified_entries": 0,
+    "reverted_verified_entries": 0,
+    "classification_basis": "exact committed Git entries at tested_commit"
+  },
+  "redaction": "Command tails contain only sanitized local verification summaries. No raw health data, private evidence contents, provider payloads, credentials, database rows, model coefficients, snapshots, or quarantine payloads are included.",
+  "runtime_boundary": "No canonical warehouse database or model artifact was read or created. The provider-policy report stated warehouse_database=null; verification is limited to tracked code, policy, and synthetic/local test fixtures.",
+  "authority_boundary": "This evidence does not authorize live Oura API use or Oura-derived training. S12 remains blocked_external pending issuer-authenticated qualifying authority or a legally confirmed non-API route.",
+  "command_evidence_trust_boundary": "Self-attested command transcript with committed input hashes; structurally and hash bound by the receipt, but not cryptographically runner-attested."
+}
