@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://health-data-hub.local/schemas/tripwire_mood_compliance.schema.json",
+  "title": "Mood compliance tripwire evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tripwire",
+    "created_at",
+    "status",
+    "action",
+    "activation_date",
+    "as_of_date",
+    "due_date",
+    "window_start",
+    "window_end",
+    "window_days",
+    "opportunities",
+    "minimum_required_days",
+    "eligible_unique_non_backfill_days",
+    "backfill_rows_excluded",
+    "duplicate_rows_ignored",
+    "contains_ratings",
+    "contains_notes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "health_data_hub.tripwire.mood_compliance.v1"
+    },
+    "tripwire": {
+      "const": "on_mood_compliance_failure_week_8"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "enum": ["not_due", "ok", "triggered"]
+    },
+    "action": {
+      "enum": ["none", "stop_modeling_fix_logging"]
+    },
+    "activation_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "as_of_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "window_start": {
+      "oneOf": [
+        {"type": "string", "format": "date"},
+        {"type": "null"}
+      ]
+    },
+    "window_end": {
+      "oneOf": [
+        {"type": "string", "format": "date"},
+        {"type": "null"}
+      ]
+    },
+    "window_days": {
+      "const": 28
+    },
+    "opportunities": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 28
+    },
+    "minimum_required_days": {
+      "const": 23
+    },
+    "eligible_unique_non_backfill_days": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 28
+    },
+    "backfill_rows_excluded": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "duplicate_rows_ignored": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "contains_ratings": {
+      "const": false
+    },
+    "contains_notes": {
+      "const": false
+    }
+  }
+}

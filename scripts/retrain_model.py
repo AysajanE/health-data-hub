@@ -7,6 +7,7 @@ import argparse
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime
 import json
+import math
 import pickle
 from pathlib import Path
 import subprocess
@@ -93,7 +94,8 @@ def load_verified_feature_rows(database_path: Path) -> list[dict[str, Any]]:
                 f.feature_version,
                 CAST(f.sleep_source_count AS BIGINT) AS sleep_source_count,
                 d.hrv_merge_method,
-                d.stage_source
+                d.stage_source AS persisted_sleep_source,
+                d.oura_present
             FROM daily_features f
             JOIN mood_current c ON c.mood_date = f.feature_date
             JOIN mood_entries e ON e.log_id = c.log_id
@@ -104,10 +106,9 @@ def load_verified_feature_rows(database_path: Path) -> list[dict[str, Any]]:
               AND f.prior_day_feeling IS NOT NULL
               AND COALESCE(f.prior_day_feeling_imputed, FALSE) = FALSE
               AND f.sleep_source_count = 1
-              AND d.hrv_merge_method IS NOT NULL
-              AND d.stage_source IS NOT NULL
-              AND COALESCE(d.hrv_merge_method, 'oura_primary') != 'eight_fallback'
-              AND COALESCE(LOWER(TRIM(d.stage_source)), '') = 'oura'
+              AND d.oura_present IS TRUE
+              AND d.hrv_merge_method = 'oura_primary'
+              AND d.stage_source = 'oura'
             ORDER BY f.feature_date
             """
         ).fetchall()
@@ -131,7 +132,8 @@ def load_verified_feature_rows(database_path: Path) -> list[dict[str, Any]]:
         feature_version,
         sleep_source_count,
         hrv_merge_method,
-        stage_source,
+        persisted_sleep_source,
+        oura_present,
     ) in rows:
         loaded_rows.append(
             {
@@ -148,10 +150,11 @@ def load_verified_feature_rows(database_path: Path) -> list[dict[str, Any]]:
         provider_policy_rows.append(
             {
                 "feature_date": feature_date,
-                "source": "oura",
+                "source": persisted_sleep_source,
+                "oura_present": oura_present,
                 "sleep_source_count": sleep_source_count,
                 "hrv_merge_method": hrv_merge_method,
-                "stage_source": stage_source,
+                "stage_source": persisted_sleep_source,
             }
         )
 
@@ -351,7 +354,10 @@ def _normalize_training_rows(
             )
         hrv_avg_ms = _row_value(row, "hrv_avg_ms")
         if hrv_avg_ms is not None:
-            normalized_row["hrv_avg_ms"] = float(hrv_avg_ms)
+            normalized_row["hrv_avg_ms"] = _as_float(
+                hrv_avg_ms,
+                field="hrv_avg_ms",
+            )
         feature_version = _row_value(row, "feature_version")
         if feature_version not in {None, ""}:
             normalized_row["feature_version"] = str(feature_version)
@@ -381,7 +387,7 @@ def _normalize_feature_date(value: Any) -> str:
 def _collect_stage_source_violations(rows: Iterable[Mapping[str, Any]]) -> list[str]:
     violations: list[str] = []
     for index, row in enumerate(rows):
-        stage_source = _normalize_provider_value(row.get("stage_source"))
+        stage_source = row.get("stage_source")
         if stage_source != REQUIRED_STAGE_SOURCE:
             violations.append(
                 "training input row "
@@ -648,20 +654,16 @@ def _row_value(row: Mapping[str, Any], field: str) -> Any:
     return row.get(field)
 
 
-def _normalize_provider_value(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip().lower()
-    return text or None
-
-
 def _as_float(value: Any, *, field: str) -> float:
     if value is None:
         raise ValueError(f"training rows must include {field}")
     try:
-        return float(value)
+        numeric_value = float(value)
     except (TypeError, ValueError) as error:
         raise ValueError(f"training row field is not numeric: {field}") from error
+    if not math.isfinite(numeric_value):
+        raise ValueError(f"training row field must be finite: {field}")
+    return numeric_value
 
 
 if __name__ == "__main__":

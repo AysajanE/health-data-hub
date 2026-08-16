@@ -1,0 +1,38 @@
+{
+  "details": {
+    "autokeel_run_authorized": false,
+    "command_evidence": [
+      "docs/evidence/s04-post-completion-reconciliation-command-evidence-20260816.json"
+    ],
+    "continuation_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+    "continuation_ref": "main",
+    "historical_run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
+    "historical_ship_branch": "ship/s04",
+    "historical_ship_commit": "6d2eb8eaa1e02229cb917c0485840c4ab9602fca",
+    "historical_state_rewritten": false,
+    "integration_receipt": "docs/evidence/s04-canonical-integration-reconciliation.json",
+    "integration_status": "prepared_pending_commit",
+    "origin_main_at_recovery": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+    "private_evidence_payloads_inspected": false,
+    "ratified_slices_sha256": "af8d0a346e85eb5c084981f066de324357555c5699b28c00ac9816be66ca6923",
+    "replan": {
+      "baseline_absence_action": "collecting_state_no_override",
+      "event_log_legacy_receipt": "docs/evidence/event-log-legacy-id-reconciliation-20260816.json",
+      "mood_recovery_slice": "S11",
+      "s06_depends_on_s11": true,
+      "s06_lane_decision_refresh_required_after_commit": true,
+      "tripwire_evidence": "strict_typed_json"
+    },
+    "review_artifacts": [
+      "docs/reviews/s04-autonomous-feature-engineering-reconciliation-review.md"
+    ],
+    "state_digest_slices_before_recovery": "0a9662a290515e7d7e1fe61732afee8b61e929c7755fc6925cd5bf209471f92a",
+    "verification_status": "ok"
+  },
+  "name": "s04-post-completion-review-integration",
+  "reason": "Ratify the post-completion S04 autonomous review, exact lineage receipt candidate, typed tripwire recovery replan, S11 pre-S06 recovery dependency, event-log reconciliation, and hardened S06 zero-spend gate. Historical S04 provenance remains unchanged; AutoKeel remains stopped and integration stays pending until the exact reviewed tree is committed on main.",
+  "recorded_at": "2026-08-16T13:53:23-04:00",
+  "recorded_by": "Codex owner session 2026-08-16 (operator-directed)",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S04"
+}

@@ -115,6 +115,9 @@ def close_failure(
     failure_class: str,
     evidence: str,
     note: str,
+    *,
+    root_cause_id: str | None = None,
+    failure_id: str | None = None,
 ) -> dict[str, Any]:
     root = root.resolve()
     evidence_path = root / evidence
@@ -133,14 +136,30 @@ def close_failure(
     safe_note = redact_text(note)
     ledger = root / "ops" / "autonomy" / "failure_ledger.jsonl"
     rows = iter_jsonl(ledger)
+    matching_indexes = [
+        index
+        for index, row in enumerate(rows)
+        if row.get("slice") == slice_id
+        and row.get("failure_class") == failure_class
+        and row.get("open", True)
+        and (root_cause_id is None or row.get("root_cause_id") == root_cause_id)
+        and (failure_id is None or row.get("failure_id") == failure_id)
+    ]
+    if not matching_indexes:
+        return {"status": "error", "errors": ["no matching open failure"], "closed": 0}
+    if len(matching_indexes) > 1:
+        return {
+            "status": "error",
+            "errors": [
+                "multiple open failures match slice and class; pass --root-cause-id or --failure-id "
+                "so closure evidence cannot close an unrelated failure"
+            ],
+            "closed": 0,
+        }
+
     closed = 0
-    for row in rows:
-        if row.get("slice") != slice_id:
-            continue
-        if row.get("failure_class") != failure_class:
-            continue
-        if not row.get("open", True):
-            continue
+    for index in matching_indexes:
+        row = rows[index]
         row["open"] = False
         row["closed_at"] = __import__("datetime").datetime.now().astimezone().isoformat(timespec="seconds")
         row["closure_evidence"] = str(evidence_path.relative_to(root))
@@ -158,6 +177,8 @@ def close_failure(
             "slice": slice_id,
             "details": {
                 "failure_class": failure_class,
+                "root_cause_id": root_cause_id,
+                "failure_id": failure_id,
                 "closed": closed,
                 "closure_evidence": str(evidence_path.relative_to(root)),
                 "slice_requeued": requeued,
@@ -180,11 +201,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("failure_class")
     parser.add_argument("--evidence", required=True, help="Repo-relative closure evidence path.")
     parser.add_argument("--note", required=True)
+    parser.add_argument(
+        "--root-cause-id",
+        default=None,
+        help="Close only the matching root cause; required when slice/class is ambiguous.",
+    )
+    parser.add_argument(
+        "--failure-id",
+        default=None,
+        help="Close one exact failure-ledger row by its durable failure_id.",
+    )
     parser.add_argument("--root", default=".")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    report = close_failure(Path(args.root).resolve(), args.slice_id, args.failure_class, args.evidence, args.note)
+    report = close_failure(
+        Path(args.root).resolve(),
+        args.slice_id,
+        args.failure_class,
+        args.evidence,
+        args.note,
+        root_cause_id=args.root_cause_id,
+        failure_id=args.failure_id,
+    )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:

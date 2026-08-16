@@ -160,15 +160,21 @@ tripwire_deadlines:
   on_mood_transport_failure_week_4:
     date: 2026-06-20
     action: streamlit_mobile_form
-    evidence: private/evidence/S03/mood_shortcut_smoke
+    recovery_slice: S11
+    evidence_kind: mood_transport_v1
+    evidence: private/evidence/S11/mood_transport
   on_mood_compliance_failure_week_8:
     date: 2026-07-18
     action: stop_modeling_fix_logging
-    evidence: docs/reviews/s07-autonomous-ui-language-review.md
+    recovery_slice: S11
+    evidence_kind: mood_compliance_v1
+    evidence: private/evidence/S11/mood_compliance
   on_baseline_gate_failure_week_9:
     date: 2026-07-25
     action: collecting_state_no_override
-    evidence: docs/reviews/s05-autonomous-model-gate-review.md
+    recovery_slice: S11
+    evidence_kind: baseline_gate_v1
+    evidence: private/evidence/S11/baseline_gate
 
 playbook_validation:
   banned_language:
@@ -205,6 +211,10 @@ acceptance_commands:
     - python scripts/validate_provider_decisions.py
     - python scripts/verify_s04_readiness.py
     - python scripts/verify_s05_provider_policy.py
+    - python scripts/verify_s11_readiness.py
+    - python scripts/verify_s12_readiness.py
+    - python scripts/verify_mood_logging_recovery.py
+    - python scripts/verify_s12_sync.py
     - python scripts/verify_v1_provider_policy.py
 
 evidence_collectors:

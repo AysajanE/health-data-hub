@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -33,7 +34,7 @@ def set_completed_through_s04(root: Path) -> list[dict]:
     slices_path = root / "ops/autonomy/slices.json"
     slices = json.loads(slices_path.read_text(encoding="utf-8"))
     for item in slices:
-        if item["id"] in {"S01", "S02", "S03", "S04"}:
+        if item["id"] in {"S01", "S02", "S03", "S04", "S11"}:
             item["status"] = "complete"
             item.setdefault("run_id", f"RUN_TEST_{item['id']}")
             item.setdefault("ship_branch", f"ship/{item['id'].lower()}")
@@ -55,7 +56,7 @@ def set_completed_through_s04(root: Path) -> list[dict]:
         {
             "active_run": None,
             "active_swr_run": None,
-            "completed_slices": ["S01", "S02", "S03", "S04"],
+            "completed_slices": ["S01", "S02", "S03", "S04", "S11"],
             "current_slice": None,
             "last_event_id": 0,
             "v1_complete": False,
@@ -221,6 +222,67 @@ class S05AutonomousLaunchTests(unittest.TestCase):
 
             self.assertEqual(report["status"], "error")
             self.assertTrue(any("OPENAI_API_KEY" in error for error in report["errors"]))
+
+    def test_s05_readiness_does_not_open_or_accept_repo_local_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slices = set_completed_through_s04(root)
+            write_s05_lane_decision(root, slices)
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            (root / ".env.local").write_text(
+                "OPENAI_API_KEY=local-test-key\nPROVIDER_TEST_TOKEN=must-not-become-ambient\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict("os.environ", {"AMBIENT_SENTINEL": "unchanged"}, clear=True):
+                before = dict(os.environ)
+                report = verify_s05_readiness(root)
+                after = dict(os.environ)
+
+            self.assertEqual(after, before)
+            self.assertEqual(report["status"], "error")
+            self.assertEqual(report["checks"]["swr_required_env"], {"OPENAI_API_KEY": "[UNSET]"})
+            self.assertTrue(any("repo-local env files were not opened" in error for error in report["errors"]))
+            self.assertFalse(report["checks"]["process_environment_mutated"])
+
+    def test_s05_readiness_preserves_process_environment_precedence_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slices = set_completed_through_s04(root)
+            write_s05_lane_decision(root, slices)
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            (root / ".env.local").write_text("OPENAI_API_KEY=local-test-key\n", encoding="utf-8")
+
+            ambient = {"OPENAI_API_KEY": "ambient-test-key", "AMBIENT_SENTINEL": "unchanged"}
+            with patch.dict("os.environ", ambient, clear=True):
+                before = dict(os.environ)
+                report = verify_s05_readiness(root)
+                after = dict(os.environ)
+
+            self.assertEqual(after, before)
+            self.assertEqual(report["checks"]["swr_required_env"], {"OPENAI_API_KEY": "[SET]"})
+
+    def test_s05_readiness_accepts_only_non_secret_parent_presence_attestation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slices = set_completed_through_s04(root)
+            write_s05_lane_decision(root, slices)
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+
+            with patch.dict(
+                "os.environ",
+                {"AUTOKEEL_READINESS_OPENAI_API_KEY_PRESENT": "1"},
+                clear=True,
+            ):
+                report = verify_s05_readiness(root)
+
+            self.assertEqual(report["checks"]["swr_required_env"], {"OPENAI_API_KEY": "[SET]"})
+            self.assertEqual(report["checks"]["swr_required_env_attestation"], "parent_presence_only")
+            rendered = json.dumps(report, sort_keys=True)
+            self.assertNotIn("local-test-key", rendered)
 
     def test_active_s05_swr_run_skips_prelaunch_readiness_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

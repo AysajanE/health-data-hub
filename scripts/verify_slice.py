@@ -22,6 +22,7 @@ if __package__ in {None, ""}:
 from scripts.acceptance_policy import command_allowed
 from scripts.check_autonomous_review_exists import check_review
 from scripts.check_no_tracked_data import check_no_tracked_data
+from scripts.slice_integration import verify_slice_integration
 from scripts.swr_lane_policy import validate_swr_lane_requirements
 from scripts.validate_playbook_autonomous import validate_playbook
 
@@ -130,6 +131,12 @@ def verify_slice(
                     f"ship_branch {ship_branch} points to {branch_head} "
                     f"but recorded ship_commit is {ship_commit}"
                 )
+        integration = verify_slice_integration(root, slice_id)
+        if integration.get("status") != "ok":
+            errors.extend(
+                f"completed slice is not durably integrated: {error}"
+                for error in integration.get("errors", [])
+            )
 
     errors.extend(validate_swr_lane_requirements(root, target))
 

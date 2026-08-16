@@ -58,7 +58,16 @@ def validate_lane_decision_payload(payload: Any, slice_: dict[str, Any], rel_pat
     else:
         if slice_.get("risk") == "high" and len(reviews) < 2:
             errors.append(f"{slice_id}: high-risk lane_decision requires at least two review artifact paths: {rel_path}")
-        slice_reviews = set(slice_.get("review_artifacts", []))
+        # A post-completion reconciliation review must not rewrite a frozen
+        # historical SWR lane decision. Completed legacy slices may preserve
+        # the exact review set the lane decision consumed separately from the
+        # current post-completion integration review set.
+        expected_review_key = (
+            "lane_decision_review_artifacts"
+            if "lane_decision_review_artifacts" in slice_
+            else "review_artifacts"
+        )
+        slice_reviews = set(slice_.get(expected_review_key, []))
         decision_reviews = set(reviews)
         if slice_reviews and decision_reviews != slice_reviews:
             errors.append(f"{slice_id}: lane_decision review_artifacts must match slice review_artifacts")

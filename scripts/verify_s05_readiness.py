@@ -68,14 +68,23 @@ def verify_s05_readiness(root: Path) -> dict[str, Any]:
         errors.extend(f"provider policy: {error}" for error in provider["errors"])
     warnings.extend(f"provider policy: {warning}" for warning in provider.get("warnings", []))
 
-    # Credentials live in gitignored .env.local; load names-only before the
-    # presence check so readiness matches the environment AutoKeel launches with.
-    from ops.autonomy.autokeel import load_local_env
-
-    load_local_env(root)
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
-        errors.append("OPENAI_API_KEY is required for S05 keel-swr launch; secret_values_logged=false")
-    checks["swr_required_env"] = {"OPENAI_API_KEY": "[SET]" if os.environ.get("OPENAI_API_KEY", "").strip() else "[UNSET]"}
+    # Readiness diagnostics never open repo-local credential files. The key
+    # must be explicitly present in this process environment; only the later,
+    # separately authorized billed SWR boundary may lazily read its exact
+    # policy-authorized key from a repo-local env file.
+    readiness_marker = os.environ.get("AUTOKEEL_READINESS_OPENAI_API_KEY_PRESENT")
+    if readiness_marker not in {None, "0", "1"}:
+        errors.append("AUTOKEEL_READINESS_OPENAI_API_KEY_PRESENT must be exactly 0 or 1")
+    openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+    openai_api_key_set = bool(openai_api_key.strip()) or readiness_marker == "1"
+    if not openai_api_key_set:
+        errors.append(
+            "OPENAI_API_KEY must be explicitly present in the S05 readiness process environment; "
+            "repo-local env files were not opened; secret_values_logged=false"
+        )
+    checks["swr_required_env"] = {"OPENAI_API_KEY": "[SET]" if openai_api_key_set else "[UNSET]"}
+    checks["swr_required_env_attestation"] = "parent_presence_only" if readiness_marker is not None else "direct_process"
+    checks["process_environment_mutated"] = False
 
     # The SWR review lane shells out to both reviewer CLIs; a missing binary
     # must stop the launch here, not crash the supervisor mid-review.

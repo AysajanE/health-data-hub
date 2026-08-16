@@ -98,19 +98,26 @@ TRANSPORT_DECISION_STATUSES = {
 }
 
 STATE_DIGEST_PATHS = (
+    "ops/autonomy/autonomy_state.json",
     "ops/autonomy/slices.json",
     "ops/autonomy/events.jsonl",
     "ops/autonomy/failure_ledger.jsonl",
 )
 
 
-def load_local_env(root: Path) -> list[str]:
-    """Load KEY=VALUE pairs from .env.local / .env into os.environ.
+def read_local_env(root: Path, *, authorized_names: Iterable[str] = ()) -> dict[str, str]:
+    """Read only explicitly authorized names from repo-local env files.
 
-    Existing environment variables always win. Returns the names (never the
-    values) of variables that were loaded, for diagnostics.
+    Values are retained only for explicitly routed child commands. Process
+    environment values win, matching the historical precedence without
+    making provider or health credentials ambient to every child process. An
+    empty authorization returns without opening either env file.
     """
-    loaded: list[str] = []
+
+    allowed = {str(name) for name in authorized_names if str(name)}
+    if not allowed:
+        return {}
+    loaded: dict[str, str] = {}
     for name in (".env.local", ".env"):
         path = root / name
         if not path.exists():
@@ -126,11 +133,23 @@ def load_local_env(root: Path) -> list[str]:
             key, _, value = line.partition("=")
             key = key.strip()
             value = value.strip().strip('"').strip("'")
-            if not key or key in os.environ:
+            if key not in allowed or key in loaded or key in os.environ:
                 continue
-            os.environ[key] = value
-            loaded.append(key)
+            loaded[key] = value
     return loaded
+
+
+def load_local_env(root: Path, *, authorized_names: Iterable[str] = ()) -> list[str]:
+    """Compatibility helper for callers that explicitly request mutation.
+
+    AutoKeel itself never calls this function. Keeping mutation explicit
+    prevents a repo-local provider secret from becoming ambient child state.
+    """
+
+    loaded = read_local_env(root, authorized_names=authorized_names)
+    for key, value in loaded.items():
+        os.environ[key] = value
+    return list(loaded)
 
 
 def compute_state_digest(root: Path) -> dict[str, Any]:
@@ -313,6 +332,23 @@ def redact(value: Any) -> Any:
 
 
 class CommandRunner:
+    SAFE_PARENT_ENV = frozenset(
+        {
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "LOGNAME",
+            "PATH",
+            "SHELL",
+            "TERM",
+            "TMPDIR",
+            "USER",
+            "VIRTUAL_ENV",
+            "__CF_USER_TEXT_ENCODING",
+        }
+    )
+
     def __init__(self, root: Path, policy: dict[str, Any], dry_run: bool = False, timeout: int = 600):
         self.root = root
         self.policy = policy
@@ -327,6 +363,29 @@ class CommandRunner:
                 raise PolicyError(f"Forbidden command under autonomous policy: {command}")
         if any("mark-manual-gate" in part for part in argv):
             raise PolicyError("Forbidden command under autonomous policy: mark-manual-gate")
+
+    @classmethod
+    def safe_environment(cls, extra: dict[str, str] | None = None) -> dict[str, str]:
+        """Build a deny-by-default child environment.
+
+        Call sites may add narrowly scoped values explicitly. In particular,
+        provider and health credentials are never copied from the parent.
+        """
+
+        result = {
+            key: value
+            for key, value in os.environ.items()
+            if key in cls.SAFE_PARENT_ENV and isinstance(value, str) and "\x00" not in value
+        }
+        result.setdefault("PATH", os.defpath)
+        for key, value in (extra or {}).items():
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(key)):
+                raise PolicyError(f"invalid child environment key: {key!r}")
+            rendered = str(value)
+            if "\x00" in rendered:
+                raise PolicyError(f"invalid NUL byte in child environment value: {key}")
+            result[str(key)] = rendered
+        return result
 
     def run(
         self,
@@ -346,7 +405,7 @@ class CommandRunner:
             proc = subprocess.Popen(
                 argv,
                 cwd=str(cwd or self.root),
-                env={**os.environ, **(env or {})},
+                env=self.safe_environment(env),
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -379,12 +438,27 @@ class AutoKeel:
     BLOCKED_STATUSES = {"blocked", "blocked_external", "blocked_external_waiting_for_evidence", "blocked_compile_inputs", "complete"}
     SWR_ACTIVE_RUN_STATUSES = {"running", "waiting_for_review"}
     SWR_ACTIVE_STAGE_STATUSES = {"submitted", "in_progress"}
+    AUTO_ACCEPT_TRIPWIRE_ACTIONS = {"oura_only_v1"}
+    ACTIVATION_BLOCKED_EXTERNAL_EXIT = 67
+    ACTIVATION_CONTROL_ERROR_EXIT = 68
+    ACTIVATION_RESULT_SCHEMA = "autokeel.activation_acceptance.v1"
+    SECRET_ISOLATION_CONTROL_ERROR_EXIT = 69
+    READINESS_OPENAI_KEY_MARKER = "AUTOKEEL_READINESS_OPENAI_API_KEY_PRESENT"
+    # Compiler, PO, reviewer, and generated acceptance commands currently run
+    # with the invoking user's filesystem authority. S11 is therefore stopped
+    # before any such command until that whole route has enforceable read
+    # isolation, independently of child-process environment sanitization.
+    GENERATED_TOOL_FILE_READ_ISOLATION_AVAILABLE = False
+    # The generated verifier remains disabled until a trusted outer-process
+    # validator can authenticate evidence path, mode, hash, and freshness.
+    ACTIVATION_TRUSTED_RECEIPT_VALIDATOR_AVAILABLE = False
     DRY_RUN_RESTORE_PATHS = (
         "ops/autonomy/autonomy_state.json",
         "ops/autonomy/events.jsonl",
         "ops/autonomy/failure_ledger.jsonl",
         "ops/autonomy/progress.md",
         "ops/autonomy/slices.json",
+        "ops/autonomy/state_digest.json",
     )
 
     def __init__(self, root: Path, dry_run: bool = False):
@@ -399,9 +473,9 @@ class AutoKeel:
         self.progress_path = self.autonomy_dir / "progress.md"
         self.policy = load_policy(self.policy_path)
         self.authorization_policy = load_policy(self.authorization_policy_path) if self.authorization_policy_path.exists() else {}
-        # Provider credentials live only in gitignored .env.local; AutoKeel and
-        # every keel-swr subprocess it spawns inherit them via os.environ.
-        self.loaded_env_names = load_local_env(self.root)
+        # Construction and all diagnostic/control-plane operations must not
+        # open repo-local env files. The billed SWR route resolves only its
+        # exact policy-authorized names lazily at the final launch boundary.
         self.runner = CommandRunner(self.root, self.policy, dry_run=dry_run)
         self.dry_run = dry_run
         statuses = self.policy.get("slice_statuses", {})
@@ -414,6 +488,63 @@ class AutoKeel:
         if not candidate.is_absolute():
             candidate = self.root / candidate
         return str(candidate.resolve().relative_to(self.root))
+
+    def generated_tool_file_read_guard(self, slice_id: str, operation: str) -> CommandResult:
+        """Block S11 generated tools while local sensitive roots are readable.
+
+        This is deliberately metadata-only. It neither opens nor enumerates a
+        sensitive root. Until compiler/PO/reviewer execution has an enforceable
+        route-specific read sandbox, ambient same-user filesystem authority is
+        a control error even when the child environment is sanitized.
+        """
+
+        if slice_id != "S11":
+            return CommandResult([], 0, "generated-tool secret isolation not required", "")
+        candidates = (".env.local", ".env", "data", "private", "models")
+        present: list[str] = []
+        for rel in candidates:
+            path = self.root / rel
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                # An unreadable metadata state is not evidence of absence.
+                present.append(rel)
+            else:
+                present.append(rel)
+        blockers: list[str] = []
+        if not self.GENERATED_TOOL_FILE_READ_ISOLATION_AVAILABLE:
+            blockers.append("generated_tool_route_file_read_isolation_unavailable")
+        if not self.ACTIVATION_TRUSTED_RECEIPT_VALIDATOR_AVAILABLE:
+            blockers.append("trusted_activation_receipt_validator_unavailable")
+        if present:
+            blockers.append("local_sensitive_roots_present")
+        if not blockers:
+            return CommandResult([], 0, "generated-tool secret isolation controls available", "")
+        payload = {
+            "status": "control_error",
+            "slice": slice_id,
+            "operation": operation,
+            "blockers": blockers,
+            "sensitive_paths_present": sorted(present),
+            "file_contents_read": False,
+            "directories_enumerated": False,
+            "required_action": "implement enforceable route-specific file-read isolation before generated execution",
+        }
+        self.log_event("generated_tool_secret_isolation_blocked", payload, slice_id=slice_id)
+        if self.find_slice(slice_id) is not None:
+            self.mark_slice_status(
+                slice_id,
+                "blocked_compile_inputs",
+                reason="S11 generated-tool secret isolation is unavailable",
+            )
+        return CommandResult(
+            [],
+            self.SECRET_ISOLATION_CONTROL_ERROR_EXIT,
+            json.dumps(payload, sort_keys=True),
+            "S11 generated execution blocked: local sensitive roots are accessible without an enforceable file-read sandbox",
+        )
 
     def snapshot_dry_run_state(self) -> dict[Path, bytes | None]:
         snapshots: dict[Path, bytes | None] = {}
@@ -436,6 +567,7 @@ class AutoKeel:
 
     def save_state(self, state: dict[str, Any]) -> None:
         write_json_atomic(self.state_path, state)
+        self.sync_state_digest()
 
     def last_event_id_from_log(self) -> int:
         last_event_id = 0
@@ -609,16 +741,30 @@ class AutoKeel:
             run_id = extra.get("run_id")
             if run_id:
                 history = state.setdefault("run_history", [])
-                if not any(item.get("slice") == slice_id and item.get("run_id") == run_id for item in history if isinstance(item, dict)):
+                terminal_record = {
+                    "slice": slice_id,
+                    "run_id": run_id,
+                    "completed_at": extra.get("completed_at") or now_iso(),
+                    "ship_branch": extra.get("ship_branch"),
+                    "ship_commit": extra.get("ship_commit"),
+                    "integration_base_commit": extra.get("integration_base_commit"),
+                }
+                existing = next(
+                    (
+                        item
+                        for item in history
+                        if isinstance(item, dict)
+                        and item.get("slice") == slice_id
+                        and item.get("run_id") == run_id
+                    ),
+                    None,
+                )
+                if existing is None:
                     history.append(
-                        {
-                            "slice": slice_id,
-                            "run_id": run_id,
-                            "completed_at": extra.get("completed_at") or now_iso(),
-                            "ship_branch": extra.get("ship_branch"),
-                            "ship_commit": extra.get("ship_commit"),
-                        }
+                        terminal_record
                     )
+                else:
+                    existing.update(terminal_record)
             if state.get("current_slice") == slice_id:
                 state["current_slice"] = None
             if active_belongs_to_slice:
@@ -642,6 +788,13 @@ class AutoKeel:
     def ensure_slice_brief(self, slice_: dict[str, Any]) -> Path:
         brief_path = self.root / slice_["brief"]
         if brief_path.exists():
+            return brief_path
+        if self.dry_run:
+            self.log_event(
+                "brief_generation_planned",
+                {"path": str(brief_path.relative_to(self.root))},
+                slice_id=slice_["id"],
+            )
             return brief_path
         brief_path.parent.mkdir(parents=True, exist_ok=True)
         deliverables = "\n".join(f"- `{path}`" for path in slice_.get("deliverables", [])) or "- See slice playbook."
@@ -1288,6 +1441,115 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
             return CommandResult([], 41, "", f"autoplan must be tracked at HEAD before compile: {autoplan}")
         return CommandResult(["git", "cat-file", "-e", f"HEAD:{autoplan}"], 0, "autoplan tracked at HEAD", "")
 
+    def assert_primary_inputs_match_head(self, slice_: dict[str, Any]) -> CommandResult:
+        """Require compiler inputs (and billed S06 SWR inputs) to match HEAD."""
+
+        if self.swr_required(slice_) and str(slice_.get("id") or "").upper() != "S06":
+            return self.assert_autoplan_tracked_at_head(slice_)
+
+        candidates = (
+            self.design_doc_path(slice_),
+            self.root / str(slice_.get("autoplan") or ""),
+            self.root / str(slice_.get("brief") or ""),
+        )
+        errors: list[str] = []
+        checked: list[str] = []
+        for candidate in candidates:
+            try:
+                rel_path = str(candidate.resolve().relative_to(self.root.resolve()))
+            except ValueError:
+                errors.append(f"primary input escapes repository root: {candidate}")
+                continue
+            if not rel_path or rel_path == "." or not candidate.is_file():
+                errors.append(f"primary input is missing: {rel_path or candidate}")
+                continue
+            result = subprocess.run(
+                ["git", "show", f"HEAD:{rel_path}"],
+                cwd=self.root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if result.returncode != 0:
+                errors.append(f"primary input must be tracked at HEAD before compile: {rel_path}")
+                continue
+            if candidate.read_bytes() != result.stdout:
+                errors.append(f"primary input differs from HEAD and cannot be consumed: {rel_path}")
+                continue
+            checked.append(rel_path)
+        if errors:
+            return CommandResult([], 41, "", "; ".join(errors))
+        return CommandResult(
+            ["git", "show", *[f"HEAD:{path}" for path in checked]],
+            0,
+            "primary inputs match HEAD: " + ", ".join(checked),
+            "",
+        )
+
+    def assert_s06_lane_inputs_match_worktree(self, slice_: dict[str, Any]) -> CommandResult:
+        """Re-seal every billed S06 lane input at the final launch boundary."""
+
+        if str(slice_.get("id") or "").upper() != "S06":
+            return CommandResult([], 0, "not an S06 launch", "")
+        decision_rel = str(slice_.get("lane_decision") or "")
+        decision_path = self.root / decision_rel
+        decision = read_json(decision_path, {}) if decision_rel else {}
+        input_tree = decision.get("input_tree") if isinstance(decision, dict) else None
+        if not isinstance(input_tree, dict) or not input_tree:
+            return CommandResult([], 42, "", "S06 lane decision has no exact input_tree binding")
+
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD^{commit}"],
+            cwd=self.root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        head_commit = head.stdout.strip() if head.returncode == 0 else ""
+        if not head_commit or decision.get("head_commit") != head_commit:
+            return CommandResult([], 42, "", "S06 lane decision no longer matches HEAD")
+
+        errors: list[str] = []
+        for raw_path, raw_expected in sorted(input_tree.items()):
+            rel_path = str(raw_path)
+            expected = str(raw_expected)
+            candidate = (self.root / rel_path).resolve()
+            try:
+                candidate.relative_to(self.root.resolve())
+            except ValueError:
+                errors.append(f"lane input escapes repository root: {rel_path}")
+                continue
+            if Path(rel_path).is_absolute() or ".." in Path(rel_path).parts or not candidate.is_file():
+                errors.append(f"lane input is missing or unsafe: {rel_path}")
+                continue
+            head_blob = subprocess.run(
+                ["git", "rev-parse", f"HEAD:{rel_path}"],
+                cwd=self.root,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            worktree_blob = subprocess.run(
+                ["git", "hash-object", "--", rel_path],
+                cwd=self.root,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if (
+                head_blob.returncode != 0
+                or worktree_blob.returncode != 0
+                or head_blob.stdout.strip() != expected
+                or worktree_blob.stdout.strip() != expected
+            ):
+                errors.append(f"lane input no longer matches its committed decision blob: {rel_path}")
+        if errors:
+            return CommandResult([], 42, "", "; ".join(errors))
+        return CommandResult([], 0, f"sealed {len(input_tree)} S06 lane inputs at launch", "")
+
     def validate_autoplan_text(self, slice_: dict[str, Any], text: str) -> list[str]:
         lowered = text.lower()
         errors: list[str] = []
@@ -1389,9 +1651,11 @@ Return only a Markdown autoplan suitable to save at:
         autoplan_rel: str,
         corrective_errors: list[str] | None = None,
     ) -> CommandResult:
+        isolation = self.generated_tool_file_read_guard(slice_["id"], "autoplan_generation_pre_spend")
+        if not isolation.ok:
+            return isolation
         autoplan_policy = self.policy.get("autoplan", {})
         design = self.design_doc_path(slice_)
-        autoplan.parent.mkdir(parents=True, exist_ok=True)
 
         command = autoplan_policy.get("command") or self.policy.get("compile", {}).get("row_author_command") or "claude -p"
         prompt = self.build_autoplan_prompt(slice_, design, autoplan_rel, corrective_errors=corrective_errors)
@@ -1404,6 +1668,7 @@ Return only a Markdown autoplan suitable to save at:
             )
             return CommandResult(argv, 0, "dry run autoplan generation planned", "")
 
+        autoplan.parent.mkdir(parents=True, exist_ok=True)
         result = self.runner.run(argv, cwd=self.root)
 
         if not result.ok:
@@ -1446,6 +1711,21 @@ Return only a Markdown autoplan suitable to save at:
             errors = self.validate_autoplan_text(slice_, autoplan.read_text(encoding="utf-8"))
             if not errors:
                 return CommandResult(["test", "-f", str(autoplan)], 0, "autoplan exists", "")
+            if self.dry_run:
+                self.log_event(
+                    "dry_run_invalid_autoplan_regeneration_planned",
+                    {
+                        "path": str(autoplan.relative_to(self.root)),
+                        "errors": errors,
+                    },
+                    slice_id=slice_["id"],
+                )
+                return CommandResult(
+                    [],
+                    24,
+                    "dry run corrective autoplan regeneration planned",
+                    "; ".join(errors),
+                )
             self.archive_invalid_autoplan(slice_, autoplan, errors)
             result = self.generate_autoplan(slice_, autoplan, str(autoplan_rel), corrective_errors=errors)
             if result.ok:
@@ -1538,12 +1818,42 @@ Return only a Markdown autoplan suitable to save at:
         values = self.policy.get("swr", {}).get("required_env", [])
         return [str(item) for item in values] if isinstance(values, list) else []
 
-    def strict_swr_provider_preflight(self, slice_: dict[str, Any]) -> CommandResult:
+    def routed_env(self, names: Iterable[str], *, allow_repo_env: bool = False) -> dict[str, str]:
+        """Resolve only the exact environment names authorized by a route."""
+
+        exact_names = [str(name) for name in names if str(name)]
+        missing_from_process = [name for name in exact_names if name not in os.environ]
+        local_env = (
+            read_local_env(self.root, authorized_names=missing_from_process)
+            if allow_repo_env and missing_from_process
+            else {}
+        )
+        routed: dict[str, str] = {}
+        for key in exact_names:
+            value = os.environ.get(key)
+            if value is None:
+                value = local_env.get(key)
+            if value is not None and str(value).strip():
+                routed[key] = str(value)
+        return routed
+
+    def swr_provider_env(self, *, allow_repo_env: bool = False) -> dict[str, str]:
+        """Return only the billed SWR provider credentials required by policy."""
+
+        return self.routed_env(self.swr_required_env(), allow_repo_env=allow_repo_env)
+
+    def strict_swr_provider_preflight(
+        self,
+        slice_: dict[str, Any],
+        *,
+        allow_repo_env: bool = False,
+    ) -> CommandResult:
         if not self.swr_required(slice_) or not bool(self.policy.get("swr", {}).get("provider_auth_preflight", False)):
             return CommandResult([], 0, "SWR provider preflight not required", "")
         if self.dry_run:
             return CommandResult([], 0, '{"dry_run": true, "secret_values_logged": false}', "")
-        missing = [name for name in self.swr_required_env() if not env_present(name)]
+        routed = self.swr_provider_env(allow_repo_env=allow_repo_env)
+        missing = [name for name in self.swr_required_env() if name not in routed]
         report = {
             "status": "ok" if not missing else str(self.policy.get("swr", {}).get("provider_auth_failure_status", "blocked_external")),
             "provider": "openai",
@@ -2588,14 +2898,14 @@ and use the recorded `run_dir` and `repair_stage_id` with
                 "tool": "keel-swr",
                 "slice": slice_["id"],
                 "failure_class": "provider_auth_failure",
-                "root_cause": "SWR playbook generation requires real OpenAI API credentials, but OPENAI_API_KEY was not available to the AutoKeel process and no repo-local .env was present.",
+                "root_cause": "SWR playbook generation requires real OpenAI API credentials, but OPENAI_API_KEY was not available through the explicit SWR provider route.",
                 "command": command,
                 "exit_code": result.exit_code,
                 "stdout_tail": result.stdout[-2000:],
                 "stderr_tail": result.stderr[-2000:],
                 "environment_probe": {
-                    "OPENAI_API_KEY_set_in_process_env": env_present("OPENAI_API_KEY"),
-                    "env_file_exists": (self.root / ".env").exists(),
+                    "OPENAI_API_KEY_available_to_swr_route": "OPENAI_API_KEY" in self.swr_provider_env(allow_repo_env=True),
+                    "ignored_env_file_exists": any((self.root / name).exists() for name in (".env.local", ".env")),
                 },
                 "next_action": "Provide real local OpenAI API credentials via the process environment or an ignored repo-local .env, then rerun AutoKeel for S02.",
                 "recorded_at": now_iso(),
@@ -3825,7 +4135,11 @@ Additional validator requirements:
             "--session-id",
             session_id,
         ]
-        result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        result = self.runner.run(
+            cmd,
+            cwd=self.root,
+            timeout=self.po_timeout_seconds(),
+        )
         if result.ok:
             state = self.load_state()
             active = state.get("active_swr_run")
@@ -4140,7 +4454,12 @@ Additional validator requirements:
             )
             return spend_gate
         self.reset_swr_manifest_for_stage_rerun(manifest_path, stage_id)
-        result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        result = self.runner.run(
+            cmd,
+            cwd=self.root,
+            env=self.swr_provider_env(allow_repo_env=True),
+            timeout=self.po_timeout_seconds(),
+        )
         self.log_event(
             "swr_validation_repair_stage_passed" if result.ok else "swr_validation_repair_stage_failed",
             {
@@ -4354,7 +4673,12 @@ Additional validator requirements:
             )
             return spend_gate
         self.reset_swr_manifest_for_stage_rerun(manifest_path, stage_id)
-        result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        result = self.runner.run(
+            cmd,
+            cwd=self.root,
+            env=self.swr_provider_env(allow_repo_env=True),
+            timeout=self.po_timeout_seconds(),
+        )
         self.log_event(
             "swr_review_repair_stage_passed" if result.ok else "swr_review_repair_stage_failed",
             {"repair_stage_id": stage_id, "exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
@@ -4471,7 +4795,12 @@ Additional validator requirements:
                 slice_id=slice_["id"],
             )
             continue_cmd = self.build_swr_continue_command(manifest_path, bundle_rel)
-            continued = self.runner.run(continue_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+            continued = self.runner.run(
+                continue_cmd,
+                cwd=self.root,
+                env=self.swr_provider_env(allow_repo_env=True),
+                timeout=self.po_timeout_seconds(),
+            )
             return self.handle_swr_continue_result(slice_, manifest_path, continued)
 
         session_id, session_result = self.ensure_swr_supervisor_session(slice_, manifest_path)
@@ -4828,7 +5157,12 @@ Additional validator requirements:
             if not self.swr_review_bundle_is_valid(hardened_bundle, payload):
                 return CommandResult(bundle.argv, 32, "", f"SWR review bundle failed schema/hash validation: {bundle_rel}")
         continue_cmd = self.build_swr_continue_command(manifest_path, bundle_rel)
-        continued = self.runner.run(continue_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        continued = self.runner.run(
+            continue_cmd,
+            cwd=self.root,
+            env=self.swr_provider_env(allow_repo_env=True),
+            timeout=self.po_timeout_seconds(),
+        )
         return self.handle_swr_continue_result(slice_, manifest_path, continued)
 
     def swr_spend_grants(self, slice_id: str) -> int:
@@ -4991,7 +5325,12 @@ Additional validator requirements:
                 return self.run_swr_review_lane(slice_, active_manifest)
             if not self.dry_run and self.swr_remote_check_due(slice_):
                 resume_cmd = self.build_swr_resume_command(active_manifest)
-                result = self.runner.run(resume_cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+                result = self.runner.run(
+                    resume_cmd,
+                    cwd=self.root,
+                    env=self.swr_provider_env(allow_repo_env=True),
+                    timeout=self.po_timeout_seconds(),
+                )
                 self.update_active_swr_remote_check(slice_["id"], result)
                 self.log_event(
                     "swr_active_stage_resumed" if result.ok else "swr_active_stage_resume_waiting",
@@ -5033,14 +5372,14 @@ Additional validator requirements:
         autoplan_result = self.ensure_autoplan(slice_)
         if not autoplan_result.ok:
             return autoplan_result
-        autoplan_head = self.assert_autoplan_tracked_at_head(slice_)
-        if not autoplan_head.ok:
+        primary_inputs = self.assert_primary_inputs_match_head(slice_)
+        if not primary_inputs.ok:
             self.log_event(
-                "autoplan_head_invariant_failed",
-                {"autoplan": slice_.get("autoplan"), "stderr": autoplan_head.stderr},
+                "primary_input_head_invariant_failed",
+                {"stderr": primary_inputs.stderr},
                 slice_id=slice_["id"],
             )
-            return autoplan_head
+            return primary_inputs
 
         task_pack = self.materialize_swr_task_pack()
         if not task_pack.ok:
@@ -5055,7 +5394,32 @@ Additional validator requirements:
             self.mark_slice_status(slice_["id"], "blocked_compile_inputs", failure_path=str(failure.relative_to(self.root)), reason=task_pack.stderr)
             return task_pack
 
-        provider_preflight = self.strict_swr_provider_preflight(slice_)
+        spend_gate = self.swr_spend_within_budget(slice_)
+        if not spend_gate.ok:
+            failure = self.record_failure(
+                slice_["id"],
+                "failure_budget_exceeded",
+                "high",
+                spend_gate.stderr,
+                "Stopped before launching a usage-billed SWR generation; an explicit operator spend release is required.",
+                None,
+            )
+            self.mark_slice_status(slice_["id"], "blocked", failure_path=str(failure.relative_to(self.root)), reason=spend_gate.stderr)
+            return spend_gate
+
+        launch_input_seal = self.assert_s06_lane_inputs_match_worktree(slice_)
+        if not launch_input_seal.ok:
+            self.log_event(
+                "swr_launch_input_seal_failed",
+                {"stderr": launch_input_seal.stderr},
+                slice_id=slice_["id"],
+            )
+            return launch_input_seal
+
+        # Repo-local provider values are not opened until every non-secret
+        # launch authorization above has passed and the billed route is at its
+        # final provider boundary.
+        provider_preflight = self.strict_swr_provider_preflight(slice_, allow_repo_env=True)
         if not provider_preflight.ok:
             evidence = self.write_swr_provider_preflight_evidence(slice_, provider_preflight)
             failure = self.record_failure(
@@ -5074,25 +5438,17 @@ Additional validator requirements:
             )
             return provider_preflight
 
-        spend_gate = self.swr_spend_within_budget(slice_)
-        if not spend_gate.ok:
-            failure = self.record_failure(
-                slice_["id"],
-                "failure_budget_exceeded",
-                "high",
-                spend_gate.stderr,
-                "Stopped before launching a usage-billed SWR generation; an explicit operator spend release is required.",
-                None,
-            )
-            self.mark_slice_status(slice_["id"], "blocked", failure_path=str(failure.relative_to(self.root)), reason=spend_gate.stderr)
-            return spend_gate
-
         cmd = self.build_swr_command(slice_)
         if self.dry_run:
             self.log_event("swr_playbook_generation_planned", {"command": " ".join(shlex.quote(part) for part in cmd)}, slice_id=slice_["id"])
             return CommandResult(cmd, 0, "dry run SWR playbook generation planned", "")
 
-        result = self.runner.run(cmd, cwd=self.root, timeout=self.po_timeout_seconds())
+        result = self.runner.run(
+            cmd,
+            cwd=self.root,
+            env=self.swr_provider_env(allow_repo_env=True),
+            timeout=self.po_timeout_seconds(),
+        )
         self.log_event(
             "swr_playbook_generation_passed" if result.ok else "swr_playbook_generation_failed",
             {"exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
@@ -5162,6 +5518,9 @@ Additional validator requirements:
         return result
 
     def ensure_playbook(self, slice_: dict[str, Any]) -> CommandResult:
+        isolation = self.generated_tool_file_read_guard(slice_["id"], "ensure_playbook_pre_spend")
+        if not isolation.ok:
+            return isolation
         playbook = self.root / slice_["playbook"]
 
         if slice_.get("status") == "replan_required":
@@ -5183,14 +5542,14 @@ Additional validator requirements:
         autoplan_result = self.ensure_autoplan(slice_)
         if not autoplan_result.ok:
             return autoplan_result
-        autoplan_head = self.assert_autoplan_tracked_at_head(slice_)
-        if not autoplan_head.ok:
+        primary_inputs = self.assert_primary_inputs_match_head(slice_)
+        if not primary_inputs.ok:
             self.log_event(
-                "autoplan_head_invariant_failed",
-                {"autoplan": slice_.get("autoplan"), "stderr": autoplan_head.stderr},
+                "primary_input_head_invariant_failed",
+                {"stderr": primary_inputs.stderr},
                 slice_id=slice_["id"],
             )
-            return autoplan_head
+            return primary_inputs
 
         autoplan_rel = slice_.get("autoplan")
         autoplan = self.root / autoplan_rel
@@ -5364,6 +5723,8 @@ Additional validator requirements:
             "S04": ["python", "scripts/verify_s04_readiness.py", "--json"],
             "S05": ["python", "scripts/verify_s05_readiness.py", "--json"],
             "S06": ["python", "scripts/verify_s06_readiness.py", "--json"],
+            "S11": ["python", "scripts/verify_s11_readiness.py", "--json"],
+            "S12": ["python", "scripts/verify_s12_readiness.py", "--json"],
         }
         command = command_by_slice.get(slice_id)
         if command is None:
@@ -5383,7 +5744,32 @@ Additional validator requirements:
                     ),
                 )
             return CommandResult([], 0, "no slice-specific readiness gate", "")
-        result = self.runner.run(command, cwd=self.root, execute_in_dry_run=True)
+        isolation = self.generated_tool_file_read_guard(slice_id, "readiness_pre_spend")
+        if not isolation.ok:
+            self.log_event(
+                "slice_readiness_failed",
+                {
+                    "command": " ".join(command),
+                    "exit_code": isolation.exit_code,
+                    "stdout": isolation.stdout[-4000:],
+                    "stderr": isolation.stderr[-4000:],
+                },
+                slice_id=slice_id,
+            )
+            return isolation
+        readiness_env: dict[str, str] = {}
+        if slice_id in {"S05", "S06"}:
+            # The child receives only a non-secret presence attestation. The
+            # deny-by-default runner must never forward the provider value.
+            readiness_env[self.READINESS_OPENAI_KEY_MARKER] = (
+                "1" if str(os.environ.get("OPENAI_API_KEY") or "").strip() else "0"
+            )
+        result = self.runner.run(
+            command,
+            cwd=self.root,
+            env=readiness_env,
+            execute_in_dry_run=True,
+        )
         self.log_event(
             "slice_readiness_passed" if result.ok else "slice_readiness_failed",
             {"command": " ".join(command), "exit_code": result.exit_code, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]},
@@ -5424,13 +5810,11 @@ Additional validator requirements:
         if not isinstance(fired, list) or not fired:
             return False
 
-        state = self.load_state()
-        decisions = state.setdefault("tripwire_decisions", {})
-        changed = False
-
-        # Only these actions are safe to auto-accept because they reduce scope
-        # without bypassing required v1 functionality.
-        auto_accept_actions = {"oura_only_v1"}
+        existing_state = self.load_state()
+        existing_decisions = existing_state.get("tripwire_decisions", {})
+        if not isinstance(existing_decisions, dict):
+            existing_decisions = {}
+        pending_decisions: dict[str, Any] = {}
 
         for item in fired:
             if not isinstance(item, dict):
@@ -5438,22 +5822,75 @@ Additional validator requirements:
 
             name = str(item.get("name") or "tripwire")
             action = str(item.get("action") or "fallback_required")
-
-            if decisions.get(name):
-                continue
-
-            safe_to_auto_accept = action in auto_accept_actions
+            recovery_slice = str(item.get("recovery_slice") or "")
+            recovery = self.find_slice(recovery_slice) if recovery_slice else None
+            recovery_status = str(recovery.get("status") or "") if isinstance(recovery, dict) else ""
+            recovery_actionable = bool(
+                isinstance(recovery, dict)
+                and recovery.get("required")
+                and recovery_status != "complete"
+            )
+            safe_to_auto_accept = action in self.AUTO_ACCEPT_TRIPWIRE_ACTIONS
+            evidence_status = item.get("evidence_status")
+            evidence_signature = hashlib.sha256(
+                json.dumps(
+                    {
+                        "action": action,
+                        "evidence_status": evidence_status,
+                        "recovery_slice": recovery_slice or None,
+                        "recovery_status": recovery_status or None,
+                    },
+                    default=str,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            root_cause_id = f"GLOBAL-TRIPWIRE-{name}".upper().replace("_", "-")
+            hard_stop_required = not safe_to_auto_accept and not recovery_actionable
+            same_decision = existing_decisions.get(name)
+            if isinstance(same_decision, dict) and same_decision.get("evidence_signature") == evidence_signature:
+                # A fired auto-acceptable item means its fallback evidence is
+                # absent or invalid now. Re-materialize it even when the prior
+                # decision signature matches (for example after local evidence
+                # was removed). Active recovery decisions can remain stable.
+                if not safe_to_auto_accept and not hard_stop_required:
+                    continue
+                if hard_stop_required:
+                    open_same_root = any(
+                        row.get("open", True)
+                        and row.get("slice") == "GLOBAL"
+                        and row.get("failure_class") == "tripwire_triggered"
+                        and row.get("root_cause_id") == root_cause_id
+                        for row in iter_jsonl(self.autonomy_dir / "failure_ledger.jsonl")
+                    )
+                    if open_same_root:
+                        continue
 
             decision_payload = {
-                "status": "fallback_accepted" if safe_to_auto_accept else "fallback_required",
+                "status": (
+                    "fallback_accepted"
+                    if safe_to_auto_accept
+                    else "recovery_required"
+                    if recovery_actionable
+                    else "fallback_required"
+                ),
                 "tripwire": name,
                 "action": action,
+                "recovery_slice": recovery_slice or None,
                 "source": "autokeel_tripwire",
                 "evidence_status": item.get("evidence_status"),
                 "reason": (
                     "Auto-accepted because this fallback reduces optional scope."
                     if safe_to_auto_accept
-                    else "Not auto-accepted because this fallback requires implementation or hard-stop behavior."
+                    else (
+                        f"Not auto-accepted; the configured recovery must be implemented by {recovery_slice}."
+                        if recovery_actionable
+                        else (
+                            f"Configured recovery {recovery_slice} is complete or unavailable while evidence still fails; explicit replan is required."
+                            if recovery_slice
+                            else "Not auto-accepted because this fallback requires implementation or hard-stop behavior."
+                        )
+                    )
                 ),
             }
             decision_path = self.write_decision(name, decision_payload)
@@ -5464,27 +5901,44 @@ Additional validator requirements:
                     evidence_path = self.root / str(evidence_rel)
                     report_dir = evidence_path.parent if evidence_path.suffix else evidence_path
                     report_dir.mkdir(parents=True, exist_ok=True)
+                    try:
+                        private_relative = report_dir.resolve().relative_to((self.root / "private").resolve())
+                    except ValueError:
+                        private_relative = None
+                    if private_relative is not None:
+                        private_root = self.root / "private"
+                        os.chmod(private_root, 0o700)
+                        current_private = private_root
+                        for part in private_relative.parts:
+                            current_private /= part
+                            if current_private.exists():
+                                os.chmod(current_private, 0o700)
                     fallback_report = report_dir / f"{name}-fallback-{slug_ts()}-{uuid.uuid4().hex[:8]}.json"
-                    write_json_atomic(
-                        fallback_report,
-                        {
-                            "status": "fallback_accepted",
-                            "tripwire": name,
-                            "action": action,
-                            "decision": str(decision_path.relative_to(self.root)),
-                            "created_at": now_iso(),
-                        },
-                    )
+                    fallback_payload = {
+                        "status": "fallback_accepted",
+                        "tripwire": name,
+                        "action": action,
+                        "decision": str(decision_path.relative_to(self.root)),
+                        "created_at": now_iso(),
+                    }
+                    write_json_atomic(fallback_report, fallback_payload)
                     os.chmod(fallback_report, 0o600)
 
-            decisions[name] = {
+            pending_decisions[name] = {
                 "action": action,
                 "decision": str(decision_path.relative_to(self.root)),
                 "status": decision_payload["status"],
+                "recovery_slice": recovery_slice or None,
+                "recovery_status": recovery_status or None,
+                "evidence_status": (
+                    evidence_status.get("status")
+                    if isinstance(evidence_status, dict)
+                    else None
+                ),
+                "evidence_signature": evidence_signature,
             }
-            changed = True
 
-            if not safe_to_auto_accept:
+            if hard_stop_required:
                 self.record_failure(
                     "GLOBAL",
                     "tripwire_triggered",
@@ -5492,18 +5946,64 @@ Additional validator requirements:
                     f"Tripwire {name} fired and requires non-automatic fallback action: {action}.",
                     f"Recorded decision artifact {decision_path.relative_to(self.root)}; did not fabricate success evidence.",
                     decision_path,
+                    root_cause_id=root_cause_id,
                 )
 
-        if changed:
-            self.save_state(state)
+        if pending_decisions:
+            # write_decision() and record_failure() both append events and
+            # advance last_event_id. Merge into a freshly loaded state so a
+            # stale pre-event snapshot can never move the event cursor back.
+            latest_state = self.load_state()
+            latest_decisions = latest_state.setdefault("tripwire_decisions", {})
+            if not isinstance(latest_decisions, dict):
+                latest_decisions = {}
+                latest_state["tripwire_decisions"] = latest_decisions
+            latest_decisions.update(pending_decisions)
+            self.save_state(latest_state)
+            self.sync_state_digest()
 
         # Return True only if every fired tripwire was safely auto-accepted.
         return bool(fired) and all(
-            isinstance(item, dict) and str(item.get("action") or "") in auto_accept_actions
+            isinstance(item, dict)
+            and str(item.get("action") or "") in self.AUTO_ACCEPT_TRIPWIRE_ACTIONS
             for item in fired
         )
 
+    def tripwire_recovery_slice(self, report: dict[str, Any]) -> str | None:
+        """Return the one slice allowed to repair every unresolved tripwire.
+
+        A recovery route is intentionally narrow: every fired item must name
+        the same required, incomplete slice. A normal requested slice can
+        never use this route to bypass an unrelated tripwire.
+        """
+        fired = report.get("fired", [])
+        if not isinstance(fired, list) or not fired:
+            return None
+        recovery_ids: set[str] = set()
+        for item in fired:
+            if not isinstance(item, dict):
+                return None
+            action = str(item.get("action") or "")
+            if action in self.AUTO_ACCEPT_TRIPWIRE_ACTIONS:
+                continue
+            recovery_slice = str(item.get("recovery_slice") or "")
+            if not recovery_slice:
+                return None
+            recovery_ids.add(recovery_slice)
+        if len(recovery_ids) != 1:
+            return None
+        recovery_id = next(iter(recovery_ids))
+        recovery = self.find_slice(recovery_id)
+        if not isinstance(recovery, dict) or not recovery.get("required"):
+            return None
+        if recovery.get("status") == "complete":
+            return None
+        return recovery_id
+
     def verify_slice_acceptance(self, slice_id: str, cwd: Path | None = None) -> CommandResult:
+        isolation = self.generated_tool_file_read_guard(slice_id, "verify_slice_acceptance")
+        if not isolation.ok:
+            return isolation
         run_cwd = cwd or self.root
         result = self.runner.run(
             ["python", "-m", "scripts.verify_slice", slice_id, "--json"],
@@ -5521,6 +6021,455 @@ Additional validator requirements:
             slice_id=slice_id,
         )
         return result
+
+    def activation_acceptance_config_errors(self, slice_: dict[str, Any]) -> list[str]:
+        config = slice_.get("activation_acceptance")
+        slice_id = str(slice_.get("id") or "")
+        command_by_slice = {
+            "S11": "python scripts/verify_mood_logging_recovery.py --runtime-root-env HEALTH_HUB_RUNTIME_ROOT --json",
+            "S12": "python scripts/verify_s12_sync.py --runtime-root-env HEALTH_HUB_RUNTIME_ROOT --json",
+        }
+        if not isinstance(config, dict):
+            return [f"{slice_id} requires an activation_acceptance object"] if slice_id in command_by_slice else []
+
+        expected = {
+            "command": command_by_slice.get(slice_id),
+            "runtime_root": "canonical",
+            "runtime_root_env": "HEALTH_HUB_RUNTIME_ROOT",
+            "reads_private_aggregate_evidence": True,
+            "live_warehouse_access": "read_only",
+            "required_after_ship_acceptance": True,
+            "completion_requires_status": "ok",
+        }
+        errors: list[str] = []
+        if set(config) != set(expected):
+            errors.append(
+                "activation_acceptance must contain exactly: " + ", ".join(sorted(expected))
+            )
+        for key, value in expected.items():
+            if config.get(key) != value:
+                errors.append(f"activation_acceptance.{key} must be {value!r}")
+        return errors
+
+    @staticmethod
+    def s12_readiness_report_errors(result: CommandResult, payload: Any) -> list[str]:
+        """Validate the one trusted S12 readiness wire contract."""
+
+        if not isinstance(payload, dict):
+            return ["S12 readiness report must be a JSON object"]
+        errors: list[str] = []
+        required_top = {"status", "errors", "warnings", "checks"}
+        if set(payload) != required_top:
+            errors.append("S12 readiness report must contain exactly status, errors, warnings, and checks")
+        status = payload.get("status")
+        if status not in {"ok", "blocked_external", "error"}:
+            errors.append("S12 readiness status must be ok, blocked_external, or error")
+        report_errors = payload.get("errors")
+        warnings = payload.get("warnings")
+        checks = payload.get("checks")
+        if not isinstance(report_errors, list) or not all(isinstance(item, str) for item in report_errors):
+            errors.append("S12 readiness errors must be a list of strings")
+            report_errors = []
+        if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
+            errors.append("S12 readiness warnings must be a list of strings")
+        if not isinstance(checks, dict):
+            errors.append("S12 readiness checks must be an object")
+            checks = {}
+
+        exact_checks = {
+            "phase": "pre_compiler_or_pre_ship",
+            "paid_execution_performed": False,
+            "network_accessed": False,
+            "oauth_or_token_inspected": False,
+            "private_source_contents_read": False,
+            "private_source_contents_parsed": False,
+            "provider_policy": "oura_only_v1_not_reopened",
+        }
+        for key, expected in exact_checks.items():
+            if checks.get(key) != expected or type(checks.get(key)) is not type(expected):
+                errors.append(f"S12 readiness checks.{key} must be {expected!r}")
+        if not isinstance(checks.get("issuer_authenticated_authority_validator"), str):
+            errors.append("S12 readiness checks.issuer_authenticated_authority_validator must be a string")
+        committed_inputs = checks.get("committed_inputs")
+        if not isinstance(committed_inputs, dict) or not committed_inputs or not all(
+            isinstance(key, str) and isinstance(value, dict)
+            for key, value in committed_inputs.items()
+        ):
+            errors.append("S12 readiness checks.committed_inputs must be an object of objects")
+        control_count = checks.get("control_error_count")
+        authority_count = checks.get("authority_blocker_count")
+        if not isinstance(control_count, int) or isinstance(control_count, bool) or control_count < 0:
+            errors.append("S12 readiness checks.control_error_count must be a non-negative integer")
+        if not isinstance(authority_count, int) or isinstance(authority_count, bool) or authority_count < 0:
+            errors.append("S12 readiness checks.authority_blocker_count must be a non-negative integer")
+        if (
+            isinstance(control_count, int)
+            and not isinstance(control_count, bool)
+            and isinstance(authority_count, int)
+            and not isinstance(authority_count, bool)
+            and len(report_errors) != control_count + authority_count
+        ):
+            errors.append("S12 readiness blocker counts must equal the number of reported errors")
+
+        expected_exit = {"ok": 0, "blocked_external": 2, "error": 1}.get(status)
+        if expected_exit is not None and result.exit_code != expected_exit:
+            errors.append(f"S12 readiness status={status} requires raw exit {expected_exit}")
+        if status == "ok" and (report_errors or control_count != 0 or authority_count != 0):
+            errors.append("S12 readiness status=ok requires no errors or blockers")
+        if status == "blocked_external" and (
+            not report_errors or control_count != 0 or not isinstance(authority_count, int) or authority_count < 1
+        ):
+            errors.append("S12 readiness blocked_external requires external blockers and no control errors")
+        if status == "error" and (
+            not report_errors or not isinstance(control_count, int) or control_count < 1
+        ):
+            errors.append("S12 readiness error requires at least one control error")
+        return errors
+
+    def s12_normalized_blocked_external(
+        self,
+        result: CommandResult,
+        payload: Any,
+    ) -> bool:
+        """Accept only exit-67 results produced from a strict raw exit-2 report."""
+
+        if result.exit_code != self.ACTIVATION_BLOCKED_EXTERNAL_EXIT or not isinstance(payload, dict):
+            return False
+        raw_result = CommandResult(
+            result.argv,
+            2,
+            result.stdout,
+            result.stderr,
+        )
+        return (
+            payload.get("status") == "blocked_external"
+            and not self.s12_readiness_report_errors(raw_result, payload)
+        )
+
+    def s12_operation_readiness(self, slice_id: str, operation: str) -> tuple[CommandResult, dict[str, Any]]:
+        """Revalidate S12 authority immediately before a provider-capable boundary."""
+
+        if slice_id != "S12":
+            return CommandResult([], 0, "S12 readiness not required", ""), {}
+        result = self.run_slice_readiness("S12")
+        payload: dict[str, Any] = {}
+        try:
+            decoded = json.loads(result.stdout)
+        except (json.JSONDecodeError, TypeError):
+            decoded = None
+        if isinstance(decoded, dict):
+            payload = decoded
+        validation_errors = self.s12_readiness_report_errors(result, payload)
+        status = str(payload.get("status") or "")
+        if validation_errors:
+            result = CommandResult(
+                result.argv,
+                self.ACTIVATION_CONTROL_ERROR_EXIT,
+                result.stdout,
+                "; ".join(validation_errors),
+            )
+        elif status == "blocked_external":
+            result = CommandResult(
+                result.argv,
+                self.ACTIVATION_BLOCKED_EXTERNAL_EXIT,
+                result.stdout,
+                result.stderr,
+            )
+            if self.find_slice("S12") is not None:
+                self.mark_slice_status(
+                    "S12",
+                    "blocked_external",
+                    reason="provider authority is not established",
+                )
+        self.log_event(
+            "s12_operation_readiness_passed" if result.ok else "s12_operation_readiness_blocked",
+            {
+                "operation": operation,
+                "exit_code": result.exit_code,
+                "reported_status": status or None,
+            },
+            slice_id="S12",
+        )
+        return result, payload
+
+    @staticmethod
+    def _git_identity(cwd: Path) -> tuple[str, str, str]:
+        env = CommandRunner.safe_environment()
+
+        def run(*args: str) -> str:
+            completed = subprocess.run(
+                ["git", *args],
+                cwd=cwd,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if completed.returncode != 0:
+                raise ValueError(completed.stderr.strip() or f"git {' '.join(args)} failed")
+            return completed.stdout.strip()
+
+        top = Path(run("rev-parse", "--show-toplevel")).resolve()
+        common_raw = run("rev-parse", "--git-common-dir")
+        common = Path(common_raw)
+        if not common.is_absolute():
+            common = cwd / common
+        head = run("rev-parse", "HEAD^{commit}")
+        return str(top), str(common.resolve()), head
+
+    def activation_repository_identity(
+        self,
+        cwd: Path,
+        verifier_rel: str,
+    ) -> tuple[dict[str, str], CommandResult]:
+        """Bind activation to the configured canonical repo and ship checkout."""
+
+        configured = str(self.policy.get("product_repo") or "").strip()
+        if not configured:
+            return {}, CommandResult([], self.ACTIVATION_CONTROL_ERROR_EXIT, "", "policy.product_repo is required for activation")
+        configured_root = Path(configured).expanduser().resolve()
+        if configured_root != self.root:
+            return {}, CommandResult(
+                [],
+                self.ACTIVATION_CONTROL_ERROR_EXIT,
+                "",
+                f"activation root does not match policy.product_repo: {self.root} != {configured_root}",
+            )
+        worktree = cwd.resolve()
+        verifier = (worktree / verifier_rel).resolve()
+        try:
+            verifier.relative_to(worktree)
+        except ValueError:
+            return {}, CommandResult([], self.ACTIVATION_CONTROL_ERROR_EXIT, "", "activation verifier escapes ship worktree")
+        if not verifier.is_file() or verifier.is_symlink():
+            return {}, CommandResult([], self.ACTIVATION_CONTROL_ERROR_EXIT, "", "activation verifier is missing or not a regular file")
+        try:
+            canonical_top, canonical_common, _canonical_head = self._git_identity(self.root)
+            ship_top, ship_common, ship_commit = self._git_identity(worktree)
+        except ValueError as exc:
+            return {}, CommandResult([], self.ACTIVATION_CONTROL_ERROR_EXIT, "", f"activation git identity failed: {exc}")
+        if Path(canonical_top).resolve() != self.root or Path(ship_top).resolve() != worktree:
+            return {}, CommandResult([], self.ACTIVATION_CONTROL_ERROR_EXIT, "", "activation checkout top-level identity mismatch")
+        if Path(canonical_common).resolve() != Path(ship_common).resolve():
+            return {}, CommandResult([], self.ACTIVATION_CONTROL_ERROR_EXIT, "", "activation checkout does not share canonical git common dir")
+        if not re.fullmatch(r"[0-9a-f]{40,64}", ship_commit):
+            return {}, CommandResult([], self.ACTIVATION_CONTROL_ERROR_EXIT, "", "activation ship commit is malformed")
+        identity = {
+            "canonical_root": str(self.root),
+            "git_common_dir": canonical_common,
+            "ship_worktree": str(worktree),
+            "ship_commit": ship_commit,
+            "verifier_path": str(verifier),
+            "verifier_sha256": file_sha256(verifier),
+        }
+        return identity, CommandResult([], 0, json.dumps(identity, sort_keys=True), "")
+
+    def activation_sandbox_profile(
+        self,
+        slice_id: str,
+        cwd: Path,
+        executable_paths: Iterable[Path],
+        evidence_path: Path,
+    ) -> str:
+        """Return the disabled activation route's draft macOS sandbox profile.
+
+        Reads are limited to the ship worktree, exact interpreter/runtime
+        roots, one exact aggregate-evidence file, and exact warehouse files.
+        The default deny excludes every write and all network operations.
+        Building this profile does not enable generated verifier execution.
+        """
+
+        def literal(path: Path) -> str:
+            return json.dumps(str(path.resolve()))
+
+        data_root = self.root / "data"
+        if slice_id == "S11":
+            aggregate_root = self.root / "private" / "evidence" / "S11"
+        elif slice_id == "S12":
+            aggregate_root = self.root / "private" / "evidence" / "S12" / "oura_sync"
+        else:
+            raise PolicyError(f"activation sandbox is not defined for {slice_id}")
+        aggregate_root = aggregate_root.resolve()
+        aggregate_file = evidence_path.resolve()
+        try:
+            aggregate_file.relative_to(aggregate_root)
+        except ValueError as exc:
+            raise PolicyError("activation evidence file escapes its slice aggregate root") from exc
+        executables = sorted({str(Path(path).resolve()) for path in executable_paths})
+        if not executables:
+            raise PolicyError("activation sandbox requires an exact executable allowlist")
+        process_exec = "(allow process-exec " + " ".join(
+            f"(literal {json.dumps(path)})" for path in executables
+        ) + ")"
+        runtime_roots = {
+            str(Path("/System/Library").resolve()),
+            str(Path("/usr/lib").resolve()),
+            str(Path("/usr/share/zoneinfo").resolve()),
+            str(Path("/private/var/db/timezone/zoneinfo").resolve()),
+        }
+        python_executables = {str(Path(sys.executable).resolve()), str(Path(sys.executable))}
+        if python_executables.intersection(executables):
+            import sysconfig
+
+            for key in ("stdlib", "platstdlib", "purelib", "platlib"):
+                configured = sysconfig.get_path(key)
+                if configured:
+                    runtime_roots.add(str(Path(configured).resolve()))
+        runtime_roots = sorted(runtime_roots)
+        literal_reads = [*executables, str(aggregate_file)]
+        runtime_read = (
+            "(allow file-read-data "
+            + " ".join(f"(subpath {json.dumps(path)})" for path in runtime_roots)
+            + " "
+            f"(subpath {literal(cwd)}) "
+            + " ".join(f"(literal {json.dumps(path)})" for path in literal_reads)
+            + " "
+            f"(literal {literal(data_root / 'warehouse.duckdb')}) "
+            f"(literal {literal(data_root / 'warehouse.duckdb.wal')}) "
+            f"(literal {literal(data_root / '.healthhub.lock')}))"
+        )
+        return "\n".join(
+            (
+                "(version 1)",
+                "(deny default)",
+                process_exec,
+                "(allow sysctl-read)",
+                "(allow file-read-metadata)",
+                runtime_read,
+            )
+        )
+
+    @classmethod
+    def activation_payload_errors(
+        cls,
+        payload: dict[str, Any],
+        *,
+        slice_id: str,
+        run_id: str,
+        ship_commit: str,
+        verifier_sha256: str,
+        authority_sha256: str | None,
+    ) -> list[str]:
+        required = {
+            "schema_version",
+            "status",
+            "slice_id",
+            "run_id",
+            "ship_commit",
+            "verifier_sha256",
+            "evidence_path",
+            "evidence_sha256",
+            "observed_at",
+            "authority_sha256",
+        }
+        errors: list[str] = []
+        if set(payload) != required:
+            errors.append("activation result must contain exactly the required binding fields")
+        expected = {
+            "schema_version": cls.ACTIVATION_RESULT_SCHEMA,
+            "slice_id": slice_id,
+            "run_id": run_id,
+            "ship_commit": ship_commit,
+            "verifier_sha256": verifier_sha256,
+        }
+        for key, value in expected.items():
+            if payload.get(key) != value:
+                errors.append(f"activation result {key} does not match the sealed context")
+        status = payload.get("status")
+        if status not in {"ok", "blocked_external"}:
+            errors.append("activation result status must be ok or blocked_external")
+        hash_pattern = re.compile(r"[0-9a-f]{64}")
+        evidence_hash = payload.get("evidence_sha256")
+        evidence_path = payload.get("evidence_path")
+        evidence_prefix = (
+            "private/evidence/S11/"
+            if slice_id == "S11"
+            else "private/evidence/S12/oura_sync/"
+        )
+        if not isinstance(evidence_path, str) or not evidence_path.startswith(evidence_prefix):
+            errors.append("activation evidence_path is outside the exact aggregate evidence root")
+        elif Path(evidence_path).is_absolute() or ".." in Path(evidence_path).parts:
+            errors.append("activation evidence_path must be a safe repository-relative path")
+        observed_at = payload.get("observed_at")
+        try:
+            observed = datetime.fromisoformat(str(observed_at))
+        except (TypeError, ValueError):
+            observed = None
+        if observed is None or observed.tzinfo is None:
+            errors.append("activation observed_at must be an offset-aware ISO-8601 timestamp")
+        if status == "ok":
+            if not isinstance(evidence_hash, str) or hash_pattern.fullmatch(evidence_hash) is None:
+                errors.append("successful activation requires a lowercase SHA-256 evidence binding")
+        elif evidence_hash is not None and (
+            not isinstance(evidence_hash, str) or hash_pattern.fullmatch(evidence_hash) is None
+        ):
+            errors.append("blocked activation evidence_sha256 must be null or lowercase SHA-256")
+        reported_authority = payload.get("authority_sha256")
+        if slice_id == "S12" and status == "ok":
+            if authority_sha256 is None or reported_authority != authority_sha256:
+                errors.append("successful S12 activation authority hash does not match current readiness")
+        elif slice_id == "S11" and reported_authority is not None:
+            errors.append("S11 activation must report authority_sha256 as null")
+        elif reported_authority is not None and (
+            not isinstance(reported_authority, str) or hash_pattern.fullmatch(reported_authority) is None
+        ):
+            errors.append("authority_sha256 must be null or lowercase SHA-256")
+        return errors
+
+    def run_activation_acceptance(self, slice_id: str, cwd: Path, *, run_id: str = "") -> CommandResult:
+        slice_ = self.find_slice(slice_id)
+        if slice_ is None:
+            return CommandResult([], 60, "", f"unknown slice: {slice_id}")
+
+        config = slice_.get("activation_acceptance")
+        errors = self.activation_acceptance_config_errors(slice_)
+        if errors:
+            return CommandResult([], 65, "", "; ".join(errors))
+        if not isinstance(config, dict):
+            return CommandResult([], 0, "activation acceptance not required", "")
+
+        argv = shlex.split(str(config["command"]))
+        expected_command = {
+            "S11": "python scripts/verify_mood_logging_recovery.py --runtime-root-env HEALTH_HUB_RUNTIME_ROOT --json",
+            "S12": "python scripts/verify_s12_sync.py --runtime-root-env HEALTH_HUB_RUNTIME_ROOT --json",
+        }.get(slice_id)
+        expected_argv = shlex.split(expected_command) if expected_command else []
+        if argv != expected_argv:
+            return CommandResult(argv, 65, "", "activation acceptance command is not allowlisted")
+        if not run_id:
+            return CommandResult(argv, self.ACTIVATION_CONTROL_ERROR_EXIT, "", "activation run_id binding is required")
+
+        readiness, _readiness_payload = self.s12_operation_readiness(slice_id, "activation")
+        if not readiness.ok:
+            return readiness
+        control_errors = [
+            "generated activation verifier execution is disabled pending a certified sandbox and trusted receipt validator"
+        ]
+        if not self.ACTIVATION_TRUSTED_RECEIPT_VALIDATOR_AVAILABLE:
+            control_errors.insert(
+                0,
+                "trusted outer evidence receipt validator is unavailable; generated verifier was not executed",
+            )
+        self.log_event(
+            "activation_acceptance_control_error",
+            {
+                "cwd": str(cwd),
+                "runtime_root": "canonical",
+                "read_only": True,
+                "sandbox": "disabled_not_certified",
+                "exit_code": self.ACTIVATION_CONTROL_ERROR_EXIT,
+                "run_id": run_id,
+                "control_errors": control_errors,
+            },
+            slice_id=slice_id,
+        )
+        return CommandResult(
+            argv,
+            self.ACTIVATION_CONTROL_ERROR_EXIT,
+            "",
+            "activation blocked: generated execution and trusted outer evidence validation are not enabled",
+        )
 
     def find_slice(self, slice_id: str) -> dict[str, Any] | None:
         return next((item for item in self.load_slices() if item.get("id") == slice_id), None)
@@ -5547,6 +6496,9 @@ Use local files and commands only. If evidence is missing, write a failing revie
 """
 
     def run_reviewer_for_artifact(self, slice_: dict[str, Any], artifact_rel: str, run_id: str) -> CommandResult:
+        isolation = self.generated_tool_file_read_guard(slice_["id"], "review_generation")
+        if not isolation.ok:
+            return isolation
         reviews = self.policy.get("reviews", {})
         command = reviews.get("reviewer_command") or self.policy.get("compile", {}).get("row_author_command") or "claude -p"
         artifact = self.root / artifact_rel
@@ -5678,6 +6630,48 @@ Use local files and commands only. If evidence is missing, write a failing revie
             "could not resolve PO run branch; " + "; ".join(failures),
         )
 
+    def resolve_po_run_integration_base(
+        self,
+        run_id: str,
+        ship_commit: str,
+    ) -> tuple[str, CommandResult]:
+        """Return the PO-recorded run base only when it binds the full ship range."""
+
+        run_state = self.load_po_run_state(run_id)
+        candidate = str(run_state.get("base_head_sha") or "")
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", candidate):
+            return "", CommandResult(
+                [],
+                62,
+                "",
+                "PO run state has no full hexadecimal base_head_sha",
+            )
+        resolved = self.runner.run(
+            ["git", "rev-parse", "--verify", f"{candidate}^{{commit}}"],
+            cwd=self.root,
+        )
+        if not resolved.ok or resolved.stdout.strip() != candidate:
+            return "", CommandResult(
+                resolved.argv,
+                resolved.exit_code or 63,
+                resolved.stdout,
+                resolved.stderr or "PO run base_head_sha does not resolve to itself",
+            )
+        merge_bases = self.runner.run(
+            ["git", "merge-base", "--all", candidate, ship_commit],
+            cwd=self.root,
+        )
+        rows = [line.strip() for line in merge_bases.stdout.splitlines() if line.strip()]
+        if not merge_bases.ok or rows != [candidate] or candidate == ship_commit:
+            return "", CommandResult(
+                merge_bases.argv,
+                merge_bases.exit_code or 64,
+                merge_bases.stdout,
+                merge_bases.stderr
+                or "PO run base_head_sha is not the unique strict merge base of the ship commit",
+            )
+        return candidate, CommandResult(merge_bases.argv, 0, candidate, "")
+
     @staticmethod
     def ship_branch_name(slice_id: str) -> str:
         return f"ship/{slice_id.lower()}"
@@ -5703,7 +6697,10 @@ Use local files and commands only. If evidence is missing, write a failing revie
             if worktree_path.exists():
                 shutil.rmtree(worktree_path, ignore_errors=True)
 
-    def validate_shipped_slice(self, slice_id: str, run_id: str, ship_branch: str) -> tuple[str, CommandResult]:
+    def validate_shipped_slice(self, slice_id: str, run_id: str, ship_commit: str) -> tuple[str, CommandResult]:
+        isolation = self.generated_tool_file_read_guard(slice_id, "validate_shipped_slice")
+        if not isolation.ok:
+            return "generated_tool_secret_isolation", isolation
         safe_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{slice_id.lower()}-{run_id}-")
         failed_phase = "worktree"
 
@@ -5714,9 +6711,13 @@ Use local files and commands only. If evidence is missing, write a failing revie
             if not reviews.ok:
                 return reviews
             failed_phase = "slice_acceptance"
-            return self.verify_slice_acceptance(slice_id, cwd=worktree)
+            acceptance = self.verify_slice_acceptance(slice_id, cwd=worktree)
+            if not acceptance.ok:
+                return acceptance
+            failed_phase = "activation_acceptance"
+            return self.run_activation_acceptance(slice_id, cwd=worktree, run_id=run_id)
 
-        result = self.with_detached_worktree(ship_branch, safe_prefix, validate)
+        result = self.with_detached_worktree(ship_commit, safe_prefix, validate)
         return failed_phase, result
 
     def active_run_is_stale(self, active: dict[str, Any]) -> bool:
@@ -5758,6 +6759,14 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return CommandResult([], 50, "", "cannot resume evidence: missing run_id")
         if not evidence_rel:
             return CommandResult([], 51, "", "cannot resume evidence: missing evidence_request")
+
+        isolation = self.generated_tool_file_read_guard(slice_["id"], "resume_with_evidence")
+        if not isolation.ok:
+            return isolation
+
+        readiness, _payload = self.s12_operation_readiness(slice_["id"], "resume_with_evidence")
+        if not readiness.ok:
+            return readiness
 
         evidence_dir = self.root / str(evidence_rel)
         if not evidence_dir.exists():
@@ -5820,6 +6829,14 @@ Use local files and commands only. If evidence is missing, write a failing revie
         run_id = active.get("run_id")
         if not run_id:
             return CommandResult([], 50, "", "cannot resume active PO: missing run_id")
+
+        isolation = self.generated_tool_file_read_guard(slice_["id"], "resume_active_po")
+        if not isolation.ok:
+            return isolation
+
+        readiness, _payload = self.s12_operation_readiness(slice_["id"], "resume_active_po")
+        if not readiness.ok:
+            return readiness
 
         if not skip_checkpoint:
             checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
@@ -5910,6 +6927,12 @@ Use local files and commands only. If evidence is missing, write a failing revie
         run_id = str(slice_.get("run_id") or "")
         if not run_id:
             return None
+        isolation = self.generated_tool_file_read_guard(slice_["id"], "recover_passed_run")
+        if not isolation.ok:
+            return isolation
+        readiness, _payload = self.s12_operation_readiness(slice_["id"], "recover_passed_run")
+        if not readiness.ok:
+            return readiness
         if self.open_failures(slice_["id"], run_id=run_id):
             self.log_event(
                 "po_terminal_recovery_blocked_open_failure",
@@ -5942,6 +6965,14 @@ Use local files and commands only. If evidence is missing, write a failing revie
     def restore_repaired_escalated_slice_run(self, slice_: dict[str, Any]) -> bool:
         run_id = str(slice_.get("run_id") or "")
         if not run_id:
+            return False
+
+        isolation = self.generated_tool_file_read_guard(slice_["id"], "restore_escalated_run")
+        if not isolation.ok:
+            return False
+
+        readiness, _payload = self.s12_operation_readiness(slice_["id"], "restore_escalated_run")
+        if not readiness.ok:
             return False
 
         state = self.load_state()
@@ -5984,6 +7015,12 @@ Use local files and commands only. If evidence is missing, write a failing revie
         return True
 
     def start_or_resume_po(self, slice_: dict[str, Any]) -> CommandResult:
+        isolation = self.generated_tool_file_read_guard(slice_["id"], "start_or_resume_po")
+        if not isolation.ok:
+            return isolation
+        readiness, _payload = self.s12_operation_readiness(slice_["id"], "start_or_resume_po")
+        if not readiness.ok:
+            return readiness
         state = self.load_state()
         active = state.get("active_run") or {}
         playbook = self.root / slice_["playbook"]
@@ -6069,7 +7106,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 return self.resume_active_po(slice_, active, prechecked_status=status, skip_checkpoint=True)
 
         recovered = self.recover_passed_slice_run(slice_)
-        if recovered:
+        if recovered is not None:
             return recovered
 
         if not playbook.exists():
@@ -6301,6 +7338,23 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if terminal == "passed":
             shipped = self.ship_slice(slice_id, run_id)
             if not shipped.ok:
+                shipped_payload: dict[str, Any] = {}
+                try:
+                    decoded_shipped = json.loads(shipped.stdout)
+                except (json.JSONDecodeError, TypeError):
+                    decoded_shipped = None
+                if isinstance(decoded_shipped, dict):
+                    shipped_payload = decoded_shipped
+                if slice_id == "S12" and self.s12_normalized_blocked_external(shipped, shipped_payload):
+                    self.mark_slice_status(
+                        slice_id,
+                        "blocked_external",
+                        run_id=run_id,
+                        reason="provider authority is not established at ship boundary",
+                    )
+                    return "blocked_external"
+                if shipped.exit_code == self.SECRET_ISOLATION_CONTROL_ERROR_EXIT:
+                    return "secret_isolation_control_error"
                 failure = self.record_failure(
                     slice_id,
                     "ship_failure",
@@ -6314,8 +7368,84 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 return "ship_failed"
 
             ship_branch = self.ship_branch_name(slice_id)
-            failed_phase, shipped_validation = self.validate_shipped_slice(slice_id, run_id, ship_branch)
+            try:
+                sealed_ship = json.loads(shipped.stdout)
+            except (json.JSONDecodeError, TypeError):
+                sealed_ship = None
+            ship_commit = (
+                str(sealed_ship.get("ship_commit") or "")
+                if isinstance(sealed_ship, dict)
+                and sealed_ship.get("ship_branch") == ship_branch
+                else ""
+            )
+            if not re.fullmatch(r"[0-9a-fA-F]{40,64}", ship_commit):
+                failure = self.record_failure(
+                    slice_id,
+                    "ship_failure",
+                    "high",
+                    "PO passed but ship creation did not return an exact sealed commit.",
+                    "Rejected completion before detached validation; ship creation and validation must bind the same immutable commit.",
+                    None,
+                    run_id=run_id,
+                )
+                self.mark_slice_status(
+                    slice_id,
+                    "replan_required",
+                    run_id=run_id,
+                    failure_path=str(failure.relative_to(self.root)),
+                )
+                return "ship_failed"
+
+            failed_phase, shipped_validation = self.validate_shipped_slice(slice_id, run_id, ship_commit)
             if not shipped_validation.ok:
+                if shipped_validation.exit_code == self.SECRET_ISOLATION_CONTROL_ERROR_EXIT:
+                    return "secret_isolation_control_error"
+                if (
+                    failed_phase == "activation_acceptance"
+                    and shipped_validation.exit_code == self.ACTIVATION_BLOCKED_EXTERNAL_EXIT
+                    and (
+                        slice_id != "S12"
+                        or self.s12_normalized_blocked_external(
+                            shipped_validation,
+                            self.parse_json_stdout(shipped_validation, {}),
+                        )
+                    )
+                ):
+                    failure = self.record_failure(
+                        slice_id,
+                        "blocked_external_missing_evidence",
+                        "high",
+                        "PO passed and hermetic slice verification passed, but required runtime activation acceptance did not pass.",
+                        "Blocked completion pending real canonical aggregate evidence; did not replan, fabricate evidence, or mark the slice complete.",
+                        None,
+                        run_id=run_id,
+                    )
+                    self.mark_slice_status(
+                        slice_id,
+                        "blocked_external",
+                        run_id=run_id,
+                        failure_path=str(failure.relative_to(self.root)),
+                        reason="runtime activation acceptance unavailable",
+                    )
+                    return "blocked_external"
+                if failed_phase == "activation_acceptance":
+                    failure = self.record_failure(
+                        slice_id,
+                        "control_error",
+                        "high",
+                        "Post-ship activation could not run or return a schema-valid result inside the required sandbox.",
+                        "Rejected completion and required control-plane remediation; did not relabel an execution, configuration, safety, or malformed-result failure as external evidence.",
+                        None,
+                        run_id=run_id,
+                    )
+                    self.mark_slice_status(
+                        slice_id,
+                        "blocked_compile_inputs",
+                        run_id=run_id,
+                        failure_path=str(failure.relative_to(self.root)),
+                        reason="activation control error",
+                    )
+                    return "activation_control_error"
                 failure_class = "review_artifact_invalid" if failed_phase != "slice_acceptance" else "agent_false_done"
                 description = (
                     "PO passed but required autonomous review artifacts were missing or invalid on the shipped branch."
@@ -6340,7 +7470,75 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 return "review_failed" if failure_class == "review_artifact_invalid" else "acceptance_failed"
 
             ship_commit_result = self.runner.run(["git", "rev-parse", f"{ship_branch}^{{commit}}"], cwd=self.root)
-            ship_commit = ship_commit_result.stdout.strip() if ship_commit_result.ok else ""
+            current_ship_commit = ship_commit_result.stdout.strip() if ship_commit_result.ok else ""
+            if current_ship_commit != ship_commit:
+                failure = self.record_failure(
+                    slice_id,
+                    "ship_failure",
+                    "high",
+                    "The ship branch moved after detached validation.",
+                    "Rejected completion; the validated immutable commit no longer matches the ship ref.",
+                    None,
+                    run_id=run_id,
+                )
+                self.mark_slice_status(
+                    slice_id,
+                    "replan_required",
+                    run_id=run_id,
+                    failure_path=str(failure.relative_to(self.root)),
+                )
+                return "ship_failed"
+            integration_base_commit, integration_base_result = (
+                self.resolve_po_run_integration_base(run_id, ship_commit)
+            )
+            if (
+                not re.fullmatch(r"[0-9a-fA-F]{40,64}", ship_commit)
+                or not integration_base_result.ok
+            ):
+                failure = self.record_failure(
+                    slice_id,
+                    "ship_failure",
+                    "high",
+                    "PO passed but AutoKeel could not persist a strict integration base for the ship range.",
+                    "Rejected completion; the exact base-to-ship range must be durable before landed-state verification.",
+                    None,
+                    run_id=run_id,
+                )
+                self.mark_slice_status(
+                    slice_id,
+                    "replan_required",
+                    run_id=run_id,
+                    failure_path=str(failure.relative_to(self.root)),
+                )
+                return "ship_failed"
+
+            completion_ref_guard = self.runner.run(
+                [
+                    "git",
+                    "update-ref",
+                    f"refs/heads/{ship_branch}",
+                    ship_commit,
+                    ship_commit,
+                ],
+                cwd=self.root,
+            )
+            if not completion_ref_guard.ok:
+                failure = self.record_failure(
+                    slice_id,
+                    "ship_failure",
+                    "high",
+                    "The ship branch moved between final validation and persisted completion.",
+                    "Rejected completion using an atomic compare-and-swap ref guard; the validated commit remains immutable.",
+                    None,
+                    run_id=run_id,
+                )
+                self.mark_slice_status(
+                    slice_id,
+                    "replan_required",
+                    run_id=run_id,
+                    failure_path=str(failure.relative_to(self.root)),
+                )
+                return "ship_failed"
 
             self.mark_slice_status(
                 slice_id,
@@ -6349,6 +7547,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 completed_at=now_iso(),
                 ship_branch=ship_branch,
                 ship_commit=ship_commit,
+                integration_base_commit=integration_base_commit,
             )
             return "complete"
 
@@ -6449,6 +7648,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
     def failure_origin_for_class(self, failure_class: str) -> str:
         mapping = {
             "provider_auth_failure": "external_provider",
+            "provider_terms_conflict": "external_provider",
             "blocked_external_missing_evidence": "external_provider",
             "audit_failure": "po_kernel",
             "manual_gate_leak": "po_kernel",
@@ -6473,12 +7673,14 @@ Use local files and commands only. If evidence is missing, write a failing revie
         evidence_path: Path | None,
         run_id: str | None = None,
         repair_scope: str | None = None,
+        root_cause_id: str | None = None,
     ) -> Path:
         failure_dir = self.root / "ops" / "autonomy" / "failures"
         failure_dir.mkdir(parents=True, exist_ok=True)
-        failure_file = failure_dir / f"{slice_id}-{failure_class}-{slug_ts()}-{uuid.uuid4().hex[:8]}.md"
+        failure_id = f"failure_{uuid.uuid4().hex}"
+        failure_file = failure_dir / f"{slice_id}-{failure_class}-{slug_ts()}-{failure_id[-8:]}.md"
         evidence_text = str(evidence_path.relative_to(self.root)) if evidence_path and evidence_path.is_absolute() else str(evidence_path or "")
-        root_cause_id = f"{slice_id}-{failure_class}".upper().replace("_", "-")
+        effective_root_cause_id = root_cause_id or f"{slice_id}-{failure_class}".upper().replace("_", "-")
         failure_origin = self.failure_origin_for_class(failure_class)
         failure_file.write_text(
             f"# {slice_id} {failure_class}\n\n"
@@ -6486,7 +7688,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
             f"- Severity: {severity}\n"
             f"- Run ID: {run_id or ''}\n"
             f"- Evidence: {evidence_text}\n\n"
-            f"- Root Cause ID: {root_cause_id}\n"
+            f"- Failure ID: {failure_id}\n"
+            f"- Root Cause ID: {effective_root_cause_id}\n"
             f"- Failure Origin: {failure_origin}\n\n"
             f"## Description\n\n{description}\n\n"
             f"## Action Taken\n\n{action_taken}\n",
@@ -6494,6 +7697,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
         )
         payload = {
             "schema_version": "autokeel.failure_ledger.v2",
+            "failure_id": failure_id,
             "ts": now_iso(),
             "slice": slice_id,
             "run_id": run_id,
@@ -6503,7 +7707,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             "action_taken": action_taken,
             "evidence_path": evidence_text or str(failure_file.relative_to(self.root)),
             "evidence_sha256": file_sha256(evidence_path) if evidence_path is not None and evidence_path.is_file() else None,
-            "root_cause_id": root_cause_id,
+            "root_cause_id": effective_root_cause_id,
             "failure_origin": failure_origin,
             "supersedes": [],
             "superseded_by": None,
@@ -6522,6 +7726,12 @@ Use local files and commands only. If evidence is missing, write a failing revie
         slice_ = self.find_slice(slice_id)
         if slice_ is None:
             return CommandResult([], 60, "", f"unknown slice: {slice_id}")
+        isolation = self.generated_tool_file_read_guard(slice_id, "ship")
+        if not isolation.ok:
+            return isolation
+        readiness, _payload = self.s12_operation_readiness(slice_id, "ship")
+        if not readiness.ok:
+            return readiness
         lane_guard = self.assert_slice_execution_lane(slice_, self.root / str(slice_.get("playbook", "")))
         if not lane_guard.ok:
             self.log_event(
@@ -6581,8 +7791,28 @@ Use local files and commands only. If evidence is missing, write a failing revie
             )
             return checkpoint
 
+        run_head = verify.stdout.strip()
+        integration_base_commit, base_guard = self.resolve_po_run_integration_base(
+            run_id,
+            run_head,
+        )
+        if not base_guard.ok:
+            self.log_event(
+                "slice_ship_failed",
+                {
+                    "run_id": run_id,
+                    "run_branch": run_branch,
+                    "reason": "unbound_run_integration_base",
+                    "stderr": base_guard.stderr[-2000:],
+                },
+                slice_id=slice_id,
+            )
+            return base_guard
+
         before_branch = self.runner.run(["git", "branch", "--show-current"], cwd=self.root)
-        checkout = self.runner.run(["git", "branch", "-f", branch, run_branch], cwd=self.root)
+        # Create the mutable convenience ref from the already verified exact
+        # run commit, never by resolving the run branch a second time.
+        checkout = self.runner.run(["git", "branch", "-f", branch, run_head], cwd=self.root)
         after_branch = self.runner.run(["git", "branch", "--show-current"], cwd=self.root) if checkout.ok else before_branch
         ship_commit = ""
         if checkout.ok:
@@ -6595,6 +7825,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 "run_branch": run_branch,
                 "ship_branch": branch,
                 "ship_commit": ship_commit,
+                "integration_base_commit": integration_base_commit,
                 "operator_branch_before": before_branch.stdout.strip() if before_branch.ok else "",
                 "operator_branch_after": after_branch.stdout.strip() if after_branch.ok else "",
                 "exit_code": checkout.exit_code,
@@ -6603,7 +7834,24 @@ Use local files and commands only. If evidence is missing, write a failing revie
             },
             slice_id=slice_id,
         )
-        return checkout
+        if not checkout.ok:
+            return checkout
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", ship_commit) or ship_commit != run_head:
+            return CommandResult(
+                checkout.argv,
+                63,
+                checkout.stdout,
+                "ship branch was created but did not resolve to the already sealed PO run commit",
+            )
+        return CommandResult(
+            checkout.argv,
+            0,
+            json.dumps(
+                {"ship_branch": branch, "ship_commit": ship_commit},
+                sort_keys=True,
+            ),
+            checkout.stderr,
+        )
 
     def run_once(self, requested_slice: str | None = None, force_slice: bool = False) -> int:
         if not self.dry_run:
@@ -6624,6 +7872,47 @@ Use local files and commands only. If evidence is missing, write a failing revie
 
     def run_po_and_handle_status(self, slice_: dict[str, Any], run: CommandResult) -> int:
         if not run.ok:
+            payload: dict[str, Any] = {}
+            try:
+                decoded = json.loads(run.stdout)
+            except (json.JSONDecodeError, TypeError):
+                decoded = None
+            if isinstance(decoded, dict):
+                payload = decoded
+            if run.exit_code == self.SECRET_ISOLATION_CONTROL_ERROR_EXIT:
+                return run.exit_code
+            if slice_["id"] == "S12" and (
+                run.exit_code == self.ACTIVATION_CONTROL_ERROR_EXIT
+                or (
+                    run.exit_code == self.ACTIVATION_BLOCKED_EXTERNAL_EXIT
+                    and not self.s12_normalized_blocked_external(run, payload)
+                )
+            ):
+                failure = self.record_failure(
+                    "S12",
+                    "control_error",
+                    "high",
+                    "S12 readiness did not satisfy its strict trusted report contract.",
+                    "Blocked compiler and PO; malformed or mistyped readiness output is not external evidence.",
+                    None,
+                )
+                self.mark_slice_status(
+                    "S12",
+                    "blocked_compile_inputs",
+                    failure_path=str(failure.relative_to(self.root)),
+                    reason="invalid S12 readiness report",
+                )
+                return run.exit_code
+            if (
+                slice_["id"] == "S12"
+                and self.s12_normalized_blocked_external(run, payload)
+            ):
+                self.mark_slice_status(
+                    "S12",
+                    "blocked_external",
+                    reason="provider authority is not established",
+                )
+                return run.exit_code
             self.record_failure(
                 slice_["id"],
                 "test_failure",
@@ -6648,7 +7937,8 @@ Use local files and commands only. If evidence is missing, write a failing revie
         return 0
 
     def _run_once_impl(self, requested_slice: str | None = None, force_slice: bool = False) -> int:
-        self.log_heartbeat()
+        if not self.dry_run:
+            self.log_heartbeat()
 
         digest_check = self.verify_state_digest()
         if not digest_check.ok:
@@ -6684,16 +7974,42 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 tripwire_report = json.loads(tripwires.stdout)
             except json.JSONDecodeError:
                 tripwire_report = {}
-            if self.apply_tripwire_fallbacks(tripwire_report):
-                tripwires = self.evaluate_tripwires()
-                if tripwires.ok:
-                    self.log_event("tripwire_fallbacks_applied", {})
-                else:
-                    self.log_event("tripwire_fallbacks_unresolved", {"stdout": tripwires.stdout[-4000:], "stderr": tripwires.stderr[-4000:]})
-                    return 6
+            self.apply_tripwire_fallbacks(tripwire_report)
+            # Re-evaluate after any safe fallback report/decision was written.
+            # The remaining report is the only authority for recovery routing.
+            tripwires = self.evaluate_tripwires()
+            if tripwires.ok:
+                self.log_event("tripwire_fallbacks_applied", {})
             else:
-                self.log_event("tripwire_failure_unresolved", {"stdout": tripwires.stdout[-4000:], "stderr": tripwires.stderr[-4000:]})
-                return 6
+                try:
+                    remaining_report = json.loads(tripwires.stdout)
+                except json.JSONDecodeError:
+                    remaining_report = {}
+                recovery_slice = self.tripwire_recovery_slice(remaining_report)
+                if recovery_slice:
+                    if requested_slice and requested_slice != recovery_slice:
+                        self.log_event(
+                            "tripwire_recovery_blocks_requested_slice",
+                            {
+                                "requested_slice": requested_slice,
+                                "recovery_slice": recovery_slice,
+                                "stdout": tripwires.stdout[-4000:],
+                            },
+                        )
+                        return 6
+                    requested_slice = recovery_slice
+                    force_slice = False
+                    self.log_event(
+                        "tripwire_recovery_slice_routed",
+                        {"recovery_slice": recovery_slice, "stdout": tripwires.stdout[-4000:]},
+                        slice_id=recovery_slice,
+                    )
+                else:
+                    self.log_event(
+                        "tripwire_failure_unresolved",
+                        {"stdout": tripwires.stdout[-4000:], "stderr": tripwires.stderr[-4000:]},
+                    )
+                    return 6
 
         slice_ = self.choose_next_slice(requested_slice, force=force_slice)
         if not slice_:
@@ -6783,7 +8099,9 @@ Use local files and commands only. If evidence is missing, write a failing revie
             self.mark_slice_status(slice_["id"], "blocked", failure_path=str(failure.relative_to(self.root)), reason=budgets.stderr)
             return budgets.exit_code or 37
         recovered = self.recover_passed_slice_run(slice_)
-        if recovered:
+        if recovered is not None:
+            if not recovered.ok:
+                return recovered.exit_code or self.ACTIVATION_CONTROL_ERROR_EXIT
             run_id = self._extract_run_id(recovered.stdout)
             if not run_id:
                 self.log_event("po_run_id_missing", {"stdout": recovered.stdout, "stderr": recovered.stderr}, slice_id=slice_["id"])
@@ -6804,8 +8122,67 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return self.run_po_and_handle_status(slice_, run)
 
         if self.should_run_slice_readiness(slice_):
-            readiness = self.run_slice_readiness(slice_["id"])
+            readiness = (
+                self.s12_operation_readiness("S12", "initial_start")[0]
+                if slice_["id"] == "S12"
+                else self.run_slice_readiness(slice_["id"])
+            )
             if not readiness.ok:
+                readiness_payload: dict[str, Any] = {}
+                try:
+                    decoded = json.loads(readiness.stdout)
+                except json.JSONDecodeError:
+                    decoded = {}
+                if isinstance(decoded, dict):
+                    readiness_payload = decoded
+                if readiness.exit_code == self.SECRET_ISOLATION_CONTROL_ERROR_EXIT:
+                    return readiness.exit_code
+                if slice_["id"] == "S12" and readiness.exit_code == self.ACTIVATION_CONTROL_ERROR_EXIT:
+                    failure = self.record_failure(
+                        "S12",
+                        "control_error",
+                        "high",
+                        "S12 readiness did not satisfy its strict trusted report contract.",
+                        "Stopped before compiler/PO and classified the malformed control result separately from external evidence.",
+                        None,
+                    )
+                    self.mark_slice_status(
+                        "S12",
+                        "blocked_compile_inputs",
+                        failure_path=str(failure.relative_to(self.root)),
+                        reason="invalid S12 readiness report",
+                    )
+                    return readiness.exit_code
+                if slice_["id"] == "S12" and self.s12_normalized_blocked_external(readiness, readiness_payload):
+                    root_cause_id = "S12-OURA-PROVIDER-TERMS-AUTHORITY"
+                    existing = next(
+                        (
+                            row
+                            for row in iter_jsonl(self.autonomy_dir / "failure_ledger.jsonl")
+                            if row.get("open", True)
+                            and row.get("slice") == "S12"
+                            and row.get("root_cause_id") == root_cause_id
+                        ),
+                        None,
+                    )
+                    evidence = self.root / "ops/autonomy/failures/S12-provider_terms_conflict-20260816T160521-0400.md"
+                    if existing is None:
+                        self.record_failure(
+                            "S12",
+                            "provider_terms_conflict",
+                            "high",
+                            "Current provider terms do not authorize the planned Oura API-to-model path.",
+                            "Stopped before compiler, OAuth, token, network, or provider-data access; require an exact separate authority package.",
+                            evidence if evidence.is_file() else None,
+                            root_cause_id=root_cause_id,
+                        )
+                    self.mark_slice_status(
+                        "S12",
+                        "blocked_external",
+                        failure_path=str(evidence.relative_to(self.root)) if evidence.is_file() else None,
+                        reason="provider authority is not established",
+                    )
+                    return readiness.exit_code or 2
                 self.record_failure(
                     slice_["id"],
                     "audit_failure",
@@ -6874,7 +8251,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
             # own class, repair plan, and control-plane scope by
             # swr_review_transport_failure; never double-record it as a generic
             # compile failure.
-            if compiled.exit_code not in {20, 21, 22, 24, 26, 27, 28, 31, 32, 33, 34}:
+            if compiled.exit_code not in {20, 21, 22, 24, 26, 27, 28, 31, 32, 33, 34, self.SECRET_ISOLATION_CONTROL_ERROR_EXIT}:
                 failure = self.record_failure(
                     slice_["id"],
                     "compile_failure",
@@ -6991,13 +8368,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--doctor", action="store_true", help="Run AutoKeel preflight checks and exit.")
     parser.add_argument("--strict", action="store_true", help="Use strict mode with --doctor.")
     parser.add_argument("--strict-swr", metavar="SLICE_ID", help="With --doctor, run strict SWR provider preflight for a slice before selection.")
-    parser.add_argument("--readiness", choices=["S02", "S03", "S04", "S05"], help="Run a slice-specific pre-launch readiness check and exit.")
+    parser.add_argument("--readiness", choices=["S02", "S03", "S04", "S05", "S06", "S11", "S12"], help="Run a slice-specific pre-launch readiness check and exit.")
     parser.add_argument("--next-slice", action="store_true", help="Print the next actionable slice and exit.")
     parser.add_argument("--replay-events", action="store_true", help="Print event log rows and exit.")
     parser.add_argument("--unblock-evidence", nargs=2, metavar=("SLICE_ID", "EVIDENCE_DIR"), help="Mark a blocked slice evidence_ready with a local evidence dir.")
     parser.add_argument("--close-failure", nargs=2, metavar=("SLICE_ID", "FAILURE_CLASS"), help="Close matching open failures.")
     parser.add_argument("--closure-evidence", help="Repo-relative evidence path for --close-failure.")
     parser.add_argument("--closure-note", help="Closure note for --close-failure.")
+    parser.add_argument("--root-cause-id", help="Target one root cause with --close-failure.")
+    parser.add_argument("--failure-id", help="Target one durable failure id with --close-failure.")
     return parser
 
 
@@ -7007,7 +8386,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     lock_path = root / "ops" / "autonomy" / ".autokeel.lock"
 
-    read_only_invocation = bool(args.doctor or args.status or args.next_slice or args.replay_events)
+    read_only_invocation = bool(args.doctor or args.readiness or args.status or args.next_slice or args.replay_events)
     if read_only_invocation:
         # Diagnostics must not create or contend on the run lock; a lock file's
         # presence should always mean a mutating AutoKeel process ran.
@@ -7075,6 +8454,26 @@ def _main_dispatch(args: argparse.Namespace, root: Path) -> int:
         report = verify_s05_readiness(root)
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0 if report["status"] == "ok" else 1
+    if args.readiness == "S06":
+        from scripts.verify_s06_readiness import verify_s06_readiness
+
+        report = verify_s06_readiness(root)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["status"] == "ok" else 1
+    if args.readiness == "S11":
+        from scripts.verify_s11_readiness import verify_s11_readiness
+
+        report = verify_s11_readiness(root)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["status"] == "ok" else 1
+    if args.readiness == "S12":
+        from scripts.verify_s12_readiness import verify_s12_readiness
+
+        report = verify_s12_readiness(root)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        if report["status"] == "ok":
+            return 0
+        return 2 if report["status"] == "blocked_external" else 1
     if args.next_slice:
         print(json.dumps(autokeel.choose_next_slice(args.slice_id, force=args.force), indent=2, sort_keys=True))
         return 0
@@ -7094,7 +8493,15 @@ def _main_dispatch(args: argparse.Namespace, root: Path) -> int:
             raise AutoKeelError("--close-failure requires --closure-evidence and --closure-note")
         from scripts.close_failure import close_failure
 
-        report = close_failure(root, args.close_failure[0], args.close_failure[1], args.closure_evidence, args.closure_note)
+        report = close_failure(
+            root,
+            args.close_failure[0],
+            args.close_failure[1],
+            args.closure_evidence,
+            args.closure_note,
+            root_cause_id=args.root_cause_id,
+            failure_id=args.failure_id,
+        )
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0 if report["status"] == "ok" else 1
     if args.status:

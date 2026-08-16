@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://health-data-hub.local/schemas/slice_integration_receipt_v2.schema.json",
+  "title": "Anchored AutoKeel slice integration receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "slice",
+    "continuation_ref",
+    "ship_branch",
+    "ship_commit",
+    "merge_base",
+    "verification_commit",
+    "command_evidence_trust_boundary",
+    "audit_delta",
+    "surfaces",
+    "verification_commands",
+    "review_artifacts",
+    "command_evidence"
+  ],
+  "properties": {
+    "schema_version": {"const": "autokeel.slice_integration.v2"},
+    "slice": {"type": "string", "pattern": "^S[0-9]{2}$"},
+    "continuation_ref": {"type": "string", "minLength": 1},
+    "ship_branch": {"type": "string", "pattern": "^ship/s[0-9]{2}$"},
+    "ship_commit": {"$ref": "#/$defs/commit"},
+    "merge_base": {"$ref": "#/$defs/commit"},
+    "verification_commit": {"$ref": "#/$defs/commit"},
+    "command_evidence_trust_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_kind", "runner_attestation", "claim_limit"],
+      "properties": {
+        "evidence_kind": {"const": "self_attested_command_transcript"},
+        "runner_attestation": {"const": "not_cryptographically_verified"},
+        "claim_limit": {"const": "structural_integrity_and_committed_hash_binding_only"}
+      }
+    },
+    "audit_delta": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/path"}
+    },
+    "surfaces": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/surface"}
+    },
+    "verification_commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "evidence_path", "exit_code", "status"],
+        "properties": {
+          "command": {"type": "string", "minLength": 1},
+          "evidence_path": {"$ref": "#/$defs/evidence_path"},
+          "exit_code": {"const": 0},
+          "status": {"enum": ["ok", "pass", "passed"]}
+        }
+      }
+    },
+    "review_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/review_path_entry"}
+    },
+    "command_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/evidence_path_entry"}
+    },
+    "supersedes_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "anchor_commit", "tree_entry"],
+      "properties": {
+        "path": {"$ref": "#/$defs/evidence_path"},
+        "anchor_commit": {"$ref": "#/$defs/commit"},
+        "tree_entry": {"$ref": "#/$defs/audit_tree_entry"}
+      }
+    }
+  },
+  "$defs": {
+    "commit": {"type": "string", "pattern": "^[0-9a-fA-F]{40,64}$"},
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "not": {"pattern": "(^/|(^|/)\\.\\.(/|$)|\\\\|:)"}
+    },
+    "review_path": {
+      "type": "string",
+      "pattern": "^docs/reviews/[^/]+\\.md$"
+    },
+    "evidence_path": {
+      "type": "string",
+      "pattern": "^docs/evidence/[^/]+\\.json$"
+    },
+    "tree_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "type", "object"],
+      "properties": {
+        "mode": {"type": "string", "pattern": "^[0-9]{6}$"},
+        "type": {"const": "blob"},
+        "object": {"type": "string", "pattern": "^[0-9a-fA-F]{40,64}$"}
+      }
+    },
+    "audit_tree_entry": {
+      "allOf": [
+        {"$ref": "#/$defs/tree_entry"},
+        {
+          "type": "object",
+          "properties": {"mode": {"const": "100644"}}
+        }
+      ]
+    },
+    "nullable_tree_entry": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/tree_entry"}
+      ]
+    },
+    "review_path_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "tree_entry"],
+      "properties": {
+        "path": {"$ref": "#/$defs/review_path"},
+        "tree_entry": {"$ref": "#/$defs/audit_tree_entry"}
+      }
+    },
+    "evidence_path_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "tree_entry"],
+      "properties": {
+        "path": {"$ref": "#/$defs/evidence_path"},
+        "tree_entry": {"$ref": "#/$defs/audit_tree_entry"}
+      }
+    },
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "path": {
+                "enum": [
+                  "ops/autonomy/events.jsonl",
+                  "ops/autonomy/failure_ledger.jsonl",
+                  "ops/autonomy/progress.md"
+                ]
+              }
+            },
+            "required": ["path"]
+          },
+          "then": {"properties": {"retention": {"const": "append_only"}}}
+        },
+        {
+          "if": {
+            "properties": {"path": {"const": "ops/autonomy/slices.json"}},
+            "required": ["path"]
+          },
+          "then": {"properties": {"retention": {"const": "slice_entry_stable"}}}
+        },
+        {
+          "if": {
+            "properties": {"path": {"const": "ops/autonomy/autonomy_state.json"}},
+            "required": ["path"]
+          },
+          "then": {"properties": {"retention": {"const": "runtime_state"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "path": {
+                "not": {
+                  "enum": [
+                    "ops/autonomy/events.jsonl",
+                    "ops/autonomy/failure_ledger.jsonl",
+                    "ops/autonomy/progress.md",
+                    "ops/autonomy/slices.json",
+                    "ops/autonomy/autonomy_state.json"
+                  ]
+                }
+              }
+            },
+            "required": ["path"]
+          },
+          "then": {"properties": {"retention": {"const": "immutable"}}}
+        }
+      ],
+      "required": [
+        "path",
+        "disposition",
+        "retention",
+        "ship_entry",
+        "continuation_entry"
+      ],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "disposition": {"enum": ["identical", "evolved"]},
+        "retention": {
+          "enum": ["immutable", "append_only", "slice_entry_stable", "runtime_state"]
+        },
+        "reason": {"type": "string", "minLength": 1},
+        "ship_entry": {"$ref": "#/$defs/nullable_tree_entry"},
+        "continuation_entry": {"$ref": "#/$defs/tree_entry"}
+      }
+    }
+  }
+}

@@ -355,6 +355,217 @@ CREATE TABLE IF NOT EXISTS sleep_merge_diagnostics (
             ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
             self.assertIn("tripwire_triggered", ledger)
 
+    def test_tripwire_recovery_route_does_not_create_global_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            autonomy = root / "ops/autonomy"
+            autonomy.mkdir(parents=True)
+            (autonomy / "policy.yaml").write_text(
+                "mode: autonomous_zero_human\nmanual_gates:\n  forbidden_commands:\n    - mark-manual-gate\n",
+                encoding="utf-8",
+            )
+            (autonomy / "slices.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "S11",
+                            "required": True,
+                            "status": "pending",
+                            "slug": "s11-mood-logging-recovery",
+                        }
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (autonomy / "autonomy_state.json").write_text("{}\n", encoding="utf-8")
+            (autonomy / "events.jsonl").write_text("", encoding="utf-8")
+            (autonomy / "failure_ledger.jsonl").write_text("", encoding="utf-8")
+
+            op = AutoKeel(root)
+            report = {
+                "fired": [
+                    {
+                        "name": "on_mood_transport_failure_week_4",
+                        "action": "streamlit_mobile_form",
+                        "recovery_slice": "S11",
+                        "evidence_status": {"status": "missing"},
+                    },
+                    {
+                        "name": "on_mood_compliance_failure_week_8",
+                        "action": "stop_modeling_fix_logging",
+                        "recovery_slice": "S11",
+                        "evidence_status": {"status": "missing"},
+                    },
+                    {
+                        "name": "on_baseline_gate_failure_week_9",
+                        "action": "collecting_state_no_override",
+                        "recovery_slice": "S11",
+                        "evidence_status": {"status": "fallback_required"},
+                    },
+                ]
+            }
+
+            self.assertFalse(op.apply_tripwire_fallbacks(report))
+            self.assertEqual(op.tripwire_recovery_slice(report), "S11")
+            self.assertEqual((autonomy / "failure_ledger.jsonl").read_text(encoding="utf-8"), "")
+            state = json.loads((autonomy / "autonomy_state.json").read_text(encoding="utf-8"))
+            events = [
+                json.loads(line)
+                for line in (autonomy / "events.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(state["last_event_id"], max(event["event_id"] for event in events))
+            self.assertEqual(
+                state["tripwire_decisions"]["on_mood_transport_failure_week_4"]["status"],
+                "recovery_required",
+            )
+            self.assertEqual(
+                state["tripwire_decisions"]["on_baseline_gate_failure_week_9"]["status"],
+                "recovery_required",
+            )
+
+    def test_tripwire_recovery_requires_one_shared_incomplete_slice(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            autonomy = root / "ops/autonomy"
+            autonomy.mkdir(parents=True)
+            (autonomy / "policy.yaml").write_text("mode: autonomous_zero_human\n", encoding="utf-8")
+            (autonomy / "slices.json").write_text(
+                json.dumps(
+                    [
+                        {"id": "S11", "required": True, "status": "pending"},
+                        {"id": "S12", "required": True, "status": "pending"},
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (autonomy / "autonomy_state.json").write_text("{}\n", encoding="utf-8")
+            (autonomy / "events.jsonl").write_text("", encoding="utf-8")
+            (autonomy / "failure_ledger.jsonl").write_text("", encoding="utf-8")
+            op = AutoKeel(root)
+
+            report = {
+                "fired": [
+                    {"action": "streamlit_mobile_form", "recovery_slice": "S11"},
+                    {"action": "stop_modeling_fix_logging", "recovery_slice": "S12"},
+                ]
+            }
+
+            self.assertIsNone(op.tripwire_recovery_slice(report))
+
+    def test_completed_tripwire_recovery_records_one_hard_stop_until_failure_is_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            autonomy = root / "ops/autonomy"
+            autonomy.mkdir(parents=True)
+            (autonomy / "policy.yaml").write_text(
+                "mode: autonomous_zero_human\nmanual_gates:\n  forbidden_commands:\n    - mark-manual-gate\n",
+                encoding="utf-8",
+            )
+            (autonomy / "slices.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "S11",
+                            "required": True,
+                            "status": "complete",
+                            "slug": "s11-mood-logging-recovery",
+                        }
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (autonomy / "autonomy_state.json").write_text("{}\n", encoding="utf-8")
+            (autonomy / "events.jsonl").write_text("", encoding="utf-8")
+            ledger_path = autonomy / "failure_ledger.jsonl"
+            ledger_path.write_text("", encoding="utf-8")
+            op = AutoKeel(root)
+            report = {
+                "fired": [
+                    {
+                        "name": "on_mood_compliance_failure_week_8",
+                        "action": "stop_modeling_fix_logging",
+                        "recovery_slice": "S11",
+                        "evidence_status": {"status": "triggered"},
+                    }
+                ]
+            }
+
+            self.assertFalse(op.apply_tripwire_fallbacks(report))
+            self.assertIsNone(op.tripwire_recovery_slice(report))
+            first_rows = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(first_rows), 1)
+            self.assertTrue(first_rows[0]["open"])
+            self.assertEqual(
+                first_rows[0]["root_cause_id"],
+                "GLOBAL-TRIPWIRE-ON-MOOD-COMPLIANCE-FAILURE-WEEK-8",
+            )
+            state = json.loads((autonomy / "autonomy_state.json").read_text(encoding="utf-8"))
+            decision = state["tripwire_decisions"]["on_mood_compliance_failure_week_8"]
+            self.assertEqual(decision["status"], "fallback_required")
+            self.assertEqual(decision["recovery_status"], "complete")
+            self.assertTrue(decision["evidence_signature"])
+
+            self.assertFalse(op.apply_tripwire_fallbacks(report))
+            self.assertEqual(len(ledger_path.read_text(encoding="utf-8").splitlines()), 1)
+
+            first_rows[0]["open"] = False
+            ledger_path.write_text(json.dumps(first_rows[0]) + "\n", encoding="utf-8")
+            self.assertFalse(op.apply_tripwire_fallbacks(report))
+            reopened_rows = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(reopened_rows), 2)
+            self.assertTrue(reopened_rows[-1]["open"])
+
+    def test_baseline_fallback_requires_independent_typed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            autonomy = root / "ops/autonomy"
+            autonomy.mkdir(parents=True)
+            (autonomy / "policy.yaml").write_text(
+                "mode: autonomous_zero_human\nmanual_gates:\n  forbidden_commands:\n    - mark-manual-gate\n",
+                encoding="utf-8",
+            )
+            (autonomy / "slices.json").write_text("[]\n", encoding="utf-8")
+            (autonomy / "autonomy_state.json").write_text("{}\n", encoding="utf-8")
+            (autonomy / "events.jsonl").write_text("", encoding="utf-8")
+            ledger_path = autonomy / "failure_ledger.jsonl"
+            ledger_path.write_text("", encoding="utf-8")
+            op = AutoKeel(root)
+            evidence_path = root / "private/evidence/S05/baseline_gate"
+            report = {
+                "fired": [
+                    {
+                        "name": "on_baseline_gate_failure_week_9",
+                        "action": "collecting_state_no_override",
+                        "evidence": "private/evidence/S05/baseline_gate",
+                        "evidence_status": {
+                            "status": "fallback_required",
+                            "runtime_gate_status": "missing",
+                        },
+                    }
+                ]
+            }
+
+            self.assertFalse(op.apply_tripwire_fallbacks(report))
+            self.assertFalse(evidence_path.exists())
+            self.assertIsNone(op.tripwire_recovery_slice(report))
+
+            state = json.loads((autonomy / "autonomy_state.json").read_text(encoding="utf-8"))
+            decision = state["tripwire_decisions"]["on_baseline_gate_failure_week_9"]
+            self.assertEqual(decision["status"], "fallback_required")
+            self.assertEqual(decision["evidence_status"], "fallback_required")
+            ledger = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(ledger), 1)
+            self.assertTrue(ledger[0]["open"])
+            self.assertEqual(ledger[0]["failure_class"], "tripwire_triggered")
+
+            self.assertFalse(op.apply_tripwire_fallbacks(report))
+            self.assertEqual(len(ledger_path.read_text(encoding="utf-8").splitlines()), 1)
+            self.assertFalse(evidence_path.exists())
+
     def test_mood_shortcut_payload_has_valid_empty_context_chips(self) -> None:
         captured: dict[str, object] = {}
 

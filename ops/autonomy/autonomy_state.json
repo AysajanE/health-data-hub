@@ -9,12 +9,13 @@
     "S05"
   ],
   "current_slice": null,
-  "last_event_id": 1519,
+  "last_event_id": 1534,
   "mode": "autonomous_zero_human",
   "project": "health-data-hub",
   "run_history": [
     {
       "completed_at": "2026-05-24T17:10:28-04:00",
+      "integration_base_commit": "65af28eb1ccfc37a1a614a8c936258466de7f1af",
       "run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
       "ship_branch": "ship/s01",
       "ship_commit": "50a58201058536b7518cd8fb4d5774a3c69df53d",
@@ -31,12 +32,20 @@
       "started_at": "2026-05-27T20:27:44-04:00"
     },
     {
+      "completed_at": "2026-05-28T00:18:39-04:00",
+      "integration_base_commit": "c16964f6d5d6610e6305a652de46896e79417fed",
       "run_id": "RUN_20260528T012206Z_d1a034d3e30d4b26a26273e07597d115",
+      "ship_branch": "ship/s02",
+      "ship_commit": "9b9a72bd9201eca69f94949d66aba9b71ee30b5c",
       "slice": "S02",
       "started_at": "2026-05-27T21:28:59-04:00"
     },
     {
+      "completed_at": "2026-05-29T20:56:13-04:00",
+      "integration_base_commit": "26e3eebe67b2191526a194ba14d84155638ee9a8",
       "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+      "ship_branch": "ship/s03",
+      "ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
       "slice": "S03",
       "started_at": "2026-05-29T17:42:58-04:00"
     },
@@ -46,12 +55,20 @@
       "started_at": "2026-05-30T15:39:32-04:00"
     },
     {
+      "completed_at": "2026-05-31T17:42:48-04:00",
+      "integration_base_commit": "2cf6135a292158a6b882bca9842e358f3f98e467",
       "run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
+      "ship_branch": "ship/s04",
+      "ship_commit": "6d2eb8eaa1e02229cb917c0485840c4ab9602fca",
       "slice": "S04",
       "started_at": "2026-05-31T16:20:24-04:00"
     },
     {
+      "completed_at": "2026-06-11T15:04:12-04:00",
+      "integration_base_commit": "378b87443ab2ee3c57c44a7e5079b9ce7a6fff66",
       "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",
+      "ship_branch": "ship/s05",
+      "ship_commit": "6dce352ead0729f9bfde9a52a5aa28e08161acb6",
       "slice": "S05",
       "started_at": "2026-06-11T10:12:13-04:00"
     }

@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from scripts.retrain_model import main, run_retrain
 
@@ -67,6 +68,9 @@ def _write_verified_feature_database(
     multi_source_feature_dates: set[str] | None = None,
     eight_fallback_feature_dates: set[str] | None = None,
     non_oura_stage_feature_dates: set[str] | None = None,
+    oura_stage_alias_feature_dates: set[str] | None = None,
+    oura_method_alias_feature_dates: set[str] | None = None,
+    oura_absent_feature_dates: set[str] | None = None,
     missing_diagnostic_feature_dates: set[str] | None = None,
 ) -> None:
     database = Path(path)
@@ -99,7 +103,8 @@ def _write_verified_feature_database(
             CREATE TABLE sleep_merge_diagnostics (
                 sleep_date DATE,
                 hrv_merge_method VARCHAR,
-                stage_source VARCHAR
+                stage_source VARCHAR,
+                oura_present BOOLEAN
             )
             """
         )
@@ -108,6 +113,9 @@ def _write_verified_feature_database(
         multi_source_feature_dates = multi_source_feature_dates or set()
         eight_fallback_feature_dates = eight_fallback_feature_dates or set()
         non_oura_stage_feature_dates = non_oura_stage_feature_dates or set()
+        oura_stage_alias_feature_dates = oura_stage_alias_feature_dates or set()
+        oura_method_alias_feature_dates = oura_method_alias_feature_dates or set()
+        oura_absent_feature_dates = oura_absent_feature_dates or set()
         missing_diagnostic_feature_dates = missing_diagnostic_feature_dates or set()
         for index, row in enumerate(rows, start=1):
             feature_date = str(row["feature_date"])
@@ -137,19 +145,28 @@ def _write_verified_feature_database(
             )
             if feature_date not in missing_diagnostic_feature_dates:
                 conn.execute(
-                    "INSERT INTO sleep_merge_diagnostics VALUES (?, ?, ?)",
+                    "INSERT INTO sleep_merge_diagnostics VALUES (?, ?, ?, ?)",
                     [
                         feature_date,
                         (
                             "eight_fallback"
                             if feature_date in eight_fallback_feature_dates
-                            else "oura_primary"
+                            else (
+                                "OURA_PRIMARY"
+                                if feature_date in oura_method_alias_feature_dates
+                                else "oura_primary"
+                            )
                         ),
                         (
                             "8sleep"
                             if feature_date in non_oura_stage_feature_dates
-                            else "oura"
+                            else (
+                                " OURA "
+                                if feature_date in oura_stage_alias_feature_dates
+                                else "oura"
+                            )
                         ),
+                        feature_date not in oura_absent_feature_dates,
                     ],
                 )
     finally:
@@ -293,6 +310,61 @@ def test_retrain_entrypoint_default_loader_excludes_non_oura_stage_rows(
         tmp_path,
         non_oura_stage_feature_dates={str(rows[-1]["feature_date"])},
     )
+
+
+@pytest.mark.parametrize(
+    "writer_kwargs",
+    [
+        {"oura_stage_alias_feature_dates": {"2026-01-30"}},
+        {"oura_method_alias_feature_dates": {"2026-01-30"}},
+        {"oura_absent_feature_dates": {"2026-01-30"}},
+    ],
+)
+def test_retrain_entrypoint_default_loader_requires_exact_persisted_oura_provenance(
+    tmp_path: Path,
+    writer_kwargs: dict[str, set[str]],
+) -> None:
+    _assert_default_loader_skips_invalid_last_row(tmp_path, **writer_kwargs)
+
+
+@pytest.mark.parametrize(
+    ("field", "nonfinite"),
+    [
+        ("total_sleep_min", float("nan")),
+        ("hrv_z", float("inf")),
+        ("deep_sleep_pct", float("-inf")),
+        ("prior_day_feeling", float("nan")),
+        ("feeling", float("inf")),
+        ("hrv_avg_ms", float("-inf")),
+    ],
+)
+def test_retrain_entrypoint_rejects_nonfinite_numeric_rows_before_outputs(
+    tmp_path: Path,
+    field: str,
+    nonfinite: float,
+) -> None:
+    rows = _build_training_rows(30)
+    rows[-1][field] = nonfinite
+    eval_log_path = tmp_path / "models" / "eval.jsonl"
+    model_dir = tmp_path / "models"
+
+    report = run_retrain(
+        root=tmp_path,
+        eval_log_path=eval_log_path,
+        model_dir=model_dir,
+        run_date="2026-06-11",
+        provider_preflight_runner=_ok_preflight,
+        feature_row_loader=lambda: rows,
+    )
+
+    assert report["status"] == "error"
+    assert report["errors"] == [
+        f"ValueError: training row field must be finite: {field}"
+    ]
+    assert report["record"] is None
+    assert report["artifacts"] == {}
+    assert not eval_log_path.exists()
+    assert not list(model_dir.glob("*.pkl"))
 
 
 def test_retrain_entrypoint_trains_logs_gate_metrics_and_persists_artifacts(

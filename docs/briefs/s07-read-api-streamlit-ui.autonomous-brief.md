@@ -2,7 +2,15 @@
 
 Autonomy profile: guarded zero-supervision for S07 only.
 
-Manual gates are forbidden. S07 builds the read API and Streamlit UI for retrospective v1 output only.
+Manual gates are forbidden. S07 builds the active local read surface and
+Streamlit UI for retrospective v1 output only. Under the expected S11 fallback,
+that read surface is a Python interface rather than a FastAPI service.
+
+The active mood-transport fallback is authoritative. If S11 records
+`streamlit_mobile_form` as `fallback_accepted`, S07 reuses the verified S11
+form and reads locally through warehouse/model interfaces; FastAPI and the iOS
+Shortcut remain deferred to v1.1. S07 must not rebuild a second mood form or
+silently reactivate the failed transport path.
 
 ## Provider Policy Requirements
 

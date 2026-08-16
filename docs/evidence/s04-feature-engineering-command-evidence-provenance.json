@@ -1,0 +1,44 @@
+{
+  "schema_version": "autokeel_command_evidence_provenance_v1",
+  "slice": "S04",
+  "run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
+  "evidence_path": "docs/evidence/s04-feature-engineering-command-evidence.json",
+  "evidence_created_at": "2026-05-31T21:13:23Z",
+  "evidence_sha256": "63aed86d48917d9369cc1a949c4c3746005667b3d367abd777b552334d67e99b",
+  "acceptance_window_start_utc": "2026-05-31T19:59:38Z",
+  "acceptance_window_end_utc": "2026-05-31T21:13:23Z",
+  "local_sources": [
+    {
+      "kind": "run_start",
+      "path": ".local/plan_orchestrator/packet/artifacts/normalized_plan/normalized_plan.json",
+      "field": "generated_at_utc",
+      "value_utc": "2026-05-31T19:59:38Z"
+    },
+    {
+      "kind": "verification_report",
+      "path": ".local/plan_orchestrator/packet/artifacts/verification_report/verification_report.fix.round-1.json",
+      "field": "generated_at_utc",
+      "value_utc": "2026-05-31T21:13:23Z"
+    }
+  ],
+  "verified_commands": [
+    {
+      "command": "python scripts/verify_s04_readiness.py --json",
+      "exit_code": 0,
+      "status": "pass",
+      "log_path": ".local/automation/plan_orchestrator/runs/RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1/items/05/attempt-1/logs/verification.fix.round-1/01_01.log"
+    },
+    {
+      "command": "python -m pytest tests/test_features.py -q",
+      "exit_code": 0,
+      "status": "pass",
+      "log_path": ".local/automation/plan_orchestrator/runs/RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1/items/05/attempt-1/logs/verification.fix.round-1/01_02.log"
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "status": "pass",
+      "log_path": ".local/automation/plan_orchestrator/runs/RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1/items/05/attempt-1/logs/verification.fix.round-1/01_03.log"
+    }
+  ]
+}

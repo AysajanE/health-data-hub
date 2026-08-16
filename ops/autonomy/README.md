@@ -15,9 +15,15 @@ python -m ops.autonomy.autokeel --doctor --strict-swr S05
 python -m ops.autonomy.autokeel --readiness S02
 python -m ops.autonomy.autokeel --readiness S03
 python -m ops.autonomy.autokeel --readiness S04
+python -m ops.autonomy.autokeel --readiness S05
+python -m ops.autonomy.autokeel --readiness S06
+python -m ops.autonomy.autokeel --readiness S11
+python -m ops.autonomy.autokeel --readiness S12
 python scripts/verify_failure_ledger.py --json
 python scripts/verify_autokeel_invariants.py --json
+python scripts/verify_event_log.py --json
 python scripts/verify_ship_invariants.py S02 --json
+python scripts/verify_slice_integration.py S02 --json
 python scripts/verify_run_retarget_evidence.py docs/evidence/<slice>-run-retarget-<timestamp>.json --json
 python scripts/validate_provider_decisions.py S03 --json
 python scripts/validate_swr_review_bundle.py .local/autokeel/swr/review_lane/<bundle>.json --json
@@ -28,6 +34,11 @@ python -m ops.autonomy.autokeel --replay-events
 python -m ops.autonomy.autokeel --unblock-evidence S03 private/evidence/S03/request
 python -m ops.autonomy.autokeel --close-failure S01 manual_gate_leak --closure-evidence docs/reviews/example.md --closure-note "Reviewed replacement autonomous gate evidence."
 ```
+
+When more than one open row has the same slice and failure class, closure is
+fail-closed. Pass `--failure-id` for one exact row or `--root-cause-id` for one
+unambiguous root cause; one evidence artifact must never close an unrelated
+tripwire or repair failure.
 
 Missing autoplans are generated through the configured `autoplan.command`.
 When a slice enters `replan_required`, AutoKeel archives the existing playbook
@@ -41,6 +52,29 @@ are recorded as `lane_decision_invalid`. AutoKeel must route these slices to
 changed by policy. `--readiness S02` runs the pre-launch readiness gate for
 S02, including lane-decision validation, review artifact validation, and
 tracked-data safety checks. It is not a slice completion gate.
+
+Completed-slice state is also not enough to prove that a ship result reached
+the continuation branch. `scripts/verify_slice_integration.py` classifies a
+recorded ship as ancestral, exact-surface-equivalent, patch-equivalent, or
+explicitly reconciled. Reconciliation receipts are read only from committed
+Git objects, must enumerate every ship-changed path, and must bind the exact
+current review and command-evidence blobs. A dirty working tree can prepare a
+receipt, but it cannot satisfy this landed-state gate.
+
+Post-completion reviews do not rewrite historical ship metadata. A new review
+must validate in the current tree and have a separately recorded
+`<slice>-post-completion-review-integration` intervention that names the
+unchanged historical run, ship branch, ship commit, exact new review list, and
+command evidence. The event binds the ratification artifact's own SHA-256, and
+the artifact binds the exact canonical slice entry, reconciliation receipt,
+review, and command-evidence SHA-256 values, so later edits cannot silently
+broaden an older intervention. Unrelated future slice-status changes do not
+invalidate historical review ratification. Ship-time reviews still require
+their original detached ship-checkout validation event.
+
+The event log retains historical rows exactly. Known legacy duplicate ids are
+accepted only when `scripts/verify_event_log.py` matches every raw row to the
+hash-bound reconciliation receipt; new duplicate or non-monotonic ids fail.
 
 ## S02 SWR Pre-Launch Runbook
 
@@ -243,6 +277,138 @@ ingestion-decision files except as read-only consult references.
 If a S04 run retarget, provider-decision conflict, high/critical open failure,
 or readiness failure appears, stop the zero-supervision launch and return to
 controlled-autonomous diagnosis.
+
+## Tripwire Recovery and S06 Launch
+
+Behavioral tripwires use strict typed JSON evidence, not Markdown review
+markers or arbitrary file existence. Mood transport requires exactly seven
+aggregate boolean opportunities. Mood compliance remains `not_due` until the
+real logger activation date plus 28 days and then requires at least 23 unique,
+non-backfill logged days in the 28 completed local days. A missing, ineligible,
+or failed baseline gate can only enforce `collecting_state_no_override`; it is
+never promoted to a model pass, and AutoKeel cannot manufacture the evidence.
+
+When the two mood tripwires and baseline-display tripwire require the configured
+S11 recovery, AutoKeel may route only S11 while they are fired. This is not a
+general bypass: all non-automatic fired tripwires must name the same required,
+incomplete recovery slice. S11 must build the real mobile form, verify a
+non-synthetic LAN persistence flow, and independently prove the collecting-state
+runtime guard before fallback evidence can be accepted. Until then, leave S11
+blocked on real local evidence and do not launch S06.
+
+Tripwire decisions are evidence-state-specific, not permanent waivers. If the
+evidence changes—or mature compliance later fails after S11 is already
+complete—AutoKeel records a new uniquely addressable GLOBAL hard-stop failure
+and requires an explicit replan. It must not reuse the old recovery decision or
+silently route a completed slice.
+
+Before any usage-billed S06 SWR generation, run:
+
+```bash
+python -m ops.autonomy.autokeel --readiness S06
+python scripts/verify_s06_readiness.py --json
+```
+
+The S06 zero-spend gate requires the full dependency closure complete and
+durably integrated, all consumed product and control surfaces tracked at
+`HEAD`, every primary design/autoplan/brief input byte-identical to `HEAD`, a
+matching state digest that includes the active-run state, resolved tripwires, passing global
+invariants, no open high/critical S06 or GLOBAL failure, and no active PO/SWR
+run. Its lane decision must be freshly materialized after the final recovery
+commit and must bind both that `HEAD` and the exact committed input-tree blobs.
+The sanctioned lane-decision writer records its event and refreshes the state
+digest; an older pre-recovery decision is intentionally invalid.
+
+Every compiler launch also fails closed unless its design, autoplan, and
+approved brief are tracked and byte-identical to `HEAD`; the same seal remains
+mandatory for the billed S06 SWR launch. The compiler seal applies to all
+compiler slices, including S11, rather than only to S06. An invalid
+autoplan discovered by `--once --dry-run` is reported as a planned corrective
+regeneration without moving the source into `archived_autoplans`, creating a
+failure artifact, or leaving a heartbeat or generated input behind.
+
+AutoKeel children receive a deny-by-default environment containing only a
+small process/runtime allowlist plus explicit per-command values. Repo-local
+`.env.local`/`.env` files are never read during AutoKeel construction and are
+never injected into `os.environ`. Status, readiness, doctor, intervention, and
+digest operations do not open them. Only the final authorized billed SWR route
+may lazily read and receive the exact provider variables named by
+`swr.required_env`; diagnostic SWR preflight uses process environment only.
+Compiler, PO, review, readiness, S11, and activation subprocesses do not inherit
+provider or health secrets.
+
+S05/S06 readiness receives only
+`AUTOKEEL_READINESS_OPENAI_API_KEY_PRESENT=1|0`, computed from whether the
+parent process explicitly exported a nonblank `OPENAI_API_KEY`. The provider
+value itself remains stripped by the child environment and repo env files are
+not opened. The marker is presence-only launch metadata, not a credential.
+
+Environment sanitization does not constrain same-user file reads. The current
+S11 compiler, PO, reviewer, and generated acceptance routes have no enforceable
+OS file-read sandbox, while repo-local `.env.local`, `data/`, `private/`, or
+model artifacts may exist. AutoKeel therefore stops S11 with
+`blocked_compile_inputs` and `control_error` exit 69 before readiness and
+before autoplan/compiler spend, PO start/resume/recovery, review generation,
+generated acceptance, ship, or activation. The stop is metadata-only: it may
+report which sensitive roots exist but never opens or enumerates them. S11 must
+not be retried until the complete generated-tool route has enforceable
+deny-by-default file-read isolation and the activation receipt control below is
+available.
+
+S11 adds a distinct post-ship `activation_acceptance` phase after review and
+hermetic `verify_slice` acceptance. Generated activation code is currently
+disabled and fails closed as `control_error`: the trusted outer-process
+validator for a regular, non-symlink, `0600`, fresh aggregate evidence file is
+not yet implemented, so a generated verifier cannot self-attest completion
+with a dummy hash. The future receipt contract requires an exact aggregate
+`evidence_path`, independently recomputed SHA-256, and offset-aware
+`observed_at`, bound to the slice, run, detached ship commit, verifier hash,
+and (for S12) current authority hash.
+
+The macOS sandbox profile is a disabled, uncertified draft, not an enabled
+execution path. It allows exact executable paths only; file-content reads only
+from the detached ship worktree, narrowly selected interpreter/runtime roots,
+one exact aggregate evidence file, and exact read-only warehouse files; it has
+no network or file-write allowance. Broad `/Library`, `/opt/homebrew`,
+`/private/etc`, `/dev`, arbitrary home files, repo-local env files, credential
+storage, and unrelated private evidence are not allowed. AutoKeel does not
+execute generated activation code until this profile has a positive
+generated-verifier runtime probe and a trusted outer validator independently verifies a regular,
+non-symlink, `0600`, fresh aggregate receipt and recomputes its SHA-256. Only
+after both controls exist may a schema-valid
+`blocked_external` result be classified as missing external evidence;
+malformed/configuration/execution/sandbox failures remain `control_error` and
+generic `{"status":"ok"}` output cannot complete a slice. Activation control
+errors remain `blocked_compile_inputs`; they do not make S11 actionable for
+another paid compile.
+
+S12 uses the same two-boundary lifecycle for a different purpose. Its offline
+readiness gate runs before any compiler, OAuth, token, network, or provider
+operation and returns `blocked_external` until an exact authority package is
+present. Deterministic ship acceptance remains hermetic. A later read-only
+`activation_acceptance` verifies real aggregate sync evidence against the
+canonical runtime root; missing evidence blocks completion without weakening
+the authority gate or committing provider data. S12 readiness is re-run at
+every start/resume, terminal recovery, ship, and activation boundary so a stale
+run or revoked authority cannot bypass the current gate. The trusted readiness
+script's schema-valid `blocked_external` exit 2 is normalized to the dedicated
+AutoKeel blocked-external exit 67 at each of those boundaries; it is not
+recorded as a PO `test_failure` or activation `control_error`.
+Every boundary uses the same strict report validator: exact top-level fields,
+typed required safety checks and blocker counts, and raw status/exit binding.
+An incomplete `{status}` object or a `blocked_external` report with any raw
+exit other than 2 is a control error, never external evidence.
+
+Ship creation seals the exact commit returned when `ship/<slice>` is created.
+Detached review, acceptance, and activation validation use that immutable
+commit rather than the mutable branch name. Completion re-resolves the branch,
+then immediately performs an atomic compare-and-swap `update-ref` using the
+validated commit as both expected and new value before recording completion.
+Movement detected at either check is rejected without overwriting the ref.
+The durable completion record remains bound to the immutable commit; because a
+mutable ref may still move after the compare-and-swap, later landed-state
+verification must continue to validate the recorded commit rather than trust
+the branch name alone.
 
 For PO execution, AutoKeel creates a local ignored `automation/` shim that
 points at the installed Keel plan-orchestrator runtime. This lets the

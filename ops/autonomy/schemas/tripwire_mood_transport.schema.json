@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://health-data-hub.local/schemas/tripwire_mood_transport.schema.json",
+  "title": "Mood transport tripwire evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tripwire",
+    "created_at",
+    "status",
+    "action",
+    "fallback_verified",
+    "observation",
+    "contains_ratings",
+    "contains_notes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "health_data_hub.tripwire.mood_transport.v1"
+    },
+    "tripwire": {
+      "const": "on_mood_transport_failure_week_4"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "enum": ["ok", "triggered", "fallback_accepted"]
+    },
+    "action": {
+      "enum": ["none", "streamlit_mobile_form"]
+    },
+    "fallback_verified": {
+      "type": "boolean"
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "window_start",
+        "window_end",
+        "opportunities",
+        "successful_posts",
+        "failed_posts"
+      ],
+      "properties": {
+        "window_start": {
+          "type": "string",
+          "format": "date"
+        },
+        "window_end": {
+          "type": "string",
+          "format": "date"
+        },
+        "opportunities": {
+          "const": 7
+        },
+        "successful_posts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "failed_posts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        }
+      }
+    },
+    "contains_ratings": {
+      "const": false
+    },
+    "contains_notes": {
+      "const": false
+    }
+  }
+}

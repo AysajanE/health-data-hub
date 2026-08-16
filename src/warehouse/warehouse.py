@@ -11,7 +11,15 @@ from uuid import UUID, uuid4
 import duckdb
 from pydantic import ValidationError
 
-from src.warehouse.features import SleepProviderPolicy, eligible_sleep_rows_for_v1, load_sleep_provider_policy
+from src.warehouse.features import (
+    LabeledDailyFeaturesRow,
+    MIN_PRIOR_HRV_BASELINE_VALUES,
+    PRIOR_HRV_WINDOW_DAYS,
+    SleepProviderPolicy,
+    compute_prior_only_hrv_z,
+    eligible_sleep_rows_for_v1,
+    load_sleep_provider_policy,
+)
 from src.warehouse.models import (
     DailyFeaturesRow,
     MoodEntryRow,
@@ -60,6 +68,21 @@ _MOOD_ENTRY_COLUMNS = (
 )
 _DAILY_FEATURE_COLUMNS = (
     "feature_date",
+    "total_sleep_min",
+    "hrv_z",
+    "deep_sleep_pct",
+    "prior_day_feeling",
+    "hrv_avg_ms",
+    "hrv_z_method",
+    "feature_version",
+    "prior_day_feeling_imputed",
+    "sleep_source_count",
+    "sleep_merge_warning",
+    "computed_at_utc",
+)
+_LABELED_DAILY_FEATURE_COLUMNS = (
+    "feature_date",
+    "feeling",
     "total_sleep_min",
     "hrv_z",
     "deep_sleep_pct",
@@ -232,17 +255,8 @@ def _mood_entry_from_db(row: Sequence[Any]) -> MoodEntryRow:
     )
 
 
-def _median_absolute_deviation(values: Sequence[float], median_value: float) -> float:
-    deviations = [abs(value - median_value) for value in values]
-    return float(statistics.median(deviations))
-
-
-def _std_fallback_z(current_value: float, history: Sequence[float]) -> tuple[float | None, str]:
-    std_value = statistics.pstdev(history)
-    if std_value < 1e-6:
-        return None, "missing"
-    mean_value = statistics.fmean(history)
-    return (current_value - mean_value) / std_value, "std_fallback"
+def _labeled_daily_features_from_db(row: Sequence[Any]) -> LabeledDailyFeaturesRow:
+    return LabeledDailyFeaturesRow(**_row_dict(_LABELED_DAILY_FEATURE_COLUMNS, row))
 
 
 def _compute_hrv_z(
@@ -255,7 +269,7 @@ def _compute_hrv_z(
     if current_value is None:
         return None, None
 
-    recent_window_start = feature_date - timedelta(days=28)
+    recent_window_start = feature_date - timedelta(days=PRIOR_HRV_WINDOW_DAYS)
     recent_rows = conn.execute(
         """
         SELECT hrv_avg_ms
@@ -266,35 +280,28 @@ def _compute_hrv_z(
         [source, feature_date, recent_window_start],
     ).fetchall()
     recent_history = [float(value) for (value,) in recent_rows]
+    if len(recent_history) >= MIN_PRIOR_HRV_BASELINE_VALUES:
+        return compute_prior_only_hrv_z(
+            current_value=current_value,
+            recent_history=recent_history,
+            prior_history=recent_history,
+        )
 
-    if len(recent_history) >= 7:
-        history = recent_history
-        method = "prior_28d"
-    else:
-        expanding_rows = conn.execute(
-            """
-            SELECT hrv_avg_ms
-            FROM sleep_nights
-            WHERE source = ? AND sleep_date < ? AND hrv_avg_ms IS NOT NULL
-            ORDER BY sleep_date
-            """,
-            [source, feature_date],
-        ).fetchall()
-        history = [float(value) for (value,) in expanding_rows]
-        if len(history) < 7:
-            return None, None
-        method = "prior_expanding_min7"
-
-    median_value = float(statistics.median(history))
-    mad = _median_absolute_deviation(history, median_value)
-    scale = 1.4826 * mad
-    if scale >= 1e-6:
-        return (current_value - median_value) / scale, method
-
-    std_z, fallback_kind = _std_fallback_z(current_value, history)
-    if std_z is None:
-        return None, None
-    return std_z, f"{method}_{fallback_kind}"
+    expanding_rows = conn.execute(
+        """
+        SELECT hrv_avg_ms
+        FROM sleep_nights
+        WHERE source = ? AND sleep_date < ? AND hrv_avg_ms IS NOT NULL
+        ORDER BY sleep_date
+        """,
+        [source, feature_date],
+    ).fetchall()
+    expanding_history = [float(value) for (value,) in expanding_rows]
+    return compute_prior_only_hrv_z(
+        current_value=current_value,
+        recent_history=recent_history,
+        prior_history=expanding_history,
+    )
 
 
 def _choose_total_sleep_minutes(
@@ -306,8 +313,9 @@ def _choose_total_sleep_minutes(
     warning = EIGHT_SLEEP_FALLBACK_IGNORED_WARNING if eight_row is not None else None
 
     if oura_total is not None and eight_total is not None:
-        delta = abs(oura_total - eight_total)
-        return oura_total, delta, warning
+        # This delta is diagnostic metadata only. Oura remains the sole v1
+        # feature source; the 8 Sleep value is never blended or substituted.
+        return oura_total, abs(oura_total - eight_total), warning
     if oura_total is not None:
         return oura_total, None, warning
     return None, None, warning
@@ -357,16 +365,35 @@ def _compute_prior_day_feeling(
         SELECT e.feeling
         FROM mood_current c
         JOIN mood_entries e ON e.log_id = c.log_id
-        WHERE c.mood_date < ?
+        WHERE c.mood_date < ? AND c.mood_date >= ?
         ORDER BY c.mood_date DESC
         LIMIT 7
         """,
-        [feature_date],
+        [feature_date, feature_date - timedelta(days=7)],
     ).fetchall()
     history = [int(value) for (value,) in history_rows]
     if not history:
         return None, False
     return int(round(statistics.fmean(history))), True
+
+
+def _load_current_day_feeling(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    feature_date: date,
+) -> int | None:
+    row = conn.execute(
+        """
+        SELECT e.feeling
+        FROM mood_current c
+        JOIN mood_entries e ON e.log_id = c.log_id
+        WHERE c.mood_date = ?
+        """,
+        [feature_date],
+    ).fetchone()
+    if row is None:
+        return None
+    return int(row[0])
 
 
 def apply_schema(conn: duckdb.DuckDBPyConnection, schema_path: Path = SCHEMA_PATH) -> None:
@@ -587,6 +614,14 @@ def compute_daily_features(
     provider_policy: SleepProviderPolicy | None = None,
     policy_root: Path = REPO_ROOT,
 ) -> DailyFeaturesRow | None:
+    """Compute and persist feature metadata for one calendar date.
+
+    Prior-day mood imputation is display/inference-only. When explicitly
+    enabled, the persisted flag remains true so model-training readers can and
+    do exclude the row. The same-day target mood is never imputed here.
+    """
+
+    current_day_feeling = _load_current_day_feeling(conn, feature_date=feature_date)
     sleep_rows = conn.execute(
         """
         SELECT source, sleep_date, bedtime_utc, waketime_utc, total_sleep_min,
@@ -597,7 +632,7 @@ def compute_daily_features(
         """,
         [feature_date],
     ).fetchall()
-    if not sleep_rows:
+    if current_day_feeling is None and not sleep_rows:
         return None
 
     policy = provider_policy or load_sleep_provider_policy(policy_root)
@@ -660,6 +695,40 @@ def compute_daily_features(
     return row
 
 
+def select_labeled_daily_features(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[LabeledDailyFeaturesRow]:
+    where_clauses: list[str] = []
+    params: list[Any] = []
+
+    if start_date is not None:
+        where_clauses.append("df.feature_date >= ?")
+        params.append(start_date)
+    if end_date is not None:
+        where_clauses.append("df.feature_date <= ?")
+        params.append(end_date)
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    rows = conn.execute(
+        f"""
+        SELECT df.feature_date, e.feeling, df.total_sleep_min, df.hrv_z, df.deep_sleep_pct,
+               df.prior_day_feeling, df.hrv_avg_ms, df.hrv_z_method, df.feature_version,
+               df.prior_day_feeling_imputed, df.sleep_source_count, df.sleep_merge_warning,
+               df.computed_at_utc
+        FROM daily_features df
+        JOIN mood_current c ON c.mood_date = df.feature_date
+        JOIN mood_entries e ON e.log_id = c.log_id
+        {where_sql}
+        ORDER BY df.feature_date
+        """,
+        params,
+    ).fetchall()
+    return [_labeled_daily_features_from_db(row) for row in rows]
+
+
 __all__ = [
     "DEFAULT_DATABASE_PATH",
     "DEFAULT_FEATURE_VERSION",
@@ -673,5 +742,6 @@ __all__ = [
     "insert_mood_entry",
     "insert_sleep_merge_diagnostics",
     "insert_sleep_night",
+    "select_labeled_daily_features",
     "select_current_mood_entries",
 ]

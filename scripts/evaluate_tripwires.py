@@ -14,6 +14,11 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ops.autonomy.autokeel import load_policy
+from scripts.tripwire_evidence import (
+    BASELINE_GATE_KIND,
+    EVIDENCE_KIND_BY_TRIPWIRE,
+    validate_typed_tripwire_report,
+)
 
 
 OK_STATUSES = {"ok", "fallback_accepted"}
@@ -86,28 +91,97 @@ def latest_json_report(path: Path) -> dict[str, Any] | None:
     return candidates[0][2]
 
 
-def evidence_status(root: Path, evidence_rel: str | None) -> dict[str, Any]:
+def _missing_typed_evidence(
+    evidence_rel: str | None,
+    *,
+    evidence_kind: str,
+    reason: str,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "missing",
+        "path": evidence_rel,
+        "ok": False,
+        "kind": evidence_kind,
+        "reason": reason,
+    }
+    if evidence_kind == BASELINE_GATE_KIND:
+        # No runtime gate result is not evidence that the model passed. The
+        # only safe interpretation is to require the collecting-state UI.
+        result.update(
+            status="fallback_required",
+            action="collecting_state_no_override",
+            runtime_gate_status="missing",
+        )
+    return result
+
+
+def evidence_status(
+    root: Path,
+    evidence_rel: str | None,
+    *,
+    evidence_kind: str | None = None,
+    tripwire: str | None = None,
+    as_of: date | None = None,
+) -> dict[str, Any]:
     if not evidence_rel:
+        if evidence_kind:
+            return _missing_typed_evidence(
+                evidence_rel,
+                evidence_kind=evidence_kind,
+                reason="no evidence path configured",
+            )
         return {"status": "missing", "reason": "no evidence path configured"}
 
     evidence_path = root / evidence_rel
     if not evidence_path.exists():
+        if evidence_kind:
+            return _missing_typed_evidence(
+                evidence_rel,
+                evidence_kind=evidence_kind,
+                reason="evidence path does not exist",
+            )
         return {"status": "missing", "path": evidence_rel}
-
-    if evidence_path.is_file() and evidence_path.suffix == ".md":
-        # Review-artifact tripwires (week 8/9) point at autonomous review docs,
-        # not collector JSON reports. The deadline question those tripwires ask
-        # is "does the gated review artifact exist with its required marker?" -
-        # answered by the doc itself; fabricating a JSON wrapper would be the
-        # forbidden kind of synthetic evidence.
-        text = evidence_path.read_text(encoding="utf-8", errors="replace")
-        if "autonomous_gate_review" in text:
-            return {"status": "ok", "path": evidence_rel, "ok": True, "kind": "review_artifact"}
-        return {"status": "present_without_report", "path": evidence_rel, "kind": "review_artifact"}
 
     report = latest_json_report(evidence_path)
     if report is None:
+        if evidence_kind:
+            return _missing_typed_evidence(
+                evidence_rel,
+                evidence_kind=evidence_kind,
+                reason="typed JSON evidence report is absent",
+            )
         return {"status": "present_without_report", "path": evidence_rel}
+
+    if evidence_kind:
+        if not tripwire:
+            return {
+                "status": "invalid",
+                "path": evidence_rel,
+                "report": report.get("_report_path"),
+                "ok": False,
+                "kind": evidence_kind,
+                "errors": ["typed tripwire evidence requires the expected tripwire name"],
+            }
+        try:
+            validated = validate_typed_tripwire_report(
+                evidence_kind,
+                report,
+                expected_tripwire=tripwire,
+                as_of=as_of,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            validated = {
+                "status": "invalid",
+                "ok": False,
+                "kind": evidence_kind,
+                "action": None,
+                "errors": [f"typed evidence contract could not be loaded: {exc}"],
+            }
+        return {
+            **validated,
+            "path": evidence_rel,
+            "report": report.get("_report_path"),
+        }
 
     status = str(report.get("status", "unknown"))
     return {
@@ -118,7 +192,7 @@ def evidence_status(root: Path, evidence_rel: str | None) -> dict[str, Any]:
     }
 
 
-def evaluate_tripwires(root: Path) -> dict[str, Any]:
+def evaluate_tripwires(root: Path, *, as_of: date | None = None) -> dict[str, Any]:
     policy = load_policy(root / "ops" / "autonomy" / "policy.yaml")
     errors: list[str] = []
     warnings: list[str] = []
@@ -129,7 +203,7 @@ def evaluate_tripwires(root: Path) -> dict[str, Any]:
         errors.append("design-doc tripwires are not enabled")
 
     deadlines = policy.get("tripwire_deadlines", {})
-    today = date.today()
+    today = as_of or date.today()
 
     for name, config in deadlines.items():
         if not isinstance(config, dict):
@@ -150,7 +224,14 @@ def evaluate_tripwires(root: Path) -> dict[str, Any]:
             errors.append(f"tripwire has invalid date: {name}={deadline_raw}")
             continue
 
-        status = evidence_status(root, str(evidence_rel) if evidence_rel else None)
+        evidence_kind = str(config.get("evidence_kind") or "") or EVIDENCE_KIND_BY_TRIPWIRE.get(name)
+        status = evidence_status(
+            root,
+            str(evidence_rel) if evidence_rel else None,
+            evidence_kind=evidence_kind,
+            tripwire=name if evidence_kind else None,
+            as_of=today,
+        )
 
         if today >= deadline and not status.get("ok", False):
             fired.append(
@@ -158,6 +239,8 @@ def evaluate_tripwires(root: Path) -> dict[str, Any]:
                     "name": name,
                     "deadline": str(deadline),
                     "action": action,
+                    "recovery_slice": config.get("recovery_slice"),
+                    "evidence_kind": evidence_kind or None,
                     "evidence": evidence_rel,
                     "evidence_status": status,
                 }

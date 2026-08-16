@@ -1,0 +1,59 @@
+{
+  "details": {
+    "continuation_branch": "main",
+    "continuation_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+    "execution_boundaries": {
+      "autokeel_run": false,
+      "commit_created": false,
+      "keel_run": false,
+      "plan_orchestrator_run": false,
+      "push_performed": false,
+      "real_phone_evidence_claimed": false
+    },
+    "integration_state": {
+      "S01": "requires_hash_bound_reconciliation_receipt",
+      "S02": "requires_hash_bound_reconciliation_receipt",
+      "S03": "prepared_pending_commit",
+      "S04": "prepared_pending_commit",
+      "S05": "surface_equivalent"
+    },
+    "origin_main": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+    "recovery_surface_sha256": {
+      "docs/briefs/s06-counterfactual-generator.autonomous-brief.md": "41ea7fcb6bc38193943df79ada5cabbc36bd62e10308d62e0084e0794c21b337",
+      "docs/briefs/s11-mood-logging-recovery.autonomous-brief.md": "b1d30a0b0c3728ec2f5dbfacbda60780f324c1368020feb5940bce4b2119c49e",
+      "docs/evidence/event-log-legacy-id-reconciliation-20260816.json": "f06ba1e2df42587ad36a1d99202f7a139baaef19eff2055758e0d10338414478",
+      "docs/evidence/s03-post-completion-review-integration-20260816t150752-0400.json": "a0073af6df6b3d5e593b071f58a4d9702e199772fa8d1f435da42174c4440272",
+      "docs/evidence/s04-post-completion-review-integration-20260816t150752-0400.json": "bdef79515aea05571a2c3d110e4134eeed8b5bf12b984bab98660f540ad383dc",
+      "docs/gstack/s06-counterfactual-generator-autoplan.md": "69c7f4739a841d983be67df288b266ada35aa74a1740c8606a192ff552b9f87c",
+      "docs/gstack/s11-mood-logging-recovery-autoplan.md": "6c5d2bb883f8a34846bca3c31085937aa96c9f189a3469a31c03bd0e1eda9a9b",
+      "ops/autonomy/autokeel.py": "23f92fdf5854da2d52d5df26100a5c1f3a2c08ef321ce80682d030ed4c4734d2",
+      "ops/autonomy/policy.yaml": "cee283f9b65ac80a39172237da77aad111512d0e6f4c01c29573e0f29802e17f",
+      "scripts/evaluate_tripwires.py": "e0a85670c02a43d8ee25292a6a64c2ffc0eee7cdc25b344b517325410f803dd0",
+      "scripts/slice_integration.py": "862bb7e45a5cc454648ee4a8f980cdbae3a2bab58a5435c1c96def493d1e0434",
+      "scripts/tripwire_evidence.py": "793efab5c29f4f2b13dec3ab17edc14e6e583897cec190af35c368cf94904470",
+      "scripts/verify_event_log.py": "bd4db0edca9f5e7766699683c83c1a03d7a1b0d528b5cac1fa4847e30e1c24b3",
+      "scripts/verify_s06_readiness.py": "eef0c3add000faf425a8e2a2ebb1f5a6fae5f68f0ee8a9d6e477b6526a9b1679",
+      "scripts/verify_ship_invariants.py": "d6ef932c8b0fe15b5582113379354c34f770fcfcebd85f800aaa4a0c1e47f536"
+    },
+    "schema_version": "health_data_hub.pre_s06_recovery_ratification.v1",
+    "slices_sha256": "3ddceea64044bc5b2c9374565f4e0f400ec82ba676046653b92bc6839f8b6b29",
+    "supersedes_event_id": 1524,
+    "tripwire_state": {
+      "auto_accepted": false,
+      "common_recovery_slice": "S11",
+      "fired_count": 3,
+      "status": "unresolved_pending_real_evidence"
+    },
+    "verification": {
+      "diff_check": "ok",
+      "focused_slice_integration_and_producer": "23 passed",
+      "pytest": "389 passed in 109.42s"
+    }
+  },
+  "name": "pre-s06-control-plane-recovery-replan",
+  "reason": "Supersede event 1527 and ratify the final pre-S06 control-plane recovery at continuation commit 483848fa6b4cb89b4934c1f1696ce6c11b5e5a41, slices SHA-256 3ddceea64044bc5b2c9374565f4e0f400ec82ba676046653b92bc6839f8b6b29, PO-recorded integration bases, strict hash-bound landed-slice reconciliation, and the S11 tripwire recovery replan without claiming unresolved evidence passed.",
+  "recorded_at": "2026-08-16T15:18:10-04:00",
+  "recorded_by": "codex-owner",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "GLOBAL"
+}

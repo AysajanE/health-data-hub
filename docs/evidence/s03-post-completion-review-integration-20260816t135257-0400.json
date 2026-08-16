@@ -1,0 +1,25 @@
+{
+  "details": {
+    "autokeel_run_authorized": false,
+    "command_evidence": [
+      "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json"
+    ],
+    "continuation_ref": "main",
+    "historical_run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+    "historical_ship_branch": "ship/s03",
+    "historical_ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
+    "historical_state_rewritten": false,
+    "integration_receipt": "docs/evidence/s03-canonical-integration-reconciliation.json",
+    "integration_status": "prepared_pending_commit",
+    "review_artifacts": [
+      "docs/reviews/s03-autonomous-integration-reconciliation-review.md"
+    ],
+    "verification_status": "ok"
+  },
+  "name": "s03-post-completion-review-integration",
+  "reason": "Ratify the new autonomous reconciliation review and exact committed-object receipt candidate without changing the historical S03 run, ship branch, ship commit, or completion record. Integration remains pending until the reviewed tree is committed on main.",
+  "recorded_at": "2026-08-16T13:52:57-04:00",
+  "recorded_by": "Codex owner session 2026-08-16 (operator-directed)",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S03"
+}

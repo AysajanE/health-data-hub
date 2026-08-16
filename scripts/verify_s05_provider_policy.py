@@ -18,13 +18,17 @@ from src.warehouse.features import load_sleep_provider_policy
 
 
 MODEL_DIRS = ("src/model", "src/models", "src/ml")
-EIGHT_SLEEP_SOURCES = {"8sleep", "eight_sleep", "pyeight"}
 FORBIDDEN_MODEL_PATTERNS = (
     re.compile(r"""source\s*={1,2}\s*['"]8sleep['"]""", re.I),
     re.compile(r"""hrv_merge_method\s*={1,2}\s*['"]eight_fallback['"]""", re.I),
     re.compile(r"""eight_fallback""", re.I),
 )
-REQUIRED_TRAINING_INPUT_FIELDS = ("source", "sleep_source_count", "hrv_merge_method")
+REQUIRED_TRAINING_INPUT_FIELDS = (
+    "source",
+    "oura_present",
+    "sleep_source_count",
+    "hrv_merge_method",
+)
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -55,13 +59,6 @@ def _row_value(row: Any, field: str) -> Any:
     return getattr(row, field, None)
 
 
-def _normalized_text(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip().lower()
-    return text or None
-
-
 def collect_model_training_input_violations(rows: Iterable[Any]) -> list[str]:
     violations: list[str] = []
     for index, row in enumerate(rows):
@@ -72,21 +69,31 @@ def collect_model_training_input_violations(rows: Iterable[Any]) -> list[str]:
             )
             continue
 
-        source = _normalized_text(_row_value(row, "source"))
+        source = _row_value(row, "source")
+        oura_present = _row_value(row, "oura_present")
         sleep_source_count = _row_value(row, "sleep_source_count")
-        hrv_merge_method = _normalized_text(_row_value(row, "hrv_merge_method"))
+        hrv_merge_method = _row_value(row, "hrv_merge_method")
 
-        if source in EIGHT_SLEEP_SOURCES:
-            violations.append(f"training input row {index} uses source=8sleep under Oura-only v1")
-        if not isinstance(sleep_source_count, int):
+        if source != "oura":
+            violations.append(
+                f"training input row {index} must have exact persisted source='oura': {source!r}"
+            )
+        if oura_present is not True:
+            violations.append(
+                f"training input row {index} must have persisted oura_present=true: {oura_present!r}"
+            )
+        if type(sleep_source_count) is not int:
             violations.append(
                 f"training input row {index} has non-integer sleep_source_count: {sleep_source_count!r}"
             )
-        elif sleep_source_count > 1:
-            violations.append(f"training input row {index} has sleep_source_count > 1: {sleep_source_count}")
-        if hrv_merge_method == "eight_fallback":
+        elif sleep_source_count != 1:
             violations.append(
-                f"training input row {index} uses hrv_merge_method=eight_fallback under Oura-only v1"
+                f"training input row {index} must have sleep_source_count = 1: {sleep_source_count}"
+            )
+        if hrv_merge_method != "oura_primary":
+            violations.append(
+                "training input row "
+                f"{index} must have exact persisted hrv_merge_method='oura_primary': {hrv_merge_method!r}"
             )
     return violations
 
@@ -96,6 +103,7 @@ def training_input_policy_contract_report() -> dict[str, Any]:
         {
             "feature_date": "2026-06-01",
             "source": "oura",
+            "oura_present": True,
             "sleep_source_count": 1,
             "hrv_merge_method": "oura_primary",
         }
@@ -104,26 +112,45 @@ def training_input_policy_contract_report() -> dict[str, Any]:
         {
             "feature_date": "2026-06-02",
             "source": "8sleep",
+            "oura_present": True,
             "sleep_source_count": 1,
-            "hrv_merge_method": "missing",
+            "hrv_merge_method": "oura_primary",
         },
         {
             "feature_date": "2026-06-03",
             "source": "oura",
+            "oura_present": True,
             "sleep_source_count": 2,
             "hrv_merge_method": "oura_primary",
         },
         {
             "feature_date": "2026-06-04",
             "source": "oura",
+            "oura_present": True,
             "sleep_source_count": 1,
             "hrv_merge_method": "eight_fallback",
         },
+        {
+            "feature_date": "2026-06-05",
+            "source": " OURA ",
+            "oura_present": True,
+            "sleep_source_count": 1,
+            "hrv_merge_method": "oura_primary",
+        },
+        {
+            "feature_date": "2026-06-06",
+            "source": "oura",
+            "oura_present": True,
+            "sleep_source_count": 1,
+            "hrv_merge_method": "OURA_PRIMARY",
+        },
     ]
     expected_rejections = [
-        "training input row 0 uses source=8sleep under Oura-only v1",
-        "training input row 1 has sleep_source_count > 1: 2",
-        "training input row 2 uses hrv_merge_method=eight_fallback under Oura-only v1",
+        "training input row 0 must have exact persisted source='oura': '8sleep'",
+        "training input row 1 must have sleep_source_count = 1: 2",
+        "training input row 2 must have exact persisted hrv_merge_method='oura_primary': 'eight_fallback'",
+        "training input row 3 must have exact persisted source='oura': ' OURA '",
+        "training input row 4 must have exact persisted hrv_merge_method='oura_primary': 'OURA_PRIMARY'",
     ]
     allowed_violations = collect_model_training_input_violations(allowed_rows)
     rejected_violations = collect_model_training_input_violations(rejected_rows)
@@ -159,11 +186,33 @@ def warehouse_provider_violations(root: Path) -> tuple[list[str], dict[str, Any]
     conn = duckdb.connect(str(database), read_only=True)
     try:
         try:
-            blended_count = conn.execute(
-                "SELECT count(*) FROM daily_features WHERE sleep_source_count > 1"
+            invalid_source_count = conn.execute(
+                """
+                SELECT count(*)
+                FROM daily_features
+                WHERE sleep_source_count IS NOT NULL AND sleep_source_count != 1
+                """
             ).fetchone()[0]
             eight_hrv_count = conn.execute(
                 "SELECT count(*) FROM sleep_merge_diagnostics WHERE hrv_merge_method = 'eight_fallback'"
+            ).fetchone()[0]
+            invalid_model_ready_provenance_count = conn.execute(
+                """
+                SELECT count(*)
+                FROM daily_features f
+                LEFT JOIN sleep_merge_diagnostics d ON d.sleep_date = f.feature_date
+                WHERE f.total_sleep_min IS NOT NULL
+                  AND f.hrv_z IS NOT NULL
+                  AND f.deep_sleep_pct IS NOT NULL
+                  AND f.prior_day_feeling IS NOT NULL
+                  AND (
+                    f.sleep_source_count IS DISTINCT FROM 1
+                    OR d.sleep_date IS NULL
+                    OR d.oura_present IS DISTINCT FROM TRUE
+                    OR d.hrv_merge_method IS DISTINCT FROM 'oura_primary'
+                    OR d.stage_source IS DISTINCT FROM 'oura'
+                  )
+                """
             ).fetchone()[0]
         except duckdb.Error as error:
             checks["warehouse_policy_query_error"] = str(error)
@@ -171,12 +220,19 @@ def warehouse_provider_violations(root: Path) -> tuple[list[str], dict[str, Any]
     finally:
         conn.close()
 
-    checks["daily_features_source_count_gt_1"] = int(blended_count)
+    checks["daily_features_source_count_not_1"] = int(invalid_source_count)
     checks["diagnostics_eight_fallback_hrv"] = int(eight_hrv_count)
-    if blended_count:
-        violations.append("daily_features contains rows with sleep_source_count > 1")
+    checks["model_ready_rows_without_exact_oura_provenance"] = int(
+        invalid_model_ready_provenance_count
+    )
+    if invalid_source_count:
+        violations.append("daily_features contains rows with sleep_source_count != 1")
     if eight_hrv_count:
         violations.append("sleep_merge_diagnostics contains hrv_merge_method = eight_fallback")
+    if invalid_model_ready_provenance_count:
+        violations.append(
+            "model-ready daily_features rows lack exact persisted Oura diagnostic provenance"
+        )
     return violations, checks
 
 

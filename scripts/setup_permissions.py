@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Apply local-only filesystem permissions for sensitive Health Data Hub data."""
+"""Apply and audit local-only permissions for Health Data Hub runtime data.
+
+The managed roots are deliberately small and fixed.  This module never follows
+symlinks, and it creates missing managed directories one component at a time so
+the first runtime write does not inherit a process-wide default mode.
+"""
 
 from __future__ import annotations
 
@@ -16,20 +21,14 @@ DIRECTORY_MODE = 0o700
 FILE_MODE = 0o600
 REQUIRED_DIRECTORIES = (
     "data",
-    "data/secrets",
-    "data/quarantine",
-    "data/snapshots",
+    "private",
+    "private/evidence",
+    "models",
 )
 PRIVATE_TREES = (
-    "data/secrets",
-    "data/quarantine",
-    "data/snapshots",
-    "data/raw",
-)
-SENSITIVE_FILES = (
-    "data/.healthhub.lock",
-    "data/warehouse.duckdb",
-    "data/warehouse.duckdb.wal",
+    "data",
+    "private",
+    "models",
 )
 
 
@@ -46,10 +45,10 @@ def _apply_mode(
     errors: list[str],
     warnings: list[str],
 ) -> None:
-    if not path.exists():
-        return
     if path.is_symlink():
-        warnings.append(f"skipped symlink: {_relative_to_root(root, path)}")
+        errors.append(f"refusing symlink in managed runtime tree: {_relative_to_root(root, path)}")
+        return
+    if not path.exists():
         return
 
     actual_mode = S_IMODE(path.stat().st_mode)
@@ -73,22 +72,53 @@ def _ensure_directory(
     errors: list[str],
     warnings: list[str],
 ) -> Path | None:
-    path = root / relative_path
-    if not path.exists():
-        return None
-    if not path.is_dir():
-        errors.append(f"expected directory but found file: {relative_path}")
-        return None
+    """Create a fixed managed path without traversing a symlink component."""
 
-    _apply_mode(
-        root=root,
-        path=path,
-        desired_mode=DIRECTORY_MODE,
-        changed_paths=changed_paths,
-        errors=errors,
-        warnings=warnings,
-    )
+    path = root
+    for part in Path(relative_path).parts:
+        path = path / part
+        rel = _relative_to_root(root, path)
+        if path.is_symlink():
+            errors.append(f"refusing symlink in managed runtime path: {rel}")
+            return None
+        if path.exists():
+            if not path.is_dir():
+                errors.append(f"expected directory but found non-directory: {rel}")
+                return None
+        else:
+            try:
+                path.mkdir(mode=DIRECTORY_MODE)
+            except OSError as exc:
+                errors.append(f"failed to create managed directory {rel}: {exc}")
+                return None
+            changed_paths.append(rel)
+
+        _apply_mode(
+            root=root,
+            path=path,
+            desired_mode=DIRECTORY_MODE,
+            changed_paths=changed_paths,
+            errors=errors,
+            warnings=warnings,
+        )
     return path
+
+
+def _iter_tree(root: Path, tree_root: Path, errors: list[str]):
+    """Yield a managed tree without following or concealing symlinks."""
+
+    try:
+        children = sorted(tree_root.iterdir(), key=lambda item: item.name)
+    except OSError as exc:
+        errors.append(f"failed to inspect managed directory {_relative_to_root(root, tree_root)}: {exc}")
+        return
+    for path in children:
+        if path.is_symlink():
+            errors.append(f"refusing symlink in managed runtime tree: {_relative_to_root(root, path)}")
+            continue
+        yield path
+        if path.is_dir():
+            yield from _iter_tree(root, path, errors)
 
 
 def _secure_tree(
@@ -99,6 +129,9 @@ def _secure_tree(
     errors: list[str],
     warnings: list[str],
 ) -> None:
+    if tree_root.is_symlink():
+        errors.append(f"refusing symlink in managed runtime tree: {_relative_to_root(root, tree_root)}")
+        return
     if not tree_root.exists():
         return
     if not tree_root.is_dir():
@@ -114,7 +147,7 @@ def _secure_tree(
         warnings=warnings,
     )
 
-    for path in sorted(tree_root.rglob("*"), key=lambda item: item.as_posix()):
+    for path in _iter_tree(root, tree_root, errors):
         desired_mode = DIRECTORY_MODE if path.is_dir() else FILE_MODE
         _apply_mode(
             root=root,
@@ -124,6 +157,64 @@ def _secure_tree(
             errors=errors,
             warnings=warnings,
         )
+
+
+def inspect_permissions(root: Path) -> dict[str, Any]:
+    """Read modes only; never read runtime file contents."""
+
+    root = root.resolve()
+    errors: list[str] = []
+    checked_directories = 0
+    checked_files = 0
+
+    for relative_path in REQUIRED_DIRECTORIES:
+        path = root / relative_path
+        if path.is_symlink():
+            errors.append(f"managed runtime path is a symlink: {relative_path}")
+            continue
+        if not path.exists() or not path.is_dir():
+            errors.append(f"managed runtime directory is missing: {relative_path}")
+            continue
+        checked_directories += 1
+        actual_mode = S_IMODE(path.stat().st_mode)
+        if actual_mode != DIRECTORY_MODE:
+            errors.append(
+                f"unsafe directory mode for {relative_path}: {oct(actual_mode)} (expected {oct(DIRECTORY_MODE)})"
+            )
+
+    for relative_path in PRIVATE_TREES:
+        tree_root = root / relative_path
+        if tree_root.is_symlink() or not tree_root.is_dir():
+            continue
+        for path in _iter_tree(root, tree_root, errors):
+            rel = _relative_to_root(root, path)
+            if path.is_dir():
+                checked_directories += 1
+                desired_mode = DIRECTORY_MODE
+                kind = "directory"
+            else:
+                checked_files += 1
+                desired_mode = FILE_MODE
+                kind = "file"
+            actual_mode = S_IMODE(path.stat().st_mode)
+            if actual_mode != desired_mode:
+                errors.append(
+                    f"unsafe {kind} mode for {rel}: {oct(actual_mode)} (expected {oct(desired_mode)})"
+                )
+
+    return {
+        "status": "ok" if not errors else "error",
+        "errors": sorted(dict.fromkeys(errors)),
+        "checks": {
+            "directory_mode": oct(DIRECTORY_MODE),
+            "file_mode": oct(FILE_MODE),
+            "managed_roots": list(REQUIRED_DIRECTORIES),
+            "checked_directories": checked_directories,
+            "checked_files": checked_files,
+            "file_contents_read": False,
+            "symlinks_followed": False,
+        },
+    }
 
 
 def setup_permissions(root: Path) -> dict[str, Any]:
@@ -150,22 +241,16 @@ def setup_permissions(root: Path) -> dict[str, Any]:
             warnings=warnings,
         )
 
-    for relative_path in SENSITIVE_FILES:
-        _apply_mode(
-            root=root,
-            path=root / relative_path,
-            desired_mode=FILE_MODE,
-            changed_paths=changed_paths,
-            errors=errors,
-            warnings=warnings,
-        )
-
     changed_paths = sorted(dict.fromkeys(changed_paths))
+    audit = inspect_permissions(root)
+    errors.extend(audit["errors"])
+    errors = sorted(dict.fromkeys(errors))
     return {
         "status": "ok" if not errors else "error",
         "changed_paths": changed_paths,
         "errors": errors,
         "warnings": warnings,
+        "checks": audit["checks"],
     }
 
 

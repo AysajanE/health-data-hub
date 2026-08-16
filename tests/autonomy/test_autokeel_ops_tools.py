@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -14,6 +16,9 @@ import yaml
 from ops.autonomy.autokeel import write_json_atomic
 from scripts.close_failure import close_failure
 from scripts.evaluate_tripwires import evaluate_tripwires
+from scripts.record_intervention import cmd_append_ledger
+from scripts.verify_autokeel_invariants import partition_open_high_failures
+from scripts.verify_failure_ledger import verify_failure_ledger
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -80,6 +85,184 @@ def copy_autonomy_fixture(dst: Path) -> None:
 
 
 class AutoKeelOpsToolTests(unittest.TestCase):
+    def test_append_ledger_builds_valid_scoped_s12_authority_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence_rel = "ops/autonomy/failures/S12-provider-terms-test.md"
+            evidence = root / evidence_rel
+            evidence.parent.mkdir(parents=True, exist_ok=True)
+            evidence.write_text("# S12 provider authority blocker\n", encoding="utf-8")
+            slices_path = root / "ops/autonomy/slices.json"
+            slices = json.loads(slices_path.read_text(encoding="utf-8"))
+            s12 = next(item for item in slices if item.get("id") == "S12")
+            s12["status"] = "blocked_external"
+            s12["failure_path"] = evidence_rel
+            write_json_atomic(slices_path, slices)
+            source = root / "candidate.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "slice": "S12",
+                        "failure_class": "provider_terms_conflict",
+                        "severity": "high",
+                        "description": "Current provider authority is unavailable.",
+                        "action_taken": "Stopped before compiler or provider use.",
+                        "evidence_path": evidence_rel,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = cmd_append_ledger(SimpleNamespace(root=str(root), source=str(source)))
+
+            self.assertEqual(report["status"], "ok", report)
+            rows = [
+                json.loads(line)
+                for line in (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["schema_version"], "autokeel.failure_ledger.v2")
+            self.assertEqual(rows[0]["failure_origin"], "external_provider")
+            self.assertTrue(rows[0]["failure_id"].startswith("failure_"))
+            self.assertEqual(
+                rows[0]["evidence_sha256"],
+                hashlib.sha256(evidence.read_bytes()).hexdigest(),
+            )
+            verified = verify_failure_ledger(root)
+            self.assertEqual(verified["status"], "ok", verified)
+            self.assertEqual(verified["scoped_external_blockers"], 1)
+
+    def test_append_ledger_rejects_semantically_incomplete_v2_row(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            source = root / "candidate.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "slice": "S12",
+                        "failure_class": "provider_terms_conflict",
+                        "severity": "high",
+                        "description": "Missing action and evidence.",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = cmd_append_ledger(SimpleNamespace(root=str(root), source=str(source)))
+
+            self.assertEqual(report["status"], "error")
+            self.assertIn("action_taken", report["errors"][0])
+            self.assertEqual((root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8"), "")
+
+    def test_append_ledger_rejects_forged_evidence_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence_rel = "ops/autonomy/failures/S12-provider-terms-test.md"
+            evidence = root / evidence_rel
+            evidence.parent.mkdir(parents=True, exist_ok=True)
+            evidence.write_text("# S12 provider authority blocker\n", encoding="utf-8")
+            source = root / "candidate.json"
+            source.write_text(
+                json.dumps(
+                    {
+                        "slice": "S12",
+                        "failure_class": "provider_terms_conflict",
+                        "severity": "high",
+                        "description": "Current provider authority is unavailable.",
+                        "action_taken": "Stopped before compiler or provider use.",
+                        "evidence_path": evidence_rel,
+                        "evidence_sha256": "0" * 64,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = cmd_append_ledger(SimpleNamespace(root=str(root), source=str(source)))
+
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(any("evidence_sha256 mismatch" in error for error in report["errors"]))
+            self.assertEqual((root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8"), "")
+
+    def test_open_global_high_failure_is_never_scoped_external(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            (root / "ops/autonomy/failure_ledger.jsonl").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "autokeel.failure_ledger.v2",
+                        "failure_id": "failure_global_test",
+                        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+                        "slice": "GLOBAL",
+                        "run_id": None,
+                        "failure_class": "state_divergence",
+                        "severity": "high",
+                        "description": "Global state diverged.",
+                        "action_taken": "Stopped.",
+                        "evidence_path": "ops/autonomy/events.jsonl",
+                        "evidence_sha256": None,
+                        "root_cause_id": "GLOBAL-STATE-DIVERGENCE",
+                        "failure_origin": "autokeel_wrapper",
+                        "supersedes": [],
+                        "superseded_by": None,
+                        "false_positive": False,
+                        "closure_validation_command": "",
+                        "open": True,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = verify_failure_ledger(root)
+
+            self.assertEqual(report["status"], "error")
+            self.assertEqual(report["scoped_external_blockers"], 0)
+            self.assertTrue(any("open high/critical" in error for error in report["errors"]))
+
+    def test_scoped_s12_authority_failure_does_not_become_global_s11_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            evidence_rel = "ops/autonomy/failures/S12-provider-terms-test.md"
+            evidence = root / evidence_rel
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("# real tracked authority blocker\n", encoding="utf-8")
+            slices = [
+                {"id": "S11", "status": "pending", "depends_on": ["S01", "S02"]},
+                {
+                    "id": "S12",
+                    "status": "blocked_external",
+                    "depends_on": ["S11"],
+                    "failure_path": evidence_rel,
+                },
+            ]
+            row = {
+                "schema_version": "autokeel.failure_ledger.v2",
+                "failure_id": "failure_s12_authority_test",
+                "root_cause_id": "S12-OURA-PROVIDER-TERMS-AUTHORITY",
+                "failure_origin": "external_provider",
+                "slice": "S12",
+                "failure_class": "provider_terms_conflict",
+                "severity": "high",
+                "open": True,
+                "evidence_path": evidence_rel,
+                "evidence_sha256": hashlib.sha256(evidence.read_bytes()).hexdigest(),
+            }
+
+            scoped, global_blockers = partition_open_high_failures(root, [row], slices)
+
+            self.assertEqual(scoped, [row])
+            self.assertEqual(global_blockers, [])
+
+            forged = {**row, "evidence_sha256": "0" * 64}
+            scoped, global_blockers = partition_open_high_failures(root, [forged], slices)
+            self.assertEqual(scoped, [])
+            self.assertEqual(global_blockers, [forged])
+
     def test_close_failure_marks_matching_open_rows_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -125,6 +308,88 @@ class AutoKeelOpsToolTests(unittest.TestCase):
             events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(events[-1]["event_id"], 12)
             self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["last_event_id"], 12)
+
+    def test_close_failure_refuses_ambiguous_slice_and_class(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence = root / "docs/reviews/closure.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Verdict: pass\n", encoding="utf-8")
+            ledger = root / "ops/autonomy/failure_ledger.jsonl"
+            ledger.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "slice": "GLOBAL",
+                            "failure_class": "tripwire_triggered",
+                            "root_cause_id": root_cause,
+                            "severity": "high",
+                            "open": True,
+                        }
+                    )
+                    for root_cause in (
+                        "GLOBAL-TRIPWIRE-ON-MOOD-TRANSPORT-FAILURE-WEEK-4",
+                        "GLOBAL-TRIPWIRE-ON-MOOD-COMPLIANCE-FAILURE-WEEK-8",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = close_failure(
+                root,
+                "GLOBAL",
+                "tripwire_triggered",
+                "docs/reviews/closure.md",
+                "closed in test",
+            )
+
+            self.assertEqual(report["status"], "error")
+            self.assertIn("multiple open failures", report["errors"][0])
+            rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+            self.assertTrue(all(row["open"] for row in rows))
+
+    def test_close_failure_targets_one_root_cause(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            evidence = root / "docs/reviews/closure.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Verdict: pass\n", encoding="utf-8")
+            target = "GLOBAL-TRIPWIRE-ON-MOOD-TRANSPORT-FAILURE-WEEK-4"
+            other = "GLOBAL-TRIPWIRE-ON-MOOD-COMPLIANCE-FAILURE-WEEK-8"
+            ledger = root / "ops/autonomy/failure_ledger.jsonl"
+            ledger.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "slice": "GLOBAL",
+                            "failure_class": "tripwire_triggered",
+                            "root_cause_id": root_cause,
+                            "severity": "high",
+                            "open": True,
+                        }
+                    )
+                    for root_cause in (target, other)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = close_failure(
+                root,
+                "GLOBAL",
+                "tripwire_triggered",
+                "docs/reviews/closure.md",
+                "closed in test",
+                root_cause_id=target,
+            )
+
+            self.assertEqual(report["status"], "ok")
+            rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+            self.assertFalse(rows[0]["open"])
+            self.assertTrue(rows[1]["open"])
 
     def test_close_failure_requeues_blocked_slice_when_failures_are_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

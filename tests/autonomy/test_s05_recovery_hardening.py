@@ -319,6 +319,24 @@ class FreshLaunchGuardTests(unittest.TestCase):
 
 
 class StateDigestTests(unittest.TestCase):
+    def test_out_of_band_runtime_lock_edit_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=False)
+            update_state_digest_sidecar(root)
+            self.assertTrue(op.verify_state_digest().ok)
+
+            state_path = root / "ops/autonomy/autonomy_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["active_swr_run"] = {"slice": "S06", "run_id": "RUN_TAMPERED"}
+            state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            result = op.verify_state_digest()
+            self.assertFalse(result.ok)
+            self.assertEqual(result.exit_code, 39)
+            self.assertIn("ops/autonomy/autonomy_state.json", result.stderr)
+
     def test_out_of_band_slice_edit_is_detected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -518,7 +536,7 @@ class UIBannedLanguageCalibrationTests(unittest.TestCase):
 
 
 class TripwireReviewArtifactEvidenceTests(unittest.TestCase):
-    def test_md_evidence_with_gate_marker_is_ok(self) -> None:
+    def test_md_evidence_with_gate_marker_is_not_tripwire_evidence(self) -> None:
         from scripts.evaluate_tripwires import evidence_status
 
         with tempfile.TemporaryDirectory() as temp:
@@ -527,8 +545,8 @@ class TripwireReviewArtifactEvidenceTests(unittest.TestCase):
             doc.parent.mkdir(parents=True)
             doc.write_text("# Review\n\nautonomous_gate_review evidence here.\n", encoding="utf-8")
             status = evidence_status(root, "docs/reviews/s07-autonomous-ui-language-review.md")
-            self.assertTrue(status.get("ok"))
-            self.assertEqual(status.get("kind"), "review_artifact")
+            self.assertFalse(status.get("ok", False))
+            self.assertEqual(status.get("status"), "present_without_report")
 
     def test_md_evidence_without_marker_is_not_ok(self) -> None:
         from scripts.evaluate_tripwires import evidence_status

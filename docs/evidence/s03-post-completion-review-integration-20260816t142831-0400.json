@@ -1,0 +1,32 @@
+{
+  "details": {
+    "command_evidence": [
+      "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json"
+    ],
+    "command_evidence_sha256": {
+      "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json": "2c1699ea2a1acaa101c0732ec593dcde360c05be0535ca32e2f953abb4e508c1"
+    },
+    "continuation_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+    "historical_run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+    "historical_ship_branch": "ship/s03",
+    "historical_ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
+    "integration_receipt": "docs/evidence/s03-canonical-integration-reconciliation.json",
+    "integration_receipt_sha256": "a817ed1a765b2a262df790b5ba05dd773843f68ee1e3ecff776a3b25b40e74e0",
+    "integration_status": "prepared_pending_commit",
+    "review_artifact_sha256": {
+      "docs/reviews/s03-autonomous-integration-reconciliation-review.md": "e03cf180dd3a216cabde7f44199915f29548ad348bcc45c188af15f265eff016"
+    },
+    "review_artifacts": [
+      "docs/reviews/s03-autonomous-integration-reconciliation-review.md"
+    ],
+    "slices_sha256": "97bc372fc9ea394e0fed961424de3158765309f949f97eec89709b98104557dd",
+    "supersedes_event_id": 1520,
+    "verification_status": "ok"
+  },
+  "name": "s03-post-completion-review-integration",
+  "reason": "Supersede the earlier unbound S03 intervention with exact SHA-256 bindings for the ratification artifact, slice ledger, reconciliation receipt, autonomous review, and fresh command evidence. Historical run and ship provenance remain unchanged; integration remains pending until this exact tree is committed on main.",
+  "recorded_at": "2026-08-16T14:28:31-04:00",
+  "recorded_by": "operator",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S03"
+}

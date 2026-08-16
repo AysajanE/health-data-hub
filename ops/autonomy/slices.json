@@ -31,18 +31,23 @@
       "no manual_gate rows"
     ],
     "id": "S01",
+    "integration_receipt": "docs/evidence/s01-canonical-integration-reconciliation.json",
+    "integration_review_artifacts": [
+      "docs/reviews/s01-autonomous-warehouse-reconciliation-review.md"
+    ],
     "lane": "compiler",
     "name": "Warehouse foundation",
     "playbook": "docs/playbooks/s01-warehouse.playbook.md",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
-      "docs/reviews/s01-autonomous-schema-review.md"
+      "docs/reviews/s01-autonomous-warehouse-reconciliation-review.md"
     ],
     "risk": "medium",
     "run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
     "ship_branch": "ship/s01",
     "ship_commit": "50a58201058536b7518cd8fb4d5774a3c69df53d",
+    "integration_base_commit": "65af28eb1ccfc37a1a614a8c936258466de7f1af",
     "slug": "s01-warehouse",
     "status": "complete",
     "updated_at": "2026-05-26T09:51:10-04:00"
@@ -57,20 +62,30 @@
     "brief": "docs/briefs/s02-mood-api.autonomous-brief.md",
     "completed_at": "2026-05-28T00:18:39-04:00",
     "id": "S02",
+    "integration_receipt": "docs/evidence/s02-canonical-integration-reconciliation.json",
+    "integration_review_artifacts": [
+      "docs/reviews/s02-autonomous-integration-reconciliation-review.md",
+      "docs/reviews/s02-autonomous-security-privacy-reconciliation-review.md"
+    ],
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S02-lane-decision-20260526T112916-0400.json",
+    "lane_decision_review_artifacts": [
+      "docs/reviews/s02-autonomous-security-review.md",
+      "docs/reviews/s02-autonomous-privacy-review.md"
+    ],
     "name": "Mood API loop",
     "playbook": "docs/playbooks/s02-mood-api.playbook.md",
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
-      "docs/reviews/s02-autonomous-security-review.md",
-      "docs/reviews/s02-autonomous-privacy-review.md"
+      "docs/reviews/s02-autonomous-integration-reconciliation-review.md",
+      "docs/reviews/s02-autonomous-security-privacy-reconciliation-review.md"
     ],
     "risk": "high",
     "run_id": "RUN_20260528T012206Z_d1a034d3e30d4b26a26273e07597d115",
     "ship_branch": "ship/s02",
     "ship_commit": "9b9a72bd9201eca69f94949d66aba9b71ee30b5c",
+    "integration_base_commit": "c16964f6d5d6610e6305a652de46896e79417fed",
     "slug": "s02-mood-api",
     "status": "complete",
     "stopped_swr_response_id": "resp_0f966e52b0a03b8c006a179e46624881948f5eb3b97766731e",
@@ -97,6 +112,10 @@
       "pyeight_smoke_failure": "oura_only_v1"
     },
     "id": "S03",
+    "integration_receipt": "docs/evidence/s03-canonical-integration-reconciliation.json",
+    "integration_review_artifacts": [
+      "docs/reviews/s03-autonomous-integration-reconciliation-review.md"
+    ],
     "lane": "compiler_external_evidence",
     "name": "Ingestion provider decision",
     "optional_evidence": [
@@ -106,12 +125,14 @@
     "required": true,
     "retry_count": 0,
     "review_artifacts": [
-      "docs/reviews/s03-autonomous-ingestion-evidence-review.md"
+      "docs/reviews/s03-autonomous-ingestion-evidence-review.md",
+      "docs/reviews/s03-autonomous-integration-reconciliation-review.md"
     ],
     "risk": "high",
     "run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
     "ship_branch": "ship/s03",
     "ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
+    "integration_base_commit": "26e3eebe67b2191526a194ba14d84155638ee9a8",
     "slug": "s03-ingestion-provider",
     "status": "complete",
     "updated_at": "2026-05-29T20:56:13-04:00"
@@ -130,19 +151,91 @@
       "S02",
       "S03"
     ],
+    "deliverables": [
+      "src/warehouse/features.py",
+      "src/warehouse/warehouse.py",
+      "tests/test_features.py",
+      "docs/evidence/s04-feature-engineering-command-evidence.json",
+      "docs/evidence/s04-feature-engineering-command-evidence-provenance.json",
+      "docs/reviews/s04-autonomous-feature-engineering-reconciliation-review.md"
+    ],
     "id": "S04",
+    "integration_receipt": "docs/evidence/s04-canonical-integration-reconciliation.json",
+    "integration_review_artifacts": [
+      "docs/reviews/s04-autonomous-feature-engineering-reconciliation-review.md"
+    ],
     "lane": "compiler",
     "name": "Feature engineering",
     "playbook": "docs/playbooks/s04-feature-engineering.playbook.md",
     "required": true,
     "retry_count": 0,
+    "review_artifacts": [
+      "docs/reviews/s04-autonomous-feature-engineering-reconciliation-review.md"
+    ],
     "risk": "medium",
     "run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
     "ship_branch": "ship/s04",
     "ship_commit": "6d2eb8eaa1e02229cb917c0485840c4ab9602fca",
+    "integration_base_commit": "2cf6135a292158a6b882bca9842e358f3f98e467",
     "slug": "s04-feature-engineering",
     "status": "complete",
     "updated_at": "2026-05-31T17:42:48-04:00"
+  },
+  {
+    "acceptance": [
+      "python -m pytest tests/ui tests/warehouse tests/autonomy/test_tripwire_typed_evidence.py tests/test_api_security.py tests/test_mood_date.py tests/test_mood_correction.py tests/test_mood_locking.py -q",
+      "python scripts/check_autonomous_review_exists.py S11",
+      "python scripts/check_no_tracked_data.py"
+    ],
+    "activation_acceptance": {
+      "command": "python scripts/verify_mood_logging_recovery.py --runtime-root-env HEALTH_HUB_RUNTIME_ROOT --json",
+      "completion_requires_status": "ok",
+      "live_warehouse_access": "read_only",
+      "reads_private_aggregate_evidence": true,
+      "required_after_ship_acceptance": true,
+      "runtime_root": "canonical",
+      "runtime_root_env": "HEALTH_HUB_RUNTIME_ROOT"
+    },
+    "autoplan": "docs/gstack/s11-mood-logging-recovery-autoplan.md",
+    "brief": "docs/briefs/s11-mood-logging-recovery.autonomous-brief.md",
+    "depends_on": [
+      "S01",
+      "S02"
+    ],
+    "deliverables": [
+      "app/mood_form.py",
+      "src/model/display_gate.py",
+      "src/warehouse/locking.py",
+      "scripts/run_mood_form.py",
+      "scripts/setup_permissions.py",
+      "scripts/evidence/baseline_gate_report.py",
+      "scripts/evidence/mood_transport_report.py",
+      "scripts/evidence/mood_compliance_report.py",
+      "scripts/verify_mood_logging_recovery.py",
+      "tests/test_mood_locking.py",
+      "docs/reviews/s11-autonomous-security-privacy-review.md",
+      "docs/reviews/s11-autonomous-evidence-integrity-review.md",
+      "docs/evidence/s11-mood-logging-recovery-command-evidence.json"
+    ],
+    "evidence_dirs": [
+      "private/evidence/S11"
+    ],
+    "id": "S11",
+    "lane": "compiler",
+    "name": "Mood logging tripwire recovery",
+    "playbook": "docs/playbooks/s11-mood-logging-recovery.playbook.md",
+    "pre_po_commands": [
+      "python scripts/verify_s11_readiness.py --json"
+    ],
+    "required": true,
+    "review_artifacts": [
+      "docs/reviews/s11-autonomous-security-privacy-review.md",
+      "docs/reviews/s11-autonomous-evidence-integrity-review.md"
+    ],
+    "risk": "high",
+    "slug": "s11-mood-logging-recovery",
+    "status": "pending",
+    "updated_at": "2026-08-16T13:28:52-04:00"
   },
   {
     "acceptance": [
@@ -178,11 +271,75 @@
     "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",
     "ship_branch": "ship/s05",
     "ship_commit": "6dce352ead0729f9bfde9a52a5aa28e08161acb6",
+    "integration_base_commit": "378b87443ab2ee3c57c44a7e5079b9ce7a6fff66",
     "slug": "s05-model-lifecycle",
     "status": "complete",
     "swr_run_id": "run_20260601_133046_ae09e1ea",
     "swr_run_manifest": ".local/autokeel/swr/runs/2026-06-01_133046_autokeel-s05-20260601t093046-0400_gstack_design_to_po_playbook/run_manifest.json",
     "updated_at": "2026-06-11T15:04:12-04:00"
+  },
+  {
+    "acceptance": [
+      "python -m pytest tests/ingestion tests/warehouse/test_locking.py tests/warehouse/test_recompute.py tests/autonomy/test_oura_sync_attestation.py scripts/test_setup_permissions.py -q",
+      "python scripts/verify_s05_provider_policy.py --json",
+      "python scripts/check_autonomous_review_exists.py S12",
+      "python scripts/check_no_tracked_data.py"
+    ],
+    "activation_acceptance": {
+      "command": "python scripts/verify_s12_sync.py --runtime-root-env HEALTH_HUB_RUNTIME_ROOT --json",
+      "completion_requires_status": "ok",
+      "live_warehouse_access": "read_only",
+      "reads_private_aggregate_evidence": true,
+      "required_after_ship_acceptance": true,
+      "runtime_root": "canonical",
+      "runtime_root_env": "HEALTH_HUB_RUNTIME_ROOT"
+    },
+    "autoplan": "docs/gstack/s12-oura-production-sync-autoplan.md",
+    "brief": "docs/briefs/s12-oura-production-sync.autonomous-brief.md",
+    "depends_on": [
+      "S03",
+      "S04",
+      "S05",
+      "S11"
+    ],
+    "deliverables": [
+      "src/ingestion/oura_auth.py",
+      "src/ingestion/oura_sync.py",
+      "src/warehouse/locking.py",
+      "scripts/sync_oura.py",
+      "scripts/evidence/oura_sync_attestation.py",
+      "scripts/verify_s12_sync.py",
+      "docs/reviews/s12-autonomous-authority-review.md",
+      "docs/reviews/s12-autonomous-security-privacy-review.md",
+      "docs/reviews/s12-autonomous-ingestion-integrity-review.md",
+      "docs/evidence/s12-oura-production-sync-command-evidence.json"
+    ],
+    "evidence_dirs": [
+      "private/evidence/S12/authority",
+      "private/evidence/S12/oura_sync"
+    ],
+    "failure_path": "ops/autonomy/failures/S12-provider_terms_conflict-20260816T160521-0400.md",
+    "id": "S12",
+    "lane": "compiler_external_evidence",
+    "name": "Oura production sync authority and runtime",
+    "playbook": "docs/playbooks/s12-oura-production-sync.playbook.md",
+    "pre_po_commands": [
+      "python scripts/verify_s12_readiness.py --json"
+    ],
+    "pre_ship_commands": [
+      "python scripts/verify_s12_readiness.py --json"
+    ],
+    "reason": "Current Oura API terms conflict with the planned API-to-model path; separate written authority or a legally confirmed non-API route is required before compiler or provider use.",
+    "required": true,
+    "review_artifacts": [
+      "docs/reviews/s12-autonomous-authority-review.md",
+      "docs/reviews/s12-autonomous-security-privacy-review.md",
+      "docs/reviews/s12-autonomous-ingestion-integrity-review.md"
+    ],
+    "risk": "high",
+    "slug": "s12-oura-production-sync",
+    "status": "blocked_external",
+    "updated_at": "2026-08-16T16:05:21-04:00"
   },
   {
     "acceptance": [
@@ -193,11 +350,12 @@
     "autoplan": "docs/gstack/s06-counterfactual-generator-autoplan.md",
     "brief": "docs/briefs/s06-counterfactual-generator.autonomous-brief.md",
     "depends_on": [
-      "S05"
+      "S05",
+      "S11",
+      "S12"
     ],
     "id": "S06",
     "lane": "swr_preferred",
-    "lane_decision": "ops/autonomy/decisions/S06-lane-decision-20260611T185826-0400.json",
     "name": "Counterfactual generator",
     "playbook": "docs/playbooks/s06-counterfactual-generator.playbook.md",
     "required": true,
@@ -221,7 +379,8 @@
     "depends_on": [
       "S02",
       "S05",
-      "S06"
+      "S06",
+      "S11"
     ],
     "id": "S07",
     "lane": "compiler",
@@ -244,7 +403,8 @@
     "autoplan": "docs/gstack/s08-launchd-backups-restore-autoplan.md",
     "brief": "docs/briefs/s08-launchd-backups-restore.autonomous-brief.md",
     "depends_on": [
-      "S07"
+      "S07",
+      "S12"
     ],
     "id": "S08",
     "lane": "swr_preferred",

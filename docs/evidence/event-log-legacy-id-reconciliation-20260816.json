@@ -1,0 +1,40 @@
+{
+  "created_at": "2026-08-16T13:28:52-04:00",
+  "duplicate_event_ids": [
+    {
+      "event_id": 347,
+      "occurrences": [
+        {
+          "line_number": 347,
+          "row_sha256": "e478eb75b6262d6a6595f726a88529671eec7e008f3c574833da4e0893a95db7"
+        },
+        {
+          "line_number": 349,
+          "row_sha256": "b2bce9a9e52637590ee322830ab401e6543138ce26607d434052c82e534eb5d9"
+        }
+      ]
+    },
+    {
+      "event_id": 348,
+      "occurrences": [
+        {
+          "line_number": 348,
+          "row_sha256": "eaf2cbade46e1f00a39c2419276bcb5a4825f55163624384d35681bc8fde39da"
+        },
+        {
+          "line_number": 350,
+          "row_sha256": "03472198d4897dfd72de45bdaf31868161c14fe3453c75e3d737f36bdc649529"
+        }
+      ]
+    }
+  ],
+  "historical_boundary": {
+    "first_timestamp": "2026-05-27T20:22:21-04:00",
+    "last_timestamp": "2026-05-27T20:27:44-04:00",
+    "slice": "S02"
+  },
+  "observed_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+  "reason": "Two concurrent historical S02 event-writing paths reused ids 347 and 348. The append-only rows are preserved. This receipt binds all four exact raw rows to their original physical line numbers and order by SHA-256, and authorizes no other duplicate, relocation, reordering, or non-monotonic event id.",
+  "reconciled_through_event_id": 1519,
+  "schema_version": "autokeel.event_log_reconciliation.v2"
+}

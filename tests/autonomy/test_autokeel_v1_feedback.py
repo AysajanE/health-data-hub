@@ -575,9 +575,28 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (root / "docs/gstack/health-data-hub-office-hours.md").write_text("design", encoding="utf-8")
+            slice_ = next(
+                item
+                for item in json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
+                if item["id"] == "S01"
+            )
+            brief = root / str(slice_["brief"])
+            brief.parent.mkdir(parents=True, exist_ok=True)
+            brief.write_text("S01 approved brief\n", encoding="utf-8")
             state = json.loads((root / "ops/autonomy/autonomy_state.json").read_text(encoding="utf-8"))
             state["active_run"] = {"slice": "S01", "run_id": "run_old", "started_at": "2026-05-23T00:00:00-04:00"}
             write_json_atomic(root / "ops/autonomy/autonomy_state.json", state)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "seed"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
 
             class CompileRunner:
                 def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
@@ -2402,6 +2421,47 @@ class AutoKeelV1FeedbackTests(unittest.TestCase):
             self.assertNotIn("reason", updated)
             history = op.load_state()["run_history"]
             self.assertTrue(any(item["slice"] == "S01" and item["run_id"] == "RUN_DONE" for item in history))
+
+    def test_complete_status_enriches_existing_started_run_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_fixture(root)
+            state_path = root / "ops/autonomy/autonomy_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["run_history"] = [
+                {
+                    "slice": "S01",
+                    "run_id": "RUN_DONE",
+                    "started_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+            write_json_atomic(state_path, state)
+            op = AutoKeel(root=root, dry_run=True)
+
+            op.mark_slice_status(
+                "S01",
+                "complete",
+                run_id="RUN_DONE",
+                completed_at="2026-01-02T00:00:00Z",
+                ship_branch="ship/s01",
+                ship_commit="a" * 40,
+                integration_base_commit="b" * 40,
+            )
+
+            history = op.load_state()["run_history"]
+            self.assertEqual(len(history), 1)
+            self.assertEqual(
+                history[0],
+                {
+                    "slice": "S01",
+                    "run_id": "RUN_DONE",
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "completed_at": "2026-01-02T00:00:00Z",
+                    "ship_branch": "ship/s01",
+                    "ship_commit": "a" * 40,
+                    "integration_base_commit": "b" * 40,
+                },
+            )
 
     def test_tripwire_rejects_latest_blocked_external_report(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

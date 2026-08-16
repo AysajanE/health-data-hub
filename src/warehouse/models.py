@@ -69,7 +69,11 @@ def _summarize_validation_error(error: ValidationError) -> str:
 
 
 class WarehouseRowModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(
+        allow_inf_nan=False,
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
 
 
 class SleepNightRow(WarehouseRowModel):

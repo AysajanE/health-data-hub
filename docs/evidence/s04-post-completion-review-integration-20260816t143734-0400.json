@@ -1,0 +1,33 @@
+{
+  "details": {
+    "command_evidence": [
+      "docs/evidence/s04-post-completion-reconciliation-command-evidence-20260816.json"
+    ],
+    "command_evidence_sha256": {
+      "docs/evidence/s04-post-completion-reconciliation-command-evidence-20260816.json": "24a8e395bf539f44e41c461ad4e309d3f85c6d8f478cb6d98a5280e674adf4bb"
+    },
+    "continuation_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+    "historical_run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
+    "historical_ship_branch": "ship/s04",
+    "historical_ship_commit": "6d2eb8eaa1e02229cb917c0485840c4ab9602fca",
+    "integration_receipt": "docs/evidence/s04-canonical-integration-reconciliation.json",
+    "integration_receipt_sha256": "bf3b1a73f28e0a5f1d0a6c392fed024ee3022f9b89c73d6b31032a273fa2dd31",
+    "integration_status": "prepared_pending_commit",
+    "review_artifact_sha256": {
+      "docs/reviews/s04-autonomous-feature-engineering-reconciliation-review.md": "1c0d82992cf015878ddc6d9f1b3ccd24f27d9a291ae07e1b4d936e8e66b89df3"
+    },
+    "review_artifacts": [
+      "docs/reviews/s04-autonomous-feature-engineering-reconciliation-review.md"
+    ],
+    "slice_config_sha256": "20574e0b41c80b8ff8da3f5d3ca0c083b30cdab6faf92ab770dc8c9c02214d30",
+    "slices_sha256_at_ratification": "97bc372fc9ea394e0fed961424de3158765309f949f97eec89709b98104557dd",
+    "supersedes_event_id": 1523,
+    "verification_status": "ok"
+  },
+  "name": "s04-post-completion-review-integration",
+  "reason": "Supersede the whole-ledger-bound S04 intervention with a future-safe canonical S04-entry binding plus exact receipt, review, command-evidence, and ratification hashes. Unrelated future slice status changes cannot invalidate it; historical S04 identity changes still fail closed.",
+  "recorded_at": "2026-08-16T14:37:34-04:00",
+  "recorded_by": "operator",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S04"
+}

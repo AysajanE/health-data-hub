@@ -26,11 +26,47 @@ def sha256_text(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def canonical_json_sha256(payload: object) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
 def write_public_evidence(root: Path, rel: str = "docs/evidence/provider-decision.md") -> Path:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("sanitized provider evidence\n", encoding="utf-8")
     return path
+
+
+def write_valid_review(root: Path, review_rel: str, evidence_rel: str) -> None:
+    evidence = root / evidence_rel
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(
+        evidence,
+        {
+            "commands": [
+                {
+                    "command": "python -m pytest tests/test_features.py -q",
+                    "exit_code": 0,
+                    "stdout_tail": "passed",
+                    "stderr_tail": "",
+                }
+            ]
+        },
+    )
+    review = root / review_rel
+    review.parent.mkdir(parents=True, exist_ok=True)
+    review.write_text(
+        "# Autonomous Slice Review: S04\n\n"
+        "Autonomous slice review provenance: independent reviewer.\n\n"
+        "Verdict: pass\n"
+        "Evidence files checked:\n- `src/warehouse/features.py`\n"
+        "Exact commands run:\n- `python -m pytest tests/test_features.py -q`\n"
+        f"Command evidence: {evidence_rel}\n"
+        "Blocking findings: none\n",
+        encoding="utf-8",
+    )
 
 
 def provider_decision_payload(
@@ -162,7 +198,13 @@ class VerifyScriptsTests(unittest.TestCase):
     def test_check_no_tracked_data_rejects_data_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(
+                ["git", "init", "-b", "main"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
             (root / "data/raw").mkdir(parents=True)
             (root / "data/raw/oura.json").write_text("{}", encoding="utf-8")
             subprocess.run(["git", "add", "data/raw/oura.json"], cwd=root, check=True)
@@ -1090,6 +1132,22 @@ class VerifyScriptsTests(unittest.TestCase):
             subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
             subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / "base.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "base.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "base"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            integration_base_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
             (root / "seed.txt").write_text("seed\n", encoding="utf-8")
             subprocess.run(["git", "add", "seed.txt"], cwd=root, check=True)
             subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
@@ -1098,7 +1156,15 @@ class VerifyScriptsTests(unittest.TestCase):
             (root / "ops/autonomy").mkdir(parents=True)
             write_json_atomic(
                 root / "ops/autonomy/slices.json",
-                [{"id": "S04", "status": "complete", "ship_branch": "ship/s04", "ship_commit": commit}],
+                [
+                    {
+                        "id": "S04",
+                        "status": "complete",
+                        "ship_branch": "ship/s04",
+                        "ship_commit": commit,
+                        "integration_base_commit": integration_base_commit,
+                    }
+                ],
             )
             (root / "ops/autonomy/events.jsonl").write_text(
                 json.dumps(
@@ -1119,11 +1185,326 @@ class VerifyScriptsTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "record S04 completion"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
 
             report = verify_ship_invariants(root, "S04")
 
             self.assertEqual(report["status"], "ok", report)
             self.assertFalse(report["checks"]["review_artifacts_required"])
+
+    def test_ship_invariants_require_detached_event_for_unchanged_ship_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / "base.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "base.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "base"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            integration_base_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            review_rel = "docs/reviews/s04-review.md"
+            evidence_rel = "docs/evidence/s04-command-evidence.json"
+            write_valid_review(root, review_rel, evidence_rel)
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "ship"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            subprocess.run(["git", "branch", "ship/s04", commit], cwd=root, check=True)
+            (root / "ops/autonomy").mkdir(parents=True)
+            slices = [
+                {
+                    "id": "S04",
+                    "status": "complete",
+                    "run_id": "RUN_TEST",
+                    "ship_branch": "ship/s04",
+                    "ship_commit": commit,
+                    "integration_base_commit": integration_base_commit,
+                    "review_artifacts": [review_rel],
+                }
+            ]
+            write_json_atomic(root / "ops/autonomy/slices.json", slices)
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "record S04 completion"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            events = [
+                {
+                    "slice": "S04",
+                    "event": "slice_acceptance_passed",
+                    "details": {"cwd": str(root / ".local/autokeel/ship-checkouts/s04-test")},
+                },
+                {
+                    "slice": "S04",
+                    "event": "slice_ship_branch_created",
+                    "details": {"operator_branch_before": "main", "operator_branch_after": "main"},
+                },
+            ]
+            (root / "ops/autonomy/events.jsonl").write_text(
+                "".join(json.dumps(event) + "\n" for event in events),
+                encoding="utf-8",
+            )
+
+            missing = verify_ship_invariants(root, "S04")
+            self.assertEqual(missing["status"], "error")
+            self.assertEqual(missing["checks"]["historical_review_artifacts"], [review_rel])
+            self.assertTrue(any("detached ship worktree" in error for error in missing["errors"]))
+
+            events.insert(
+                1,
+                {
+                    "slice": "S04",
+                    "event": "review_artifacts_validated",
+                    "details": {"cwd": str(root / ".local/autokeel/ship-checkouts/s04-test")},
+                },
+            )
+            (root / "ops/autonomy/events.jsonl").write_text(
+                "".join(json.dumps(event) + "\n" for event in events),
+                encoding="utf-8",
+            )
+            present = verify_ship_invariants(root, "S04")
+            self.assertEqual(present["status"], "ok", present)
+
+    def test_ship_invariants_require_valid_ratification_for_post_completion_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(
+                ["git", "init", "-b", "main"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Tests"], cwd=root, check=True)
+            (root / "base.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "base.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "base"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            integration_base_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "checkout", "-b", "ship/s04"], cwd=root, check=True)
+            (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "ship"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
+            subprocess.run(["git", "checkout", "main"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "merge", "--no-ff", "--no-edit", "ship/s04"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+
+            review_rel = "docs/reviews/s04-post-completion-review.md"
+            evidence_rel = "docs/evidence/s04-post-completion-command-evidence.json"
+            receipt_rel = "docs/evidence/s04-integration-receipt.json"
+            write_valid_review(root, review_rel, evidence_rel)
+            acceptance_command = "python -m pytest tests/test_features.py -q"
+            seed_blob = subprocess.run(
+                ["git", "hash-object", "seed.txt"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            review_blob = subprocess.run(
+                ["git", "hash-object", review_rel],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            write_json_atomic(
+                root / receipt_rel,
+                {
+                    "schema_version": "autokeel.slice_integration.v1",
+                    "slice": "S04",
+                    "continuation_ref": "main",
+                    "ship_branch": "ship/s04",
+                    "ship_commit": commit,
+                    "merge_base": integration_base_commit,
+                    "surfaces": [
+                        {
+                            "path": "seed.txt",
+                            "disposition": "identical",
+                            "ship_entry": {"mode": "100644", "type": "blob", "object": seed_blob},
+                            "continuation_entry": {"mode": "100644", "type": "blob", "object": seed_blob},
+                        }
+                    ],
+                    "verification_commands": [
+                        {"command": acceptance_command, "exit_code": 0, "status": "pass"}
+                    ],
+                    "review_artifacts": [
+                        {
+                            "path": review_rel,
+                            "tree_entry": {"mode": "100644", "type": "blob", "object": review_blob},
+                        }
+                    ],
+                },
+            )
+            (root / "ops/autonomy").mkdir(parents=True)
+            write_json_atomic(
+                root / "ops/autonomy/slices.json",
+                [
+                    {
+                        "id": "S04",
+                        "status": "complete",
+                        "run_id": "RUN_TEST",
+                        "ship_branch": "ship/s04",
+                        "ship_commit": commit,
+                        "integration_base_commit": integration_base_commit,
+                        "integration_receipt": receipt_rel,
+                        "acceptance": [acceptance_command],
+                        "review_artifacts": [review_rel],
+                    }
+                ],
+            )
+            events = [
+                {
+                    "slice": "S04",
+                    "event": "slice_acceptance_passed",
+                    "details": {"cwd": str(root / ".local/autokeel/ship-checkouts/s04-test")},
+                },
+                {
+                    "slice": "S04",
+                    "event": "slice_ship_branch_created",
+                    "details": {"operator_branch_before": "main", "operator_branch_after": "main"},
+                },
+            ]
+            events_path = root / "ops/autonomy/events.jsonl"
+            events_path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "record post-completion S04 review"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+
+            missing = verify_ship_invariants(root, "S04")
+            self.assertEqual(missing["status"], "error")
+            self.assertEqual(missing["checks"]["post_completion_review_artifacts"], [review_rel])
+            self.assertTrue(any("ratified intervention" in error for error in missing["errors"]))
+
+            ratification_rel = "docs/evidence/s04-post-completion-ratification.json"
+            write_json_atomic(
+                root / ratification_rel,
+                {
+                    "schema_version": "autokeel.manual_intervention.v1",
+                    "name": "s04-post-completion-review-integration",
+                    "slice": "S04",
+                    "details": {
+                        "historical_run_id": "RUN_TEST",
+                        "historical_ship_branch": "ship/s04",
+                        "historical_ship_commit": commit,
+                        "integration_receipt": receipt_rel,
+                        "integration_receipt_sha256": sha256_text(root / receipt_rel),
+                        "slice_config_sha256": canonical_json_sha256(
+                            json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))[0]
+                        ),
+                        "review_artifacts": [review_rel],
+                        "review_artifact_sha256": {
+                            review_rel: sha256_text(root / review_rel),
+                        },
+                        "command_evidence": [evidence_rel],
+                        "command_evidence_sha256": {
+                            evidence_rel: sha256_text(root / evidence_rel),
+                        },
+                        "verification_status": "ok",
+                    },
+                },
+            )
+            events.append(
+                {
+                    "slice": "S04",
+                    "event": "manual_intervention_ratified",
+                    "details": {
+                        "name": "s04-post-completion-review-integration",
+                        "artifact": ratification_rel,
+                        "artifact_sha256": sha256_text(root / ratification_rel),
+                    },
+                }
+            )
+            events_path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+
+            present = verify_ship_invariants(root, "S04")
+            self.assertEqual(present["status"], "ok", present)
+            self.assertTrue(present["checks"]["post_completion_review_ratified"])
+
+            ratification_text = (root / ratification_rel).read_text(encoding="utf-8")
+            (root / ratification_rel).write_text(ratification_text + "\n", encoding="utf-8")
+            tampered_ratification = verify_ship_invariants(root, "S04")
+            self.assertEqual(tampered_ratification["status"], "error")
+            self.assertTrue(
+                any("ratification artifact SHA-256" in error for error in tampered_ratification["errors"]),
+                tampered_ratification,
+            )
+            (root / ratification_rel).write_text(ratification_text, encoding="utf-8")
+
+            receipt_text = (root / receipt_rel).read_text(encoding="utf-8")
+            (root / receipt_rel).write_text(receipt_text + "\n", encoding="utf-8")
+            tampered_receipt = verify_ship_invariants(root, "S04")
+            self.assertEqual(tampered_receipt["status"], "error")
+            self.assertTrue(
+                any("integration_receipt_sha256" in error for error in tampered_receipt["errors"]),
+                tampered_receipt,
+            )
+            (root / receipt_rel).write_text(receipt_text, encoding="utf-8")
+
+            slices_text = (root / "ops/autonomy/slices.json").read_text(encoding="utf-8")
+            changed_slices = json.loads(slices_text)
+            changed_slices[0]["risk"] = "changed-after-ratification"
+            write_json_atomic(root / "ops/autonomy/slices.json", changed_slices)
+            tampered_slice_config = verify_ship_invariants(root, "S04")
+            self.assertEqual(tampered_slice_config["status"], "error")
+            self.assertTrue(
+                any("slice_config_sha256" in error for error in tampered_slice_config["errors"]),
+                tampered_slice_config,
+            )
+            (root / "ops/autonomy/slices.json").write_text(slices_text, encoding="utf-8")
+
+            with (root / review_rel).open("a", encoding="utf-8") as handle:
+                handle.write("\nAdditional post-ratification text.\n")
+            tampered = verify_ship_invariants(root, "S04")
+            self.assertEqual(tampered["status"], "error")
+            self.assertTrue(
+                any("review_artifact_sha256" in error for error in tampered["errors"]),
+                tampered,
+            )
 
     def test_run_retarget_evidence_requires_ancestry_and_closure_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

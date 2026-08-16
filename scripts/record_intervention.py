@@ -23,8 +23,10 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -40,10 +42,44 @@ from ops.autonomy.autokeel import (  # noqa: E402
     update_state_digest_sidecar,
     write_json_atomic,
 )
+from scripts.verify_failure_ledger import validate_v2_failure_row  # noqa: E402
 
 
 def _operator(root: Path) -> AutoKeel:
     return AutoKeel(root=root.resolve(), dry_run=False)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _strict_json_object(path: Path) -> dict[str, Any]:
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    payload = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicates)
+    if not isinstance(payload, dict):
+        raise ValueError("ledger row must be a JSON object")
+    return payload
+
+
+def _intervention_failure_origin(failure_class: str) -> str:
+    if failure_class in {"provider_auth_failure", "provider_terms_conflict", "blocked_external_missing_evidence"}:
+        return "external_provider"
+    if failure_class in {"compile_failure", "review_artifact_invalid", "unsafe_write_root"}:
+        return "validator"
+    if failure_class in {"audit_failure", "manual_gate_leak"}:
+        return "po_kernel"
+    return "autokeel_wrapper"
 
 
 def cmd_ratify(args: argparse.Namespace) -> dict[str, Any]:
@@ -62,10 +98,16 @@ def cmd_ratify(args: argparse.Namespace) -> dict[str, Any]:
         "recorded_by": args.recorded_by,
         "details": details,
     }
-    write_json_atomic(root / artifact_rel, payload)
+    artifact_path = root / artifact_rel
+    write_json_atomic(artifact_path, payload)
     op.log_event(
         "manual_intervention_ratified",
-        {"artifact": artifact_rel, "name": args.name, "reason": args.reason},
+        {
+            "artifact": artifact_rel,
+            "artifact_sha256": _sha256_file(artifact_path),
+            "name": args.name,
+            "reason": args.reason,
+        },
         slice_id=args.slice,
     )
     update_state_digest_sidecar(root)
@@ -123,19 +165,66 @@ def cmd_restore_events(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_append_ledger(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.root).resolve()
     op = _operator(root)
-    row = json.loads(Path(args.source).read_text(encoding="utf-8"))
-    if not isinstance(row, dict):
-        return {"status": "error", "errors": ["ledger row must be a JSON object"]}
-    missing = sorted({"slice", "failure_class", "severity", "description"} - set(row))
+    try:
+        row = _strict_json_object(Path(args.source))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"status": "error", "errors": [str(exc)]}
+    missing = sorted({"slice", "failure_class", "severity", "description", "action_taken", "evidence_path"} - set(row))
     if missing:
         return {"status": "error", "errors": [f"ledger row missing required fields: {', '.join(missing)}"]}
-    row.setdefault("schema_version", "autokeel.failure_ledger.v2")
+    if row.get("schema_version", "autokeel.failure_ledger.v2") != "autokeel.failure_ledger.v2":
+        return {"status": "error", "errors": ["append-ledger accepts only autokeel.failure_ledger.v2 rows"]}
+    failure_class = str(row.get("failure_class") or "")
+    slice_id = str(row.get("slice") or "")
+    row["schema_version"] = "autokeel.failure_ledger.v2"
+    row.setdefault("failure_id", f"failure_{uuid.uuid4().hex}")
     row.setdefault("ts", now_iso())
+    row.setdefault("run_id", None)
+    evidence_value = row.get("evidence_path")
+    if row.get("evidence_sha256") is None and isinstance(evidence_value, str):
+        relative = Path(evidence_value)
+        candidate = root / relative
+        if (
+            not relative.is_absolute()
+            and ".." not in relative.parts
+            and relative.parts
+            and relative.parts[0] != ".git"
+            and not candidate.is_symlink()
+            and candidate.is_file()
+            and candidate.resolve().is_relative_to(root.resolve())
+        ):
+            row["evidence_sha256"] = _sha256_file(candidate.resolve())
+    row.setdefault("evidence_sha256", None)
+    row.setdefault("root_cause_id", f"{slice_id}-{failure_class}".upper().replace("_", "-"))
+    row.setdefault("failure_origin", _intervention_failure_origin(failure_class))
+    row.setdefault("supersedes", [])
+    row.setdefault("superseded_by", None)
+    row.setdefault("false_positive", False)
+    row.setdefault("closure_validation_command", "")
     row.setdefault("open", True)
+    errors = validate_v2_failure_row(
+        root,
+        row,
+        row_label="candidate",
+        require_evidence=True,
+        strict_new=True,
+    )
+    existing = list(iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl") or [])
+    if any(item.get("failure_id") == row.get("failure_id") for item in existing):
+        errors.append(f"failure_id already exists: {row.get('failure_id')}")
+    if errors:
+        return {"status": "error", "errors": errors}
     append_jsonl(root / "ops/autonomy/failure_ledger.jsonl", row)
     op.log_event(
         "ledger_row_restored_by_intervention",
-        {"source": args.source, "failure_class": row.get("failure_class"), "open": row.get("open")},
+        {
+            "source": args.source,
+            "failure_id": row.get("failure_id"),
+            "root_cause_id": row.get("root_cause_id"),
+            "failure_class": row.get("failure_class"),
+            "failure_origin": row.get("failure_origin"),
+            "open": row.get("open"),
+        },
         slice_id=str(row.get("slice") or "") or None,
     )
     update_state_digest_sidecar(root)

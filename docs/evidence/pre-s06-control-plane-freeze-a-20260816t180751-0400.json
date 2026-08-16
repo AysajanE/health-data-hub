@@ -1,0 +1,39 @@
+{
+  "details": {
+    "autokeel_iteration_executed": false,
+    "continuation_parent_commit": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+    "paid_compiler_executed": false,
+    "private_evidence_payload_read": false,
+    "provider_network_call_executed": false,
+    "push_executed": false,
+    "receipt_status": "pending_sequential_s01_s04_audit_commits",
+    "recovery_scope": [
+      "typed tripwire recovery and S11 pre-S06 route",
+      "S12 fail-closed provider-authority and production-sync ownership",
+      "historical S01-S04 landed-state reconciliation controls",
+      "event-log duplicate-id reconciliation",
+      "finite numeric and exact Oura provenance enforcement",
+      "credential and generated-tool execution boundaries"
+    ],
+    "s11_status": "blocked_before_spend_pending_enforceable_isolation_and_trusted_outer_activation_receipt_validator",
+    "s12_status": "blocked_external_pending_qualifying_provider_authority",
+    "slices_sha256": "7d8b123669256cee4adc113d5dfcce36844e87c22af23df6882cbe4b8b826142",
+    "verification": {
+      "check_no_tracked_data": "ok",
+      "environment_boundary_focused_pytest": "124 passed",
+      "full_autonomy_pytest": "451 passed",
+      "full_repository_pytest": "547 passed",
+      "independent_environment_critic": "go",
+      "independent_receipt_critic": "go",
+      "receipt_v2_focused_pytest": "82 passed",
+      "verify_event_log": "ok",
+      "verify_failure_ledger": "ok"
+    }
+  },
+  "name": "pre-s06-control-plane-freeze-a",
+  "reason": "Ratify the non-paid pre-S06 recovery candidate at parent 483848fa6b4cb89b4934c1f1696ce6c11b5e5a41 and slices SHA-256 7d8b123669256cee4adc113d5dfcce36844e87c22af23df6882cbe4b8b826142 after 547 full-repository and 451 autonomy tests passed. Canonical S01-S04 receipts remain pending sequential audit commits; S11 remains stopped before spend; S12 remains blocked_external; no AutoKeel iteration, compiler, provider call, private evidence payload read, push, or external action occurred.",
+  "recorded_at": "2026-08-16T18:07:51-04:00",
+  "recorded_by": "operator",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "GLOBAL"
+}

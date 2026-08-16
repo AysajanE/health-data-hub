@@ -1,0 +1,65 @@
+{
+  "schema_version": "autokeel_command_evidence_v1",
+  "created_at": "2026-08-16T17:24:54Z",
+  "slice": "S04",
+  "status": "ok",
+  "evidence_kind": "post_completion_reconciliation",
+  "historical_run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
+  "historical_ship_commit": "6d2eb8eaa1e02229cb917c0485840c4ab9602fca",
+  "canonical_base_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+  "reviewed_files": [
+    {
+      "path": "src/warehouse/features.py",
+      "sha256": "56c907a2286478770d5f88635e52f13aae36625a2829e5a68a2a5d41992f456d"
+    },
+    {
+      "path": "src/warehouse/warehouse.py",
+      "sha256": "ddbcdcf43c4ce344099666fac58383a9401b8c6dfc457b718e087a0d4d23fa29"
+    },
+    {
+      "path": "tests/test_features.py",
+      "sha256": "34f2cd2c25e56246b8623815d0a2c25ef188ed6dfe871b6a3ad252a34f41e6fd"
+    },
+    {
+      "path": "scripts/verify_s04_readiness.py",
+      "sha256": "aa45762eb9f23b08c1abbaeef1c6a6ad5cf1ac350b5d783e66334982841aca2d"
+    },
+    {
+      "path": "docs/gstack/s04-feature-engineering-autoplan.md",
+      "sha256": "5e4c6f627573be71f4eb16d5c04bd4c7d4c1fa4d1d5bb1cb9df6375995df3710"
+    },
+    {
+      "path": "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+      "sha256": "ac3ce37bd5b1a0068e28d455f7ae4ddbf46d6995f0a695bb96005a6331be1970"
+    },
+    {
+      "path": "docs/playbooks/s04-feature-engineering.playbook.md",
+      "sha256": "26708011fab12bc1dfc1f4d38eb8d8cc4350134dea6097964f13f49d09eb68ad"
+    },
+    {
+      "path": "ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json",
+      "sha256": "12e5b41c32069fffd81d07f1a4d3c44632564ebec44660558f06686ec5211239"
+    }
+  ],
+  "commands": [
+    {
+      "command": "python scripts/verify_s04_readiness.py --json",
+      "exit_code": 0,
+      "stdout_tail": "{\n  \"checks\": {\n    \"open_high_or_critical_failures\": 0,\n    \"provider_reopening_slice_complete\": false,\n    \"pyeight_decision\": \"ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json\",\n    \"pyeight_state\": \"fallback_active\",\n    \"s01_status\": \"complete\",\n    \"s02_status\": \"complete\",\n    \"s03_8sleep_addendum\": \"docs/evidence/S03-8sleep-provider-status-addendum-20260531.md\",\n    \"s03_completed_tracked_handoff\": false,\n    \"s03_evidence_summary\": \"docs/evidence/ingestion/s03-ingestion-evidence.md\",\n    \"s03_provider_decision_count\": 2,\n    \"s03_provider_decisions_status\": \"ok\",\n    \"s03_readiness_status\": \"ok\",\n    \"s03_ship_branch\": \"ship/s03\",\n    \"s03_ship_commit\": \"c9349b337df6e36861468368669dc65cef5cf64d\",\n    \"s03_status\": \"complete\",\n    \"s04_autoplan\": \"docs/gstack/s04-feature-engineering-autoplan.md\",\n    \"s04_brief\": \"docs/briefs/s04-feature-engineering.autonomous-brief.md\"\n  },\n  \"errors\": [],\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python -m pytest tests/test_features.py -q",
+      "exit_code": 0,
+      "stdout_tail": ".................                                                        [100%]\n17 passed in 2.98s\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    }
+  ],
+  "redaction": "Command tails contain only sanitized local verification summaries. No raw health data, private evidence contents, provider payloads, credentials, database files, snapshots, or quarantine payloads are included."
+}

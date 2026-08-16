@@ -23,8 +23,10 @@ if __package__ in {None, ""}:
 from scripts.check_autonomous_review_exists import check_review
 from scripts.check_no_tracked_data import check_no_tracked_data
 from scripts.acceptance_policy import command_allowed
+from scripts.slice_integration import verify_slice_integration
 from scripts.swr_lane_policy import validate_swr_lane_requirements
 from scripts.validate_playbook_autonomous import validate_playbook
+from scripts.verify_s12_readiness import verify_s12_continuity
 
 
 CRITICAL_FAILURES = {
@@ -167,6 +169,20 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
     if incomplete:
         errors.append(f"required slices incomplete: {', '.join(incomplete)}")
 
+    # Final completion requires current provider authority and current,
+    # read-only aggregate activation evidence. Historical S12 completion is
+    # insufficient after expiry, revocation, source removal, or stale/missing
+    # sync proof. This gate is independent of --skip-acceptance.
+    s12 = next((item for item in required if item.get("id") == "S12"), None)
+    s12_continuity: dict[str, Any] | None = None
+    if s12 is not None:
+        s12_continuity = verify_s12_continuity(root)
+        if s12_continuity.get("status") != "ok":
+            continuity_errors = s12_continuity.get("errors", []) or [
+                "S12 current authority and activation/sync proof are not ok"
+            ]
+            errors.extend(f"final provider continuity gate: {error}" for error in continuity_errors)
+
     for item in required:
         slice_id = item.get("id", "<unknown>")
 
@@ -176,6 +192,12 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
             errors.append(f"completed slice has no run_id recorded: {slice_id}")
 
         if item.get("status") == "complete":
+            integration = verify_slice_integration(root, str(slice_id))
+            if integration.get("status") != "ok":
+                errors.extend(
+                    f"{slice_id}: completed slice is not durably integrated: {error}"
+                    for error in integration.get("errors", [])
+                )
             ship_branch = item.get("ship_branch")
             ship_commit = item.get("ship_commit")
             if not ship_branch:
@@ -259,6 +281,14 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
         "incomplete_slices": incomplete,
         "open_critical_failures": len(open_critical),
         "commands": command_results,
+        "s12_continuity": (
+            {
+                "status": s12_continuity.get("status"),
+                **s12_continuity.get("checks", {}),
+            }
+            if s12_continuity is not None
+            else None
+        ),
     }
 
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime
@@ -74,12 +76,147 @@ def init_git_repo(root: Path) -> None:
     subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
 
+def s12_readiness_wire_report(status: str = "blocked_external") -> dict[str, object]:
+    if status == "blocked_external":
+        errors = ["issuer-authenticated authority unavailable"]
+        control_count = 0
+        authority_count = 1
+    elif status == "error":
+        errors = ["sealed control input invalid"]
+        control_count = 1
+        authority_count = 0
+    else:
+        errors = []
+        control_count = 0
+        authority_count = 0
+    return {
+        "status": status,
+        "errors": errors,
+        "warnings": [],
+        "checks": {
+            "phase": "pre_compiler_or_pre_ship",
+            "paid_execution_performed": False,
+            "network_accessed": False,
+            "oauth_or_token_inspected": False,
+            "private_source_contents_read": False,
+            "private_source_contents_parsed": False,
+            "issuer_authenticated_authority_validator": "not_implemented",
+            "committed_inputs": {"sealed-input": {}},
+            "control_error_count": control_count,
+            "authority_blocker_count": authority_count,
+            "provider_policy": "oura_only_v1_not_reopened",
+        },
+    }
+
+
 class AutoKeelTests(unittest.TestCase):
     def test_command_runner_blocks_manual_gate_command(self) -> None:
         policy = {"manual_gates": {"forbidden_commands": ["keel-run mark-manual-gate", "mark-manual-gate"]}}
         runner = CommandRunner(ROOT, policy, dry_run=True)
         with self.assertRaises(PolicyError):
             runner.run(["keel-run", "mark-manual-gate", "--run-id", "run_1"])
+
+    def test_command_runner_does_not_inherit_ambient_secrets(self) -> None:
+        policy = {"manual_gates": {"forbidden_commands": []}}
+        runner = CommandRunner(ROOT, policy)
+        with patch.dict(
+            os.environ,
+            {
+                "OURA_ACCESS_TOKEN": "ambient-provider-secret",
+                "MOOD_API_TOKEN": "ambient-health-secret",
+                "OPENAI_API_KEY": "ambient-compiler-secret",
+            },
+            clear=False,
+        ):
+            result = runner.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import json,os; print(json.dumps({k: os.environ.get(k) for k in "
+                    "('OURA_ACCESS_TOKEN','MOOD_API_TOKEN','OPENAI_API_KEY')}))",
+                ]
+            )
+
+        self.assertTrue(result.ok, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"OURA_ACCESS_TOKEN": None, "MOOD_API_TOKEN": None, "OPENAI_API_KEY": None},
+        )
+
+    def test_autokeel_constructor_and_intervention_operator_never_open_repo_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            (root / ".env.local").write_text("OURA_ACCESS_TOKEN=repo-local-secret\n", encoding="utf-8")
+            original_open = Path.open
+
+            def deny_env_open(path: Path, *args, **kwargs):
+                if path.name in {".env", ".env.local"}:
+                    raise AssertionError(f"control-plane construction opened {path.name}")
+                return original_open(path, *args, **kwargs)
+
+            from scripts.record_intervention import _operator
+
+            with patch.object(Path, "open", deny_env_open):
+                op = AutoKeel(root=root, dry_run=True)
+                self.assertIsInstance(op.load_state(), dict)
+                self.assertTrue(op.verify_state_digest().ok)
+                intervention_op = _operator(root)
+                self.assertIsInstance(intervention_op.load_state(), dict)
+                swr_slice = next(item for item in intervention_op.load_slices() if item.get("lane") == "swr_preferred")
+                intervention_op.strict_swr_provider_preflight(swr_slice)
+                self.assertIsInstance(intervention_op.swr_provider_env(), dict)
+
+    def test_repo_env_is_read_lazily_only_for_exact_authorized_swr_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=False)
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch(
+                    "ops.autonomy.autokeel.read_local_env",
+                    return_value={"OPENAI_API_KEY": "repo-local-secret", "OURA_ACCESS_TOKEN": "must-not-route"},
+                ) as local_reader,
+            ):
+                self.assertEqual(op.swr_provider_env(), {})
+                local_reader.assert_not_called()
+                routed = op.swr_provider_env(allow_repo_env=True)
+
+            self.assertEqual(routed, {"OPENAI_API_KEY": "repo-local-secret"})
+            local_reader.assert_called_once_with(root.resolve(), authorized_names=["OPENAI_API_KEY"])
+
+    def test_s05_s06_readiness_subprocess_receives_only_exported_key_presence_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            probe = (
+                "import json, os\n"
+                "print(json.dumps({"
+                "'marker': os.environ.get('AUTOKEEL_READINESS_OPENAI_API_KEY_PRESENT'), "
+                "'provider_value': os.environ.get('OPENAI_API_KEY')}))\n"
+            )
+            for rel in ("scripts/verify_s05_readiness.py", "scripts/verify_s06_readiness.py"):
+                (root / rel).write_text(probe, encoding="utf-8")
+            op = AutoKeel(root=root, dry_run=False)
+
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "outer-test-secret"}, clear=False):
+                present = op.run_slice_readiness("S05")
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "   "}, clear=False):
+                absent = op.run_slice_readiness("S06")
+
+            self.assertTrue(present.ok, present.stderr)
+            self.assertTrue(absent.ok, absent.stderr)
+            self.assertEqual(
+                json.loads(present.stdout),
+                {"marker": "1", "provider_value": None},
+            )
+            self.assertEqual(
+                json.loads(absent.stdout),
+                {"marker": "0", "provider_value": None},
+            )
+            events = (root / "ops/autonomy/events.jsonl").read_text(encoding="utf-8")
+            self.assertNotIn("outer-test-secret", events)
 
     def test_log_event_redacts_secret_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -168,6 +305,13 @@ Manual gates are forbidden.
 """
             self.assertEqual(op.validate_autoplan_text(slice_, text), [])
 
+    def test_s11_recovery_autoplan_is_compiler_parseable(self) -> None:
+        op = AutoKeel(root=ROOT, dry_run=True)
+        slice_ = next(item for item in op.load_slices() if item["id"] == "S11")
+        autoplan = ROOT / str(slice_["autoplan"])
+
+        self.assertEqual(op.validate_autoplan_text(slice_, autoplan.read_text(encoding="utf-8")), [])
+
     def test_generated_autoplan_must_be_committed_before_compile(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -183,6 +327,427 @@ Manual gates are forbidden.
 
             self.assertEqual(result.exit_code, 41)
             self.assertIn("autoplan must be tracked at HEAD before compile", result.stderr)
+
+    def test_all_compiler_inputs_must_match_committed_bytes_before_compile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slice_ = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))[0]
+            slice_["id"] = "S11"
+            policy = root / "ops/autonomy/policy.yaml"
+            policy_payload = policy.read_text(encoding="utf-8")
+            policy.write_text(
+                policy_payload.replace(
+                    "design_doc: docs/gstack/health-data-hub-office-hours.md",
+                    "design_doc: docs/gstack/test-design.md",
+                ),
+                encoding="utf-8",
+            )
+            for rel_path in ("docs/gstack/test-design.md", str(slice_["autoplan"]), str(slice_["brief"])):
+                path = root / rel_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"committed {rel_path}\n", encoding="utf-8")
+            init_git_repo(root)
+            op = AutoKeel(root=root, dry_run=True)
+            self.assertTrue(op.assert_primary_inputs_match_head(slice_).ok)
+
+            for rel_path in ("docs/gstack/test-design.md", str(slice_["autoplan"]), str(slice_["brief"])):
+                candidate = root / rel_path
+                original = candidate.read_bytes()
+                candidate.write_text("uncommitted contract change\n", encoding="utf-8")
+                result = op.assert_primary_inputs_match_head(slice_)
+
+                self.assertEqual(result.exit_code, 41)
+                self.assertIn("primary input differs from HEAD", result.stderr)
+                self.assertIn(rel_path, result.stderr)
+                candidate.write_bytes(original)
+
+    def test_s11_activation_acceptance_fails_closed_after_hermetic_acceptance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slices_path = root / "ops/autonomy/slices.json"
+            slices = json.loads(slices_path.read_text(encoding="utf-8"))
+            s11 = next(item for item in slices if item["id"] == "S11")
+            s11["activation_acceptance"] = {
+                "command": "python scripts/verify_mood_logging_recovery.py --runtime-root-env HEALTH_HUB_RUNTIME_ROOT --json",
+                "runtime_root": "canonical",
+                "runtime_root_env": "HEALTH_HUB_RUNTIME_ROOT",
+                "reads_private_aggregate_evidence": True,
+                "live_warehouse_access": "read_only",
+                "required_after_ship_acceptance": True,
+                "completion_requires_status": "ok",
+            }
+            write_json_atomic(slices_path, slices)
+            worktree = root / "detached-ship"
+            worktree.mkdir()
+            phases: list[str] = []
+
+            class ActivationRunner:
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    raise AssertionError("generated activation verifier must remain disabled")
+
+            runner = ActivationRunner()
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = runner
+
+            def reviews(slice_id, run_id, cwd=None):
+                phases.append("review_artifacts")
+                return CommandResult([], 0, "reviews ok", "")
+
+            def hermetic(slice_id, cwd=None):
+                phases.append("slice_acceptance")
+                return CommandResult([], 0, "slice ok", "")
+
+            op.ensure_review_artifacts = reviews
+            op.verify_slice_acceptance = hermetic
+            op.generated_tool_file_read_guard = lambda slice_id, operation: CommandResult([], 0, "isolation test bypass", "")
+            op.with_detached_worktree = lambda ref, prefix, fn: fn(worktree)
+
+            failed_phase, result = op.validate_shipped_slice("S11", "RUN_S11", "ship/s11")
+
+            self.assertEqual(result.exit_code, AutoKeel.ACTIVATION_CONTROL_ERROR_EXIT)
+            self.assertIn("trusted outer evidence", result.stderr)
+            self.assertEqual(failed_phase, "activation_acceptance")
+            self.assertEqual(phases, ["review_artifacts", "slice_acceptance"])
+
+    def test_activation_payload_shape_requires_path_freshness_and_bindings(self) -> None:
+        payload = {
+            "schema_version": "autokeel.activation_acceptance.v1",
+            "status": "blocked_external",
+            "slice_id": "S11",
+            "run_id": "RUN_S11",
+            "ship_commit": "a" * 40,
+            "verifier_sha256": "b" * 64,
+            "evidence_path": "private/evidence/S11/activation/report.json",
+            "evidence_sha256": None,
+            "observed_at": "2026-08-16T16:00:00-04:00",
+            "authority_sha256": None,
+        }
+        errors = AutoKeel.activation_payload_errors(
+            payload,
+            slice_id="S11",
+            run_id="RUN_S11",
+            ship_commit="a" * 40,
+            verifier_sha256="b" * 64,
+            authority_sha256=None,
+        )
+        self.assertEqual(errors, [])
+
+    def test_activation_acceptance_rejects_generic_ok_as_control_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            errors = AutoKeel.activation_payload_errors(
+                {"status": "ok", "evidence_sha256": "c" * 64},
+                slice_id="S11",
+                run_id="RUN_S11",
+                ship_commit="a" * 40,
+                verifier_sha256="b" * 64,
+                authority_sha256=None,
+            )
+            self.assertTrue(any("required binding fields" in error for error in errors))
+            self.assertTrue(any("evidence_path" in error for error in errors))
+            self.assertTrue(any("observed_at" in error for error in errors))
+
+    def test_s12_activation_acceptance_uses_read_only_canonical_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            worktree = root / "detached-s12-ship"
+            worktree.mkdir()
+
+            class PassingRunner:
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    raise AssertionError("generated activation verifier must remain disabled")
+
+            runner = PassingRunner()
+            op = AutoKeel(root=root, dry_run=False)
+            op.runner = runner
+            authority_sha256 = "d" * 64
+            op.s12_operation_readiness = lambda slice_id, operation: (
+                CommandResult([], 0, '{"status":"ok"}', ""),
+                {"status": "ok", "checks": {"private_source": {"sha256": authority_sha256}}},
+            )
+            result = op.run_activation_acceptance("S12", worktree, run_id="RUN_S12")
+
+            self.assertEqual(result.exit_code, AutoKeel.ACTIVATION_CONTROL_ERROR_EXIT)
+            self.assertIn("trusted outer evidence", result.stderr)
+
+    def test_s12_blocked_external_readiness_is_normalized_before_resume_recovery_and_ship(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            s12 = next(item for item in op.load_slices() if item["id"] == "S12")
+            s12["run_id"] = "RUN_S12"
+            readiness_calls: list[str] = []
+
+            def blocked_readiness(slice_id):
+                self.assertEqual(slice_id, "S12")
+                readiness_calls.append(slice_id)
+                return CommandResult([], 2, json.dumps(s12_readiness_wire_report()), "authority missing")
+
+            op.run_slice_readiness = blocked_readiness
+
+            started = op.start_or_resume_po(s12)
+            recovered = op.recover_passed_slice_run(s12)
+            shipped = op.ship_slice("S12", "RUN_S12")
+
+            self.assertEqual(started.exit_code, AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT)
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered.exit_code, AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT)
+            self.assertEqual(shipped.exit_code, AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT)
+            self.assertEqual(readiness_calls, ["S12", "S12", "S12"])
+            self.assertEqual(op.find_slice("S12")["status"], "blocked_external")
+
+    def test_s12_readiness_rejects_incomplete_or_wrong_exit_blocked_external_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+
+            op.run_slice_readiness = lambda _slice_id: CommandResult(
+                [], 2, '{"status":"blocked_external"}', ""
+            )
+            incomplete, _payload = op.s12_operation_readiness("S12", "start_or_resume_po")
+            self.assertEqual(incomplete.exit_code, AutoKeel.ACTIVATION_CONTROL_ERROR_EXIT)
+            self.assertIn("exactly status, errors, warnings, and checks", incomplete.stderr)
+            self.assertNotEqual(op.find_slice("S12")["status"], "blocked_external")
+
+            op.run_slice_readiness = lambda _slice_id: CommandResult(
+                [], 1, json.dumps(s12_readiness_wire_report()), ""
+            )
+            wrong_exit, _payload = op.s12_operation_readiness("S12", "ship")
+            self.assertEqual(wrong_exit.exit_code, AutoKeel.ACTIVATION_CONTROL_ERROR_EXIT)
+            self.assertIn("requires raw exit 2", wrong_exit.stderr)
+            self.assertNotEqual(op.find_slice("S12")["status"], "blocked_external")
+
+    def test_s12_normalized_blocked_external_is_not_recorded_as_po_test_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            s12 = op.find_slice("S12")
+            self.assertIsNotNone(s12)
+
+            code = op.run_po_and_handle_status(
+                s12,
+                CommandResult(
+                    [],
+                    AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT,
+                    json.dumps(s12_readiness_wire_report()),
+                    "provider authority missing",
+                ),
+            )
+
+            self.assertEqual(code, AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT)
+            self.assertEqual(op.find_slice("S12")["status"], "blocked_external")
+            self.assertNotIn(
+                '"failure_class": "test_failure"',
+                (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8"),
+            )
+
+    def test_handle_po_status_rejects_unvalidated_s12_blocked_external_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            op.ship_slice = lambda slice_id, run_id: CommandResult(
+                [],
+                AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT,
+                '{"status":"blocked_external"}',
+                "incomplete readiness report",
+            )
+
+            result = op.handle_po_status("S12", "RUN_S12", {"terminal_state": "passed"})
+
+            self.assertEqual(result, "ship_failed")
+            self.assertEqual(op.find_slice("S12")["status"], "replan_required")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn('"failure_class": "ship_failure"', ledger)
+            self.assertNotIn('"failure_class": "blocked_external_missing_evidence"', ledger)
+
+    def test_s11_readiness_and_generated_routes_stop_before_same_user_secret_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            (root / ".env.local").write_text("DUMMY_PROVIDER_TOKEN=fixture-only\n", encoding="utf-8")
+            (root / "data/secrets").mkdir(parents=True)
+            (root / "data/secrets/credential-cache.json").write_text("fixture-only\n", encoding="utf-8")
+
+            class PreSpendRunner:
+                def __init__(self):
+                    self.calls: list[list[str]] = []
+
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    self.calls.append(list(argv))
+                    if list(argv) == ["python", "scripts/verify_s11_readiness.py", "--json"]:
+                        return CommandResult(list(argv), 0, '{"status":"ok"}', "")
+                    raise AssertionError(f"generated route reached same-user filesystem authority: {argv}")
+
+            op = AutoKeel(root=root, dry_run=False)
+            runner = PreSpendRunner()
+            op.runner = runner
+            s11 = op.find_slice("S11")
+            self.assertIsNotNone(s11)
+
+            readiness = op.run_slice_readiness("S11")
+            autoplan_result = op.generate_autoplan(
+                s11,
+                root / str(s11["autoplan"]),
+                str(s11["autoplan"]),
+            )
+            compile_result = op.ensure_playbook(s11)
+            po_result = op.start_or_resume_po(s11)
+            review_result = op.run_reviewer_for_artifact(s11, "docs/reviews/dummy.md", "RUN_S11")
+            acceptance_result = op.verify_slice_acceptance("S11")
+
+            for result in (readiness, autoplan_result, compile_result, po_result, review_result, acceptance_result):
+                self.assertEqual(result.exit_code, AutoKeel.SECRET_ISOLATION_CONTROL_ERROR_EXIT)
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload["status"], "control_error")
+                self.assertFalse(payload["file_contents_read"])
+                self.assertIn(".env.local", payload["sensitive_paths_present"])
+                self.assertIn("data", payload["sensitive_paths_present"])
+            self.assertEqual(runner.calls, [])
+            self.assertEqual(op.find_slice("S11")["status"], "blocked_compile_inputs")
+
+    def test_s11_unmocked_readiness_path_preserves_isolation_control_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            (root / ".env.local").write_text("DUMMY_PROVIDER_TOKEN=fixture-only\n", encoding="utf-8")
+            (root / "data/secrets").mkdir(parents=True)
+            op = AutoKeel(root=root, dry_run=False)
+
+            result = op.run_slice_readiness("S11")
+
+            self.assertEqual(result.exit_code, AutoKeel.SECRET_ISOLATION_CONTROL_ERROR_EXIT)
+            self.assertEqual(op.find_slice("S11")["status"], "blocked_compile_inputs")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertNotIn('"failure_class": "audit_failure"', ledger)
+
+    @unittest.skipUnless(sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file(), "Darwin sandbox probe")
+    def test_disabled_activation_profile_is_narrow_and_sandbox_enforcement_denies_secret_write_and_unlisted_exec(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            ship = root / ".local/autokeel/ship-checkouts/s11-test"
+            ship.mkdir(parents=True)
+            secret = root / "sibling-provider-secret.txt"
+            secret.write_text("dummy-secret-value\n", encoding="utf-8")
+            evidence = root / "private/evidence/S11/activation/report.json"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("aggregate-ok\n", encoding="utf-8")
+            output = ship / "forbidden-write.txt"
+            op = AutoKeel(root=root, dry_run=True)
+            sandbox = "/usr/bin/sandbox-exec"
+            clean_env = CommandRunner.safe_environment(
+                {"HOME": "/var/empty", "TMPDIR": "/var/empty", "PATH": "/usr/bin:/bin"}
+            )
+
+            cat = Path("/bin/cat").resolve()
+            cat_profile = op.activation_sandbox_profile("S11", ship, [cat], evidence)
+            self.assertIn(f'(literal {json.dumps(str(evidence.resolve()))})', cat_profile)
+            self.assertIn(f'(literal {json.dumps(str(cat))})', cat_profile)
+            self.assertNotIn(f'(subpath {json.dumps(str(evidence.parent.parent.resolve()))})', cat_profile)
+            for forbidden in ('(subpath "/Library")', '(subpath "/opt/homebrew")', '(subpath "/private/etc")', '(subpath "/dev")'):
+                self.assertNotIn(forbidden, cat_profile)
+
+            # This is an OS-enforcement probe, not certification of the
+            # disabled draft profile above. It supplies a known-good positive
+            # control while exercising exact read denial, write denial, and
+            # exact process-exec selection on this Darwin host.
+            touch = Path("/usr/bin/touch").resolve()
+            enforcement_profile = "\n".join(
+                (
+                    "(version 1)",
+                    "(allow default)",
+                    "(deny process-exec)",
+                    f'(allow process-exec (literal {json.dumps(str(cat))}) (literal {json.dumps(str(touch))}))',
+                    f'(deny file-read-data (literal {json.dumps(str(secret.resolve()))}))',
+                    "(deny file-write*)",
+                )
+            )
+            allowed_read = subprocess.run(
+                [sandbox, "-p", enforcement_profile, str(cat), str(evidence)],
+                cwd=ship,
+                env=clean_env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(allowed_read.returncode, 0, allowed_read.stderr)
+            self.assertEqual(allowed_read.stdout, "aggregate-ok\n")
+            secret_read = subprocess.run(
+                [sandbox, "-p", enforcement_profile, str(cat), str(secret)],
+                cwd=ship,
+                env=clean_env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(secret_read.returncode, 0)
+            self.assertNotIn("dummy-secret-value", secret_read.stdout)
+
+            unlisted_exec = subprocess.run(
+                [sandbox, "-p", enforcement_profile, "/usr/bin/env"],
+                cwd=ship,
+                env=clean_env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(unlisted_exec.returncode, 0)
+
+            denied_write = subprocess.run(
+                [sandbox, "-p", enforcement_profile, str(touch), str(output)],
+                cwd=ship,
+                env=clean_env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(denied_write.returncode, 0)
+            self.assertFalse(output.exists())
+
+    def test_s06_lane_inputs_are_resealed_against_worktree_at_launch_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            tracked_input = root / "docs/gstack/s06-contract.md"
+            tracked_input.parent.mkdir(parents=True, exist_ok=True)
+            tracked_input.write_text("frozen contract\n", encoding="utf-8")
+            init_git_repo(root)
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD^{commit}"], cwd=root, text=True, capture_output=True, check=True
+            ).stdout.strip()
+            blob = subprocess.run(
+                ["git", "rev-parse", "HEAD:docs/gstack/s06-contract.md"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            decision_rel = "ops/autonomy/decisions/S06-lane-decision-test.json"
+            write_json_atomic(
+                root / decision_rel,
+                {"head_commit": head, "input_tree": {"docs/gstack/s06-contract.md": blob}},
+            )
+            op = AutoKeel(root=root, dry_run=True)
+            slice_ = {"id": "S06", "lane_decision": decision_rel}
+            self.assertTrue(op.assert_s06_lane_inputs_match_worktree(slice_).ok)
+
+            tracked_input.write_text("changed after readiness\n", encoding="utf-8")
+            result = op.assert_s06_lane_inputs_match_worktree(slice_)
+
+            self.assertEqual(result.exit_code, 42)
+            self.assertIn("docs/gstack/s06-contract.md", result.stderr)
 
     def test_blank_openai_key_is_missing_for_strict_swr_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1030,6 +1595,13 @@ Manual gates are forbidden.
                 capture_output=True,
                 check=True,
             ).stdout.strip()
+            integration_base = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
             subprocess.run(["git", "checkout", "-b", "orchestrator/run/RUN_TEST"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             (root / "run.txt").write_text("stale run branch\n", encoding="utf-8")
             subprocess.run(["git", "add", "run.txt"], cwd=root, check=True)
@@ -1045,7 +1617,13 @@ Manual gates are forbidden.
 
             run_state_dir = root / ".local/automation/plan_orchestrator/runs/RUN_TEST"
             run_state_dir.mkdir(parents=True)
-            write_json_atomic(run_state_dir / "run_state.json", {"run_branch_name": "orchestrator/run-refresh/RUN_TEST/1"})
+            write_json_atomic(
+                run_state_dir / "run_state.json",
+                {
+                    "run_branch_name": "orchestrator/run-refresh/RUN_TEST/1",
+                    "base_head_sha": integration_base,
+                },
+            )
             subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             op = AutoKeel(root=root, dry_run=False)
 
@@ -1078,13 +1656,61 @@ Manual gates are forbidden.
                 capture_output=True,
                 check=True,
             ).stdout.strip()
+            integration_base = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
             subprocess.run(["git", "checkout", "-b", "orchestrator/run/RUN_TEST"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            (root / "first_ship_surface").write_text("first slice commit\n", encoding="utf-8")
+            subprocess.run(["git", "add", "first_ship_surface"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "first ship commit"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            first_ship_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
             (root / "ship_only_review").write_text("review exists only on ship branch\n", encoding="utf-8")
             (root / "ship_only_verify").write_text("acceptance exists only on ship branch\n", encoding="utf-8")
             subprocess.run(["git", "add", "ship_only_review", "ship_only_verify"], cwd=root, check=True)
             subprocess.run(["git", "commit", "-m", "ship-only gates"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             run_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
             subprocess.run(["git", "checkout", base_branch], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            subprocess.run(
+                ["git", "merge", "--ff-only", first_ship_commit],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+            completion_time_merge_base = subprocess.run(
+                ["git", "merge-base", "HEAD", run_head],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(completion_time_merge_base, first_ship_commit)
+            self.assertNotEqual(completion_time_merge_base, integration_base)
+            run_state_dir = root / ".local/automation/plan_orchestrator/runs/RUN_TEST"
+            run_state_dir.mkdir(parents=True)
+            write_json_atomic(
+                run_state_dir / "run_state.json",
+                {
+                    "run_branch_name": "orchestrator/run/RUN_TEST",
+                    "base_head_sha": integration_base,
+                },
+            )
             op = AutoKeel(root=root, dry_run=False)
 
             result = op.handle_po_status("S01", "RUN_TEST", {"terminal_state": "passed"})
@@ -1096,6 +1722,7 @@ Manual gates are forbidden.
             self.assertIn("S01", state["completed_slices"])
             slices = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))
             self.assertEqual(slices[0]["ship_commit"], run_head)
+            self.assertEqual(slices[0]["integration_base_commit"], integration_base)
             branch = subprocess.run(["git", "branch", "--show-current"], cwd=root, text=True, capture_output=True, check=True).stdout.strip()
             self.assertEqual(branch, base_branch)
 
@@ -1331,12 +1958,17 @@ Manual gates are forbidden.
                 root / "ops/autonomy/slices.json",
             ]
             before = {path: path.read_bytes() for path in tracked}
+            digest_sidecar = root / "ops/autonomy/state_digest.json"
+            self.assertFalse(digest_sidecar.exists())
 
             op = AutoKeel(root=root, dry_run=True)
+            op.run_autokeel_invariants = lambda _phase: CommandResult([], 0, '{"status":"ok"}', "")
+            op.evaluate_tripwires = lambda: CommandResult([], 0, '{"status":"ok"}', "")
             result = op.run_once(requested_slice="S01")
 
             self.assertEqual(result, 0)
             self.assertEqual({path: path.read_bytes() for path in tracked}, before)
+            self.assertFalse(digest_sidecar.exists())
 
     def test_dry_run_replan_does_not_archive_playbook(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1362,11 +1994,205 @@ Manual gates are forbidden.
             write_json_atomic(slices_path, slices)
 
             op = AutoKeel(root=root, dry_run=True)
+            op.run_autokeel_invariants = lambda _phase: CommandResult([], 0, '{"status":"ok"}', "")
+            op.evaluate_tripwires = lambda: CommandResult([], 0, '{"status":"ok"}', "")
             result = op.run_once(requested_slice="S01")
 
             self.assertEqual(result, 0)
             self.assertTrue(playbook.exists())
             self.assertFalse((root / "ops/autonomy/failures/archived_playbooks").exists())
+
+    def test_dry_run_invalid_autoplan_is_zero_net(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            slice_ = json.loads((root / "ops/autonomy/slices.json").read_text(encoding="utf-8"))[0]
+            brief = root / str(slice_["brief"])
+            brief.parent.mkdir(parents=True, exist_ok=True)
+            brief.write_text("existing brief\n", encoding="utf-8")
+            autoplan = root / str(slice_["autoplan"])
+            autoplan.parent.mkdir(parents=True, exist_ok=True)
+            autoplan.write_text("# invalid existing S01 autoplan\n", encoding="utf-8")
+            docs_before = {
+                str(path.relative_to(root)): path.read_bytes()
+                for path in sorted((root / "docs").rglob("*"))
+                if path.is_file()
+            }
+            failure_root = root / "ops/autonomy/failures"
+            failures_before = {
+                str(path.relative_to(root)): path.read_bytes()
+                for path in sorted(failure_root.rglob("*"))
+                if path.is_file()
+            }
+
+            op = AutoKeel(root=root, dry_run=True)
+            op.run_autokeel_invariants = lambda _phase: CommandResult([], 0, '{"status":"ok"}', "")
+            op.run_verify_v1 = lambda: CommandResult([], 1, '{"status":"error"}', "")
+            op.evaluate_tripwires = lambda: CommandResult([], 0, '{"status":"ok"}', "")
+            op.failure_budget_exceeded = lambda _slice: CommandResult([], 0, "budget ok", "")
+            op.recover_passed_slice_run = lambda _slice: None
+            op.restore_repaired_escalated_slice_run = lambda _slice: False
+            op.should_run_slice_readiness = lambda _slice: False
+            op.ensure_lane_decision = lambda _slice: CommandResult([], 0, "lane ok", "")
+            op.required_external_evidence_ready = lambda _slice: CommandResult([], 0, "evidence ok", "")
+
+            result = op.run_once(requested_slice="S01")
+
+            self.assertEqual(result, 24)
+            docs_after = {
+                str(path.relative_to(root)): path.read_bytes()
+                for path in sorted((root / "docs").rglob("*"))
+                if path.is_file()
+            }
+            failures_after = {
+                str(path.relative_to(root)): path.read_bytes()
+                for path in sorted(failure_root.rglob("*"))
+                if path.is_file()
+            }
+            self.assertEqual(docs_after, docs_before)
+            self.assertEqual(failures_after, failures_before)
+            self.assertFalse((failure_root / "archived_autoplans").exists())
+            self.assertFalse((root / "ops/autonomy/heartbeats/latest.json").exists())
+
+    def test_failed_s11_activation_acceptance_blocks_external_without_replan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            op.ship_slice = lambda slice_id, run_id: CommandResult(
+                [],
+                0,
+                json.dumps({"ship_branch": "ship/s11", "ship_commit": "a" * 40}),
+                "",
+            )
+            op.validate_shipped_slice = lambda slice_id, run_id, ship_branch: (
+                "activation_acceptance",
+                CommandResult(
+                    [],
+                    AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT,
+                    '{"status":"blocked_external"}',
+                    "activation evidence missing",
+                ),
+            )
+
+            result = op.handle_po_status("S11", "RUN_S11", {"terminal_state": "passed"})
+
+            self.assertEqual(result, "blocked_external")
+            updated = next(item for item in op.load_slices() if item["id"] == "S11")
+            self.assertEqual(updated["status"], "blocked_external")
+            self.assertEqual(updated["reason"], "runtime activation acceptance unavailable")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn("blocked_external_missing_evidence", ledger)
+            self.assertNotIn('"status": "complete"', ledger)
+
+    def test_activation_control_error_is_not_misclassified_as_external(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            op = AutoKeel(root=root, dry_run=True)
+            op.ship_slice = lambda slice_id, run_id: CommandResult(
+                [],
+                0,
+                json.dumps({"ship_branch": "ship/s11", "ship_commit": "a" * 40}),
+                "",
+            )
+            op.validate_shipped_slice = lambda slice_id, run_id, ship_branch: (
+                "activation_acceptance",
+                CommandResult([], AutoKeel.ACTIVATION_CONTROL_ERROR_EXIT, "", "sandbox unavailable"),
+            )
+
+            result = op.handle_po_status("S11", "RUN_S11", {"terminal_state": "passed"})
+
+            self.assertEqual(result, "activation_control_error")
+            updated = next(item for item in op.load_slices() if item["id"] == "S11")
+            self.assertEqual(updated["status"], "blocked_compile_inputs")
+            self.assertEqual(updated["reason"], "activation control error")
+            ledger = (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8")
+            self.assertIn('"failure_class": "control_error"', ledger)
+            self.assertNotIn('"failure_class": "blocked_external_missing_evidence"', ledger)
+
+    def test_passed_po_rejects_ship_ref_movement_after_detached_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            sealed = "a" * 40
+            moved = "b" * 40
+            validated_refs: list[str] = []
+
+            class MovedRefRunner:
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    if list(argv) == ["git", "rev-parse", "ship/s01^{commit}"]:
+                        return CommandResult(list(argv), 0, moved + "\n", "")
+                    raise AssertionError(f"unexpected command after ship validation: {argv}")
+
+            op = AutoKeel(root=root, dry_run=True)
+            op.runner = MovedRefRunner()
+            op.ship_slice = lambda slice_id, run_id: CommandResult(
+                [],
+                0,
+                json.dumps({"ship_branch": "ship/s01", "ship_commit": sealed}),
+                "",
+            )
+
+            def validate(slice_id, run_id, ship_commit):
+                validated_refs.append(ship_commit)
+                return "activation_acceptance", CommandResult([], 0, '{"status":"ok"}', "")
+
+            op.validate_shipped_slice = validate
+
+            result = op.handle_po_status("S01", "RUN_S01", {"terminal_state": "passed"})
+
+            self.assertEqual(result, "ship_failed")
+            self.assertEqual(validated_refs, [sealed])
+            self.assertEqual(op.find_slice("S01")["status"], "replan_required")
+            self.assertIn("ship branch moved", (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8"))
+
+    def test_passed_po_rejects_ship_ref_movement_at_atomic_completion_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            copy_autonomy_fixture(root)
+            sealed = "a" * 40
+
+            class CompletionRaceRunner:
+                def run(self, argv, cwd=None, env=None, execute_in_dry_run=False, timeout=None):
+                    command = list(argv)
+                    if command == ["git", "rev-parse", "ship/s01^{commit}"]:
+                        return CommandResult(command, 0, sealed + "\n", "")
+                    if command == [
+                        "git",
+                        "update-ref",
+                        "refs/heads/ship/s01",
+                        sealed,
+                        sealed,
+                    ]:
+                        return CommandResult(command, 1, "", "cannot lock ref: expected old object")
+                    raise AssertionError(f"unexpected command after ship validation: {argv}")
+
+            op = AutoKeel(root=root, dry_run=True)
+            op.runner = CompletionRaceRunner()
+            op.ship_slice = lambda slice_id, run_id: CommandResult(
+                [],
+                0,
+                json.dumps({"ship_branch": "ship/s01", "ship_commit": sealed}),
+                "",
+            )
+            op.validate_shipped_slice = lambda slice_id, run_id, ship_commit: (
+                "activation_acceptance",
+                CommandResult([], 0, '{"status":"ok"}', ""),
+            )
+            op.resolve_po_run_integration_base = lambda run_id, ship_commit: (
+                "c" * 40,
+                CommandResult([], 0, "c" * 40, ""),
+            )
+
+            result = op.handle_po_status("S01", "RUN_S01", {"terminal_state": "passed"})
+
+            self.assertEqual(result, "ship_failed")
+            self.assertEqual(op.find_slice("S01")["status"], "replan_required")
+            self.assertIn(
+                "between final validation and persisted completion",
+                (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8"),
+            )
 
     def test_awaiting_human_gate_records_manual_gate_leak(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

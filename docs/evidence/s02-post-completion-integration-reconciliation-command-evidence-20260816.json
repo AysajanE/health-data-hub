@@ -1,0 +1,204 @@
+{
+  "schema_version": "autokeel_command_evidence_v1",
+  "created_at": "2026-08-16T19:41:47Z",
+  "slice": "S02",
+  "status": "ok",
+  "evidence_kind": "post_completion_integration_reconciliation",
+  "historical_run_id": "RUN_20260528T012206Z_d1a034d3e30d4b26a26273e07597d115",
+  "historical_ship_branch": "ship/s02",
+  "historical_ship_commit": "9b9a72bd9201eca69f94949d66aba9b71ee30b5c",
+  "integration_base_commit": "c16964f6d5d6610e6305a652de46896e79417fed",
+  "canonical_base_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+  "surface_summary": {
+    "ship_changed_paths": 85,
+    "identical_candidate_entries": 61,
+    "evolved_candidate_entries": 24,
+    "retired_candidate_entries": 0,
+    "reverted_candidate_entries": 0
+  },
+  "reviewed_files": [
+    {
+      "path": ".gitignore",
+      "sha256": "0163242cecc61d2123b685ed560478dad8f11740daada3881f6c384e7809fe75"
+    },
+    {
+      "path": "docs/briefs/s02-mood-api.autonomous-brief.md",
+      "sha256": "866d12e22b466c16450eadf542213121441cc8a4e0d3f396698d67bce67ac3f5"
+    },
+    {
+      "path": "docs/gstack/s02-mood-api-autoplan.md",
+      "sha256": "2ed75e792de8c88aeb2f37bf39bee18ab895be92ce78018e555fa38f7602aa78"
+    },
+    {
+      "path": "docs/playbooks/s02-mood-api.playbook.md",
+      "sha256": "3f2b64184e29fd4f88800bf69c5cb4257cfa22aa2a02f486d75dc31f747d80d9"
+    },
+    {
+      "path": "docs/evidence/s02-po-item07-closure-repair-20260527.md",
+      "sha256": "2c325c09d52b2dc4749a4468eb63b1e4ba3ae577dae955595b037c28532efa59"
+    },
+    {
+      "path": "docs/reviews/s02-autonomous-security-review.md",
+      "sha256": "2afb1330365d9238845eaa36a3bf0db92714ef9f0e3d5b87a69ba33f50b408ec"
+    },
+    {
+      "path": "docs/reviews/s02-autonomous-privacy-review.md",
+      "sha256": "223eda2f72f2e5a191d0f861251e17097eb8a840b7a8d78be0b6315b9f060bff"
+    },
+    {
+      "path": "ops/autonomy/README.md",
+      "sha256": "b7ae3efdbd6e931ba9545435fa24eceebef1f1609ceeebb5e1670bd35d3fd3b9"
+    },
+    {
+      "path": "ops/autonomy/autokeel.py",
+      "sha256": "23f92fdf5854da2d52d5df26100a5c1f3a2c08ef321ce80682d030ed4c4734d2"
+    },
+    {
+      "path": "ops/autonomy/autonomy_state.json",
+      "sha256": "cca4e378298cb9b378d65fad90f8f6f1917f07a07a1725363fca405a82ee683e"
+    },
+    {
+      "path": "ops/autonomy/events.jsonl",
+      "sha256": "c363835256e6ebd1d596f7808940ce641417504a495f1e5e0f8cc859b6c17f67"
+    },
+    {
+      "path": "ops/autonomy/failure_ledger.jsonl",
+      "sha256": "79c98859e3bec39c867de3fc6ccfd28dfaec13ee918cfd885fd1757f2a123081"
+    },
+    {
+      "path": "ops/autonomy/policy.yaml",
+      "sha256": "cee283f9b65ac80a39172237da77aad111512d0e6f4c01c29573e0f29802e17f"
+    },
+    {
+      "path": "ops/autonomy/progress.md",
+      "sha256": "235e7af08fcb6174dd3abf4f8743657c9f16474f9a91a671196c1bbe2b7a4138"
+    },
+    {
+      "path": "ops/autonomy/schemas/slices.schema.json",
+      "sha256": "0a9006b5e9b7b9e02b90ea88dc67eab48ff2e3b42b57aaaac44802efd6f7aa19"
+    },
+    {
+      "path": "ops/autonomy/slices.json",
+      "sha256": "3ddceea64044bc5b2c9374565f4e0f400ec82ba676046653b92bc6839f8b6b29"
+    },
+    {
+      "path": "scripts/acceptance_policy.py",
+      "sha256": "620de8b5e6b5622143e5b5484a453eab649bdd05759b429b54259b705f6421ce"
+    },
+    {
+      "path": "scripts/check_no_tracked_data.py",
+      "sha256": "0934116e13c0b489e691f19baa84defef38d854dbab675d10c2d167625afd803"
+    },
+    {
+      "path": "scripts/close_failure.py",
+      "sha256": "f3d0e248c2b8a3fcafa76980b72d41c725f97b7388aa5b8098c0f551d8e4dd23"
+    },
+    {
+      "path": "scripts/validate_playbook_autonomous.py",
+      "sha256": "968e676da5f57791e873f14fc1ef039cbe61375400c709cf468d4b147558e5fe"
+    },
+    {
+      "path": "scripts/verify_v1.py",
+      "sha256": "2d5f01a493b95ab9c67ae2f038a076e6ef32c2389313162de0d1118e771c9a64"
+    },
+    {
+      "path": "src/api/__init__.py",
+      "sha256": "409292e23e30d807e6f971e9a710bd5fccb42c352513e4d9bac7771079acf026"
+    },
+    {
+      "path": "src/api/app.py",
+      "sha256": "089963519494d4274fd6036790aefe44a9c101c03ac578cd0fec83608029e8c5"
+    },
+    {
+      "path": "src/api/dependencies.py",
+      "sha256": "75b5e79010ea62fa8caae0fdfdc40363392322817aa0dae33f07182afa8e750d"
+    },
+    {
+      "path": "src/api/mood_date.py",
+      "sha256": "6abeaab3d677415d6ec2a9566cf9c5dc0cbab19b2e70e9af599a1a875c20c8d7"
+    },
+    {
+      "path": "src/api/schemas.py",
+      "sha256": "eed2f8e88071ab598cfd8e1ba5f4e2f028a9ca19dea808e5a04ccf724f30e8d5"
+    },
+    {
+      "path": "src/api/security.py",
+      "sha256": "8089dda04740b848bab0763d1785a54cfb137154a8843689068a3f30fe942014"
+    },
+    {
+      "path": "tests/autonomy/test_autokeel.py",
+      "sha256": "6c75c53b79db921eca722fcfcc738be71055dce34f682d81d187be20458234c2"
+    },
+    {
+      "path": "tests/autonomy/test_autokeel_ops_tools.py",
+      "sha256": "83d02981e8c6eb10f92e804ba4a88cead33de06177052bb31e74c191bf568008"
+    },
+    {
+      "path": "tests/autonomy/test_autokeel_v1_feedback.py",
+      "sha256": "2e51433acfa50283c1ccf9a62c12f99520368877e94db2c896b2d6db5270c0b7"
+    },
+    {
+      "path": "tests/autonomy/test_autokeel_v2_remaining.py",
+      "sha256": "b1f830f95d0ba560a9b20622d5a20d3a29ee2b329e30239104bd22341bda81c5"
+    },
+    {
+      "path": "tests/autonomy/test_validate_playbook_autonomous.py",
+      "sha256": "c0a556c2fd33edfbc1f5d4951cd4088c0d84f66f8a83bb96c93b3c1c63b42a86"
+    },
+    {
+      "path": "tests/autonomy/test_verify_scripts.py",
+      "sha256": "d4f95555076de4b32003e9b4356a5028130e2b54fcb4f5488238671fd8175d3f"
+    },
+    {
+      "path": "tests/test_api_security.py",
+      "sha256": "7cdb25a09935ed3981ef9929623790e81f628d34a297f96857d77a2d90a4929a"
+    },
+    {
+      "path": "tests/test_mood_date.py",
+      "sha256": "c88493209ebc0881666e8d13dd5d940200326fae0326ca3c7865254f0299e763"
+    },
+    {
+      "path": "tests/test_mood_correction.py",
+      "sha256": "c9a68b6d04bec2c361ac3041739c345d2e8d40aacf06ac044d998e3c5f5b6b38"
+    }
+  ],
+  "commands": [
+    {
+      "command": "python -m pytest tests/test_api_security.py tests/test_mood_date.py tests/test_mood_correction.py -q",
+      "exit_code": 0,
+      "stdout_tail": "........................                                                 [100%]\n24 passed in 4.02s\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_autonomous_review_exists.py S02",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/autonomy -q",
+      "exit_code": 0,
+      "stdout_tail": "........................................................................ [ 92%]\n.......................                                                  [100%]\n311 passed in 93.05s (0:01:33)\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/verify_event_log.py --json",
+      "exit_code": 0,
+      "stdout_tail": "status=ok; event_rows=1535; unique_event_ids=1533; max_event_id=1533; reconciled_duplicate_ids=347,348\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/verify_failure_ledger.py --json",
+      "exit_code": 0,
+      "stdout_tail": "status=ok; rows=83; warnings are limited to identified legacy-v1 semantics\n",
+      "stderr_tail": ""
+    }
+  ],
+  "redaction": "Command tails contain only sanitized local verification summaries. No raw health data, private evidence contents, provider payloads, credentials, database files, snapshots, or quarantine payloads are included."
+}

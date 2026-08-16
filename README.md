@@ -29,7 +29,7 @@ That card is the product. Everything else in this repo exists to render it hones
 
 ## Two things in one repo
 
-1. **The product — Health Data Hub v1.** A local-first **Sleep + Mood Retrospective Explainer**. Oura (+ 8 Sleep when stable) → DuckDB on your Mac → a small model → a Streamlit page that explains yesterday. Nothing leaves your machine.
+1. **The product — Health Data Hub v1.** A local-first **Sleep + Mood Retrospective Explainer**. Oura → DuckDB on your Mac → a small model → a Streamlit page that explains yesterday. 8 Sleep is fallback-only and inactive in the current v1 provider path. Nothing leaves your machine.
 2. **The experiment — AutoKeel.** A zero-human supervisor that drives the [Keel](https://github.com/AysajanE/keel) toolchain to build the product, slice by slice, and writes a truthful audit trail of where it succeeded, where it failed, and why. AutoKeel never approves a human gate. Manual gates are substituted with deterministic verification + review artifacts, not faked.
 
 You can run the app without caring about AutoKeel. You can study AutoKeel without using the app. Most readers care about one of these; pick yours.
@@ -52,6 +52,12 @@ You can run the app without caring about AutoKeel. You can study AutoKeel withou
                               encrypted snapshots → iCloud Drive backups
 ```
 
+The diagram is the target shape of the original Shortcut branch. The active
+tripwire recovery uses a tiny Streamlit mobile form and defers FastAPI to v1.1;
+8 Sleep remains inactive. S12 now owns the production Oura sync, but it is
+fail-closed before compiler or provider use because current provider terms do
+not yet authorize this API-to-model path.
+
 - **Local-first.** DuckDB file on your laptop. No hosted backend. No SaaS.
 - **You own the model.** It learns your baseline from your own data. Nobody else's.
 - **Honest by design.** Until the model beats two trivial baselines on walk-forward evaluation, the UI shows *"Collecting model-ready days"* — not made-up insights.
@@ -59,15 +65,17 @@ You can run the app without caring about AutoKeel. You can study AutoKeel withou
 
 ## What's in v1, and where we are
 
-v1 is nine slices. The slice ledger (`ops/autonomy/slices.json`) is the truth; this table is a snapshot.
+v1 currently has eleven required slices: the original S01–S09, the S11 mood-logging recovery inserted after the real transport tripwire fired, and S12 for the previously unowned production Oura sync. The slice ledger (`ops/autonomy/slices.json`) is the truth; this table is a snapshot. “Recorded complete” means its code/control-plane slice passed its historical gate, not that the full product is operational on real data.
 
 | | Slice | What you get when it ships | Status |
 |---|---|---|---|
-| ✅ | **S01** Warehouse foundation | DuckDB schema, validated ingestion, quarantine for bad payloads | shipped on `ship/s01` |
-| ☐ | **S02** Mood API loop | One-tap evening mood log from your phone via iOS Shortcut | pending |
-| ☐ | **S03** Ingestion provider | Oura sleep flowing nightly (+ 8 Sleep if `pyEight` stays stable) | pending |
-| ☐ | **S04** Feature engineering | Daily features your model trains on (`total_sleep_min`, `hrv_z`, `deep_sleep_pct`, `prior_day_feeling`) | pending |
-| ☐ | **S05** Model lifecycle + gates | The model — but only allowed to speak after it beats baselines | pending |
+| ✅ | **S01** Warehouse foundation | DuckDB schema, validated ingestion, quarantine for bad payloads | recorded complete |
+| ✅ | **S02** Mood API loop | Tested FastAPI mood validation/persistence surface; real Shortcut/LAN activation was not proven | recorded complete |
+| ✅ | **S03** Ingestion provider decision | Oura-only v1 decision and provider evidence; no production Oura-to-warehouse sync yet | recorded complete |
+| ✅ | **S04** Feature engineering | Daily features your model trains on (`total_sleep_min`, `hrv_z`, `deep_sleep_pct`, `prior_day_feeling`) | recorded complete; continuation lineage requires canonical reconciliation |
+| ✅ | **S05** Model lifecycle + gates | The model — but only allowed to speak after it beats baselines | recorded complete |
+| ☐ | **S11** Tripwire recovery | Tiny authenticated Streamlit form, real mobile/LAN persistence, typed compliance evidence, and an independently verified collecting-state guard | next required slice |
+| ⛔ | **S12** Oura production sync | Authority-gated OAuth, wake-date/DST mapping, locked warehouse sync, chronological recompute, retention, and aggregate attestation | blocked on qualifying provider authority |
 | ☐ | **S06** Counterfactual generator | The "a sleep duration nearer your usual upper range was associated with…" line | pending |
 | ☐ | **S07** Read API + Streamlit UI | The explainer card you saw at the top, rendered against your data | pending |
 | ☐ | **S08** Backups + restore | launchd-scheduled encrypted snapshots to iCloud, verified restore path | pending |
@@ -78,7 +86,7 @@ v1 is nine slices. The slice ledger (`ops/autonomy/slices.json`) is the truth; t
 - **Not medical advice.** v1 explains correlations in *your* past data. It does not predict your future, recommend interventions, or make any clinical claim.
 - **Not a hosted service.** Everything runs on your Mac, against your data, with your credentials on your filesystem.
 - **Not multi-tenant.** Single user, single device, single dataset by design.
-- **Not finished.** S01 is done. Eight slices remain. An honest audit trail says so.
+- **Not finished.** S01–S05 are recorded complete. Before S11 may spend on compilation, the control plane still needs a trusted outer activation validator and enforceable isolation from repo-local secrets; S11 then needs real mobile evidence. S12 cannot compile or call Oura until a qualifying separate written agreement or legally confirmed non-API route exists.
 
 If you wanted a coach in your pocket, that's not this. The Autopilot tier (action features, N-of-1 experiments, prospective recommendations) lives in the v2+ vision — explicitly out of scope here because at this data scale, prospective recommendations are exactly where false precision and nocebo loops do the most damage.
 
@@ -86,7 +94,7 @@ If you wanted a coach in your pocket, that's not this. The Autopilot tier (actio
 
 **If you just want to understand the system** — open [`docs/keel-walkthrough_v1.html`](docs/keel-walkthrough_v1.html) in a browser. It's the click-through tour of how Keel + AutoKeel build a real feature end to end.
 
-**If you want to run the product on your own data** — wait until S02–S07 land, then follow the (then-real) Quickstart. You're early. Watch the slice ledger:
+**If you want to run the product on your own data** — there is no honest Quickstart yet. S11 must first clear its non-paid activation/isolation control stop and then prove the real phone/LAN form. S12 needs qualifying provider authority before a production Oura sync can be built and activated. Watch the slice ledger:
 
 ```bash
 python -m ops.autonomy.autokeel --status --failures
@@ -144,7 +152,9 @@ One iteration touches exactly one slice. AutoKeel reads `policy.yaml`, picks the
 - macOS, Python 3.12+
 - [Keel](https://github.com/AysajanE/keel) installed and on PATH
 - Codex CLI and Claude Code, installed and authenticated
-- An Oura account (for the eventual sleep pull — local-only; token stays on your machine)
+- An Oura account is not sufficient for the planned model path. S12 additionally
+  requires a qualifying separate Oura agreement or a legally confirmed non-API
+  acquisition route before any production pull is compiled or run.
 
 ## Non-negotiables
 

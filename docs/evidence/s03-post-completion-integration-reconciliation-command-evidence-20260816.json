@@ -1,0 +1,115 @@
+{
+  "schema_version": "autokeel_command_evidence_v1",
+  "created_at": "2026-08-16T18:36:37Z",
+  "slice": "S03",
+  "status": "ok",
+  "evidence_kind": "post_completion_integration_reconciliation",
+  "historical_run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+  "historical_ship_branch": "ship/s03",
+  "historical_ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
+  "reviewed_files": [
+    {
+      "path": "docs/gstack/s03-ingestion-provider-autoplan.md",
+      "sha256": "f17f0e60a7486f902fd152f58e0ac97d6a5389e79f5ebe1bdbcabb43dea3c2a6"
+    },
+    {
+      "path": "docs/briefs/s03-ingestion-provider.autonomous-brief.md",
+      "sha256": "e62d7ef98ecfe651d4a2e3096d46bac079713719b002f65c2bdef4f1b38e28b3"
+    },
+    {
+      "path": "docs/playbooks/s03-ingestion-provider.playbook.md",
+      "sha256": "bee85ad8597db143cb2ea7edc2bdb13c649f38894a2690695781e50e5396a5cb"
+    },
+    {
+      "path": "docs/evidence/ingestion/s03-command-evidence.json",
+      "sha256": "63f895ba9de11d81ff9329ab606a7232d192063cc7f608498172a132c9109236"
+    },
+    {
+      "path": "docs/evidence/ingestion/s03-ingestion-evidence.md",
+      "sha256": "25127a6ad7e6b215f1f71d0b0d794f6d17c25e370bf9d235134fb1e7ecb1f0d4"
+    },
+    {
+      "path": "docs/evidence/s03-item06-readiness-verifier-repair-20260529.md",
+      "sha256": "81850be1600e8ca0f46ad0fb975e8ff8b192e9a608be3f61cba53bc8e216f2e2"
+    },
+    {
+      "path": "docs/reviews/s03-autonomous-ingestion-evidence-review.md",
+      "sha256": "8b5500abaf76ef6893be0bbc983d5bb9e89d3e50e0942b350ba2fccb52484167"
+    },
+    {
+      "path": "ops/autonomy/decisions/S03-pyeight-evidence-20260529T175729-0400.json",
+      "sha256": "dfa8fba19ffb3a718696264669c7bb7238c3bc6a22607e2be4c23e052aaba761"
+    },
+    {
+      "path": "ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json",
+      "sha256": "12e5b41c32069fffd81d07f1a4d3c44632564ebec44660558f06686ec5211239"
+    },
+    {
+      "path": "scripts/evidence/_collector_common.py",
+      "sha256": "e779929237b131e10fe81c52d50b842fc91e04ba3769997ba1fe252115f25fe1"
+    },
+    {
+      "path": "scripts/evidence/oura_smoke.py",
+      "sha256": "a226120380a02693d203a8b78b4319898734c50dc5701ef4906b9f45bcde4dfc"
+    },
+    {
+      "path": "scripts/evidence/pyeight_smoke.py",
+      "sha256": "b8fdc46b6d072556a8bb3e93b57d3ca3eeb69d153e6fc74106e82e6bbc0fc0fe"
+    },
+    {
+      "path": "scripts/evidence/test_oura_smoke.py",
+      "sha256": "aa82d7c578a24db68646833c8ea02464d318ac1a4a3b396210799a192f37ccf6"
+    },
+    {
+      "path": "scripts/evidence/test_pyeight_smoke.py",
+      "sha256": "d87e0d88c04b6ff6df2bb5f81ad3f53776ee107070113b097c0a4cf1c4e7c7c2"
+    },
+    {
+      "path": "scripts/verify_s03_readiness.py",
+      "sha256": "da0a5d941691e33c8d42f2ec251ee71babb99b26feaa0abf8a6fe2ec7f75f2bf"
+    },
+    {
+      "path": "scripts/validate_provider_decisions.py",
+      "sha256": "cfb5171c5cd3eb2c26bc4fb6f4ac99afe2dc35ddbe6202d22e53bd4584275bfe"
+    },
+    {
+      "path": "scripts/check_autonomous_review_exists.py",
+      "sha256": "269f759de39c93baacbe13c5374e2449d16895019f082ef34ddb767b073158e1"
+    },
+    {
+      "path": "scripts/check_no_tracked_data.py",
+      "sha256": "0934116e13c0b489e691f19baa84defef38d854dbab675d10c2d167625afd803"
+    },
+    {
+      "path": "tests/autonomy/test_verify_scripts.py",
+      "sha256": "e04f624c45fff74a2546b3b701f2f8debd8bec82bb75d8cecd125241fcef494c"
+    }
+  ],
+  "commands": [
+    {
+      "command": "python scripts/verify_s03_readiness.py --json",
+      "exit_code": 0,
+      "stdout_tail": "status=ok; S01 and S02 complete; Oura local evidence status ok; provider-decision validation ok with two decision records; pyEight fallback explicit; both S03 review artifacts registered; private evidence root ignored; no errors or warnings",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/validate_provider_decisions.py S03 --json",
+      "exit_code": 0,
+      "stdout_tail": "{\n  \"decision_count\": 2,\n  \"decisions\": [\n    \"ops/autonomy/decisions/S03-pyeight-evidence-20260529T175729-0400.json\",\n    \"ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json\"\n  ],\n  \"errors\": [],\n  \"slice\": \"S03\",\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_autonomous_review_exists.py S03",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    }
+  ],
+  "redaction": "Command tails are sanitized summaries. Environment values, raw provider payloads, private evidence contents, account identifiers, health metrics, database files, snapshots, and quarantine payloads are excluded."
+}

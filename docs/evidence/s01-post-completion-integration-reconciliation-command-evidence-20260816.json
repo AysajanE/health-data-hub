@@ -1,0 +1,120 @@
+{
+  "schema_version": "autokeel_command_evidence_v1",
+  "created_at": "2026-08-16T19:39:26Z",
+  "slice": "S01",
+  "status": "ok",
+  "evidence_kind": "post_completion_integration_reconciliation",
+  "historical_run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
+  "historical_ship_branch": "ship/s01",
+  "historical_ship_commit": "50a58201058536b7518cd8fb4d5774a3c69df53d",
+  "historical_integration_base_commit": "65af28eb1ccfc37a1a614a8c936258466de7f1af",
+  "candidate_base_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+  "ship_surface_summary": {
+    "changed_paths": 69,
+    "candidate_identical_paths": 48,
+    "candidate_evolved_paths": 21,
+    "candidate_missing_paths": 0,
+    "candidate_reverted_to_base_paths": 0,
+    "classification_basis": "git diff --no-renames integration_base_commit..ship_commit plus current candidate Git blob identities"
+  },
+  "reviewed_files": [
+    {
+      "path": ".gitignore",
+      "sha256": "0163242cecc61d2123b685ed560478dad8f11740daada3881f6c384e7809fe75"
+    },
+    {
+      "path": "docs/briefs/s01-warehouse.autonomous-brief.md",
+      "sha256": "1dfef68c749175ffb646e858aaa133bcd216114cdbf4219a61725f1097809179"
+    },
+    {
+      "path": "docs/gstack/s01-warehouse-autoplan.md",
+      "sha256": "4527ccece946ef98c6c07cf9e62cb61dd9c10602a06ab347b06a338c15985fd5"
+    },
+    {
+      "path": "docs/playbooks/s01-warehouse.playbook.md",
+      "sha256": "378d041b83a9c59d6c438e93d73fa4ecc6e439f54210ed3eb6d9a30fa368d395"
+    },
+    {
+      "path": "requirements.txt",
+      "sha256": "d6778cdf0c35e14e024a7fb8d04f6092dba934456ae7b96cae2d9f0014f4e45b"
+    },
+    {
+      "path": "scripts/check_autonomous_review_exists.py",
+      "sha256": "269f759de39c93baacbe13c5374e2449d16895019f082ef34ddb767b073158e1"
+    },
+    {
+      "path": "scripts/check_no_tracked_data.py",
+      "sha256": "0934116e13c0b489e691f19baa84defef38d854dbab675d10c2d167625afd803"
+    },
+    {
+      "path": "scripts/check_schema_contract.py",
+      "sha256": "f78aa0cf44eb1250041c47b2d242a1869890859a93a170018544928aa2c8c072"
+    },
+    {
+      "path": "scripts/setup_permissions.py",
+      "sha256": "89bb1f388e618a1be7a16fdb5ca1a4de4a7ffbabee3559c6731be4669ab8c694"
+    },
+    {
+      "path": "scripts/test_setup_permissions.py",
+      "sha256": "4cf10131de6ba08a3a57980e813e915bfc92b8839d9d5aebb54324c39c1c936c"
+    },
+    {
+      "path": "src/db/schema.sql",
+      "sha256": "0dae7a8da5177cd0623bc49a69ab72fd9a3c57b284434bb01cd053cdcd316086"
+    },
+    {
+      "path": "src/warehouse/models.py",
+      "sha256": "607a1e618d71e435b7d4f6c0980ddf9245b167949db5b9e4b2ceea02d1f2b296"
+    },
+    {
+      "path": "src/warehouse/warehouse.py",
+      "sha256": "ddbcdcf43c4ce344099666fac58383a9401b8c6dfc457b718e087a0d4d23fa29"
+    },
+    {
+      "path": "tests/warehouse/test_mood_correction.py",
+      "sha256": "e7b016cb6f6810b502b911dc4d891e6ed926c12165dc46c2e50e66c1a323f1fb"
+    },
+    {
+      "path": "tests/warehouse/test_quarantine.py",
+      "sha256": "3d975e74ec425a3cd0a1598254515a031c48db94af1688dda172b718b2bc7877"
+    },
+    {
+      "path": "tests/warehouse/test_schema.py",
+      "sha256": "c1bc04b8aabbb20573847e911cd83e5605e8fae23df700f2e55ba6404ea7e60d"
+    }
+  ],
+  "commands": [
+    {
+      "command": "python -m pytest tests/warehouse -q",
+      "exit_code": 0,
+      "stdout_tail": "............                                                             [100%]\n12 passed in 1.41s\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_schema_contract.py",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python scripts/check_autonomous_review_exists.py S01",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "python -m pytest scripts/test_setup_permissions.py -q",
+      "exit_code": 0,
+      "stdout_tail": "..                                                                       [100%]\n2 passed in 0.07s\n",
+      "stderr_tail": ""
+    }
+  ],
+  "redaction": "Command tails and hashes contain only sanitized local verification facts. No raw health data, private evidence contents, provider payloads, credentials, database files, snapshots, or quarantine payloads are included.",
+  "commit_boundary": "This is candidate-tree command evidence, not proof that the candidate has landed on main. A canonical integration receipt must be generated from the final committed continuation objects."
+}

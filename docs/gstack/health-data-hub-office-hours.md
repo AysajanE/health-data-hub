@@ -1,6 +1,31 @@
 # Design: Personal Multi-Device Health Analytics
 
-**v1 product:** Sleep + Mood Retrospective Explainer (Oura + 8 Sleep + mood log)
+**v1 product:** Sleep + Mood Retrospective Explainer (Oura + mood log; 8 Sleep fallback-only and inactive under the current S03 decision)
+
+## 2026-08-16 Provider-Authority Amendment
+
+The [Oura API and MCP Agreement](https://cloud.ouraring.com/legal/api-agreement)
+effective 2026-06-08 postdates the original ingestion design. Section 4(d)
+states that the Oura API may not be used to develop, train, evaluate, prompt,
+or otherwise provide data to an AI Model or AI Platform; Section 6(g)
+separately prohibits using User Data to train or enhance an AI/ML system. The
+generic prior-consent exception in Section 4(a) is therefore not treated as
+sufficient authority for this repository's API-to-Ridge path.
+
+S12 now owns production sleep ingestion. It is fail-closed before compiler,
+OAuth, token, network, or provider-data access until one of two exact bases is
+durably evidenced: (a) a separate written agreement with Oura that explicitly
+authorizes and supersedes the Section 4(d), Section 6(g), storage/retention,
+correlation, Ridge training/evaluation, retrospective-explanation, backup, and
+audit restrictions for this use; or (b) qualified legal confirmation of a
+non-API acquisition route outside those Agreement restrictions. This is an
+engineering authority gate, not legal advice or simulated human approval.
+
+All older passages below that describe direct Oura OAuth as an available or
+"fine" implementation route are conditional on S12 readiness returning `ok`.
+OAuth consent, token possession, membership, and historical smoke evidence do
+not satisfy that gate. S06 and S08 depend on completed S12, and no production
+Oura-derived model training may resume while S12 is `blocked_external`.
 **Long-term vision:** Personal Autopilot + Coach with action features, N-of-1 experiments, and conversational explanations
 
 The project is one project; the v1 product is deliberately a narrower, honest slice.
@@ -43,7 +68,7 @@ The headline UX is the **Retrospective Counterfactual Explainer**.
 
 **v1 — what the explainer actually does on the data we collect:**
 
-> "You logged a 4/10 yesterday. Looking at sleep and HRV, the model's top contributors to this rating were: total sleep 6.2h (well below your usual 7.5h), HRV 38ms (below your 7-day average of 52ms). **Holding the other model inputs fixed, the model estimates that a sleep duration nearer your usual upper range would have been associated with a +0.6 to +1.2 point higher rating. This is a correlation in your past data, not proof that more sleep would have caused you to feel better.**"
+> "You logged a 4/10 yesterday. The top model contributors were total sleep and HRV. **model-estimated change in your past data:** holding the other model inputs fixed, sleep nearer your usual upper range was associated with a +0.6 to +1.2 point higher rating. **correlation, not proven causation.**"
 
 **Vision — what a future Autopilot tier could do once we collect action variables (dinner timing, workout intensity, room temperature, etc.) AND have run structured N-of-1 experiments:**
 
@@ -121,7 +146,7 @@ Codex (running with xhigh reasoning) was invoked in Phase 3.5 as an independent 
 
 ### Approach A: Weekend MVP (Codex's pragmatic plan)
 
-Single Streamlit page showing yesterday's mood, top SHAP contributors, one retrospective counterfactual, confidence warning. iOS Shortcut for mood logging. launchd cron pulls Oura + 8 Sleep data daily. Built in 1-2 weekends. No FastAPI initially; no autopilot; no coach. Retrospective explainer only.
+Single Streamlit page showing yesterday's mood, top model contributors, one retrospective counterfactual, and a confidence warning. The mood path uses the FastAPI endpoint if the iOS Shortcut survives its tripwire; otherwise it uses the specified Streamlit fallback. launchd pulls Oura and recomputes Oura-only features daily. No autopilot and no coach. Retrospective explainer only.
 
 - Effort: S (1-2 weekends, ~25-40 hours)
 - Risk: Low
@@ -178,8 +203,8 @@ FastAPI is **not** vestigial in v1 because the mood-log iOS Shortcut needs an HT
 │    + single-feature 1D counterfactual (mutability-gated)        │
 │    + baseline gate (rolling-mean & prior-day must be beaten)    │
 │                                                                 │
-│  Feature Layer: 4 locked MODEL features in v1 (FEATURES dict)   │
-│    - total_sleep_min (merged Oura + 8 Sleep)                    │
+│  Feature Layer: 4 locked MODEL features (FEATURE_POLICY)        │
+│    - total_sleep_min (Oura-derived; 8 Sleep excluded in v1)     │
 │    - hrv_z (prior-only robust z; hrv_avg_ms = display only)     │
 │    - deep_sleep_pct (noisy stage metric, caveated)              │
 │    - prior_day_feeling (mood lag-1)                             │
@@ -191,9 +216,8 @@ FastAPI is **not** vestigial in v1 because the mood-log iOS Shortcut needs an HT
 │      (all in data/warehouse.duckdb)                             │
 │                                                                 │
 │  Ingestion Layer:                                               │
-│    - Oura: Open Wearables periodic-pull OR direct OAuth2        │
-│      (decision: end of week 1, see Tripwires)                   │
-│    - pyEight wrapper (8 Sleep) — drop to Oura-only if breaks    │
+│    - Oura direct API v2 periodic pull (first-class v1 source)   │
+│    - pyEight / 8 Sleep fallback inactive in v1 model path       │
 │    - launchd cron daily at 8am                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -230,46 +254,73 @@ Anchors are shown in the iOS Shortcut menu every time. No free-form interpretati
 
 Each model feature has explicit metadata controlling how it's used in the UI and the counterfactual algorithm. SHAP ranks **what the model found predictive**; mutability tells us **what the user can act on**. These are different and must not be conflated.
 
-| Feature | Role | `mutable` | `recommendation_policy` | `show_as_contributor` |
-|---|---|---|---|---|
-| `total_sleep_min` | indirectly-controllable behavior | true | `allowed_with_caveat` | true |
-| `hrv_z` (model) / `hrv_avg_ms` (display) | physiological state | false | `disallowed` | true |
-| `deep_sleep_pct` | noisy derived sleep-stage metric | false | `disallowed` | true |
-| `prior_day_feeling` | outcome lag | false | `disallowed` | true |
-
-Enforced in code as a single source of truth:
+Enforced in code as one deeply immutable source of truth: S06 exports
+`FEATURE_POLICY` from `src/model/counterfactual.py`, and S07 imports it rather
+than restating any field. The mapping insertion order is exactly
+`MODEL_FEATURES`.
 
 ```python
-FEATURES = {
-    "total_sleep_min": {
-        "role": "behavior", "mutable": True,
-        "recommendation_policy": "allowed_with_caveat",
-        "show_as_contributor": True,
-        "display_name": "Total sleep",
-        "unit": "minutes",
-        "safe_floor": 420,  # 7 hours; no CF may suggest going below this
-    },
-    "hrv_z": {
-        "role": "physiological_state", "mutable": False,
-        "recommendation_policy": "disallowed",
-        "show_as_contributor": True,
-        "display_name": "HRV (z-score vs baseline)",
-        "display_companion": "hrv_avg_ms",  # show ms in UI
-    },
-    "deep_sleep_pct": {
-        "role": "noisy_stage_metric", "mutable": False,
-        "recommendation_policy": "disallowed",
-        "show_as_contributor": True,
-        "display_name": "Deep sleep %",
-    },
-    "prior_day_feeling": {
-        "role": "outcome_lag", "mutable": False,
-        "recommendation_policy": "disallowed",
-        "show_as_contributor": True,
-        "display_name": "Yesterday's feeling",
-    },
-}
+@dataclass(frozen=True)
+class FeaturePolicyEntry:
+    role: Literal[
+        "behavior",
+        "physiological_proxy",
+        "noisy_stage_metric",
+        "outcome_lag",
+    ]
+    mutable: bool
+    recommendation_policy: Literal["allowed_with_caveat", "disallowed"]
+    show_as_contributor: bool
+    display_name: str
+    display_companion: str | None
+    unit: Literal["minutes", "percent", "rating"] | None
+    safe_floor: float | None
+
+FEATURE_POLICY: Mapping[str, FeaturePolicyEntry] = MappingProxyType({
+    "total_sleep_min": FeaturePolicyEntry(
+        role="behavior",
+        mutable=True,
+        recommendation_policy="allowed_with_caveat",
+        show_as_contributor=True,
+        display_name="Total sleep",
+        display_companion=None,
+        unit="minutes",
+        safe_floor=420.0,
+    ),
+    "hrv_z": FeaturePolicyEntry(
+        role="physiological_proxy",
+        mutable=False,
+        recommendation_policy="disallowed",
+        show_as_contributor=True,
+        display_name="HRV (z-score vs baseline)",
+        display_companion="hrv_avg_ms",
+        unit=None,
+        safe_floor=None,
+    ),
+    "deep_sleep_pct": FeaturePolicyEntry(
+        role="noisy_stage_metric",
+        mutable=False,
+        recommendation_policy="disallowed",
+        show_as_contributor=True,
+        display_name="Deep sleep %",
+        display_companion=None,
+        unit="percent",
+        safe_floor=None,
+    ),
+    "prior_day_feeling": FeaturePolicyEntry(
+        role="outcome_lag",
+        mutable=False,
+        recommendation_policy="disallowed",
+        show_as_contributor=True,
+        display_name="Yesterday's feeling",
+        display_companion=None,
+        unit="rating",
+        safe_floor=None,
+    ),
+})
 ```
+
+`MappingProxyType` freezes the mapping and each value is a frozen dataclass.
 
 Consequences:
 
@@ -337,7 +388,7 @@ CREATE TABLE mood_current (
 CREATE TABLE daily_features (
     feature_date            DATE PRIMARY KEY,
     -- v1 model features (exactly 4)
-    total_sleep_min         INTEGER,         -- merged duration: average if agreement, Oura if >60m disagreement, single source if only one
+    total_sleep_min         INTEGER,         -- Oura-derived under active v1 policy; never averaged or blended with 8 Sleep
     hrv_z                   DOUBLE,          -- THE feature the model uses; prior-only baseline
     deep_sleep_pct          DOUBLE,          -- Oura only under active v1 provider policy
     prior_day_feeling       INTEGER,         -- mood lag-1
@@ -347,7 +398,7 @@ CREATE TABLE daily_features (
     feature_version         VARCHAR,         -- e.g., 'v1.0' for reproducibility
     -- explicit quality flags (replacing the coarse is_imputed)
     prior_day_feeling_imputed BOOLEAN DEFAULT FALSE,
-    sleep_source_count      INTEGER,         -- 1 or 2
+    sleep_source_count      INTEGER,         -- eligible model sources; exactly 1 for active Oura-only v1
     sleep_merge_warning     VARCHAR,         -- e.g. '8sleep_fallback_ignored'
     computed_at_utc         TIMESTAMP NOT NULL
 );
@@ -542,7 +593,7 @@ class DateInsightResponse(BaseModel):
     model_estimate_high: float | None
     confidence_label: Literal["low", "medium", "high"] | None  # bucketed (see Model Lifecycle § CI)
     top_contributors: list[ModelContributor]  # only sign-stable + show_as_contributor; may be empty
-    retrospective_counterfactual: RetroCF | None  # None if no mutable feature is sign-stable
+    retrospective_counterfactual: CounterfactualResult  # always structured; payload is None when suppressed
     data_freshness: dict[str, datetime]  # last sync per source
     # Provenance for audit/debugging:
     model_version: str               # e.g., "ridge-v1.0"
@@ -565,26 +616,95 @@ class ModelContributor(BaseModel):
     # Caveat: percentages are relative to displayed stable contributors,
     # NOT a causal decomposition of the world.
 
-class RetroCF(BaseModel):
-    feature_name: str
-    feature_display_name: str
+SuppressionReason = Literal[
+    "target_mood_missing",
+    "target_features_unavailable",
+    "collecting_model_ready_days",
+    "as_of_model_unavailable",
+    "baseline_gate_not_passed",
+    "mutable_feature_not_stable",
+    "actual_at_or_above_recent_median",
+    "empty_candidate_envelope",
+    "no_plausible_candidate",
+    "delta_interval_not_positive",
+    "delta_below_materiality_floor",
+]
+
+@dataclass(frozen=True)
+class CounterfactualProvenance:
+    target_date: date
+    history_cutoff_date: date
+    model_version: str | None
+    model_trained_through_date: date | None
+    model_alpha: float | None
+    feature_version: str | None
+    eval_recorded_at_utc: datetime | None
+    training_start_date: date | None
+    training_end_date: date | None
+    n_model: int
+    loader_contract: Literal[
+        "scripts.retrain_model.load_verified_feature_rows:v1"
+    ]
+    provider_policy: Literal["oura_only_v1"]
+    sleep_provider: Literal["oura"]
+    training_cohort_sha256: str
+    target_row_sha256: str | None
+    baseline_gate_source: Literal[
+        "s05_gate_recomputed_from_attested_cohort"
+    ] | None
+    baseline_gate_eligible: bool | None
+    baseline_gate_passed: bool | None
+    point_model_fit_source: Literal[
+        "s06_refit_from_attested_cohort"
+    ] | None
+    total_sleep_sign_stability: float | None
+    sign_stability_seed: Literal[0]
+    sign_stability_resamples_configured: Literal[200]
+    sign_stability_resamples_executed: Literal[0, 200]
+    delta_bootstrap_seed: int
+    delta_bootstrap_resamples_configured: Literal[200]
+    delta_bootstrap_resamples_executed: Literal[0, 200]
+
+@dataclass(frozen=True)
+class RetroCF:
+    feature_name: Literal["total_sleep_min"]
+    feature_display_name: Literal["Total sleep"]
     actual_value: float
-    comparison_value: float           # what the model would have predicted at this value
+    comparison_value: float           # candidate sleep minutes, not a mood prediction
     model_delta_low: float            # 90% CI low of the delta (bootstrap-refit method)
     model_delta_high: float           # 90% CI high
     median_delta: float
-    direction: Literal["increase_only"]  # v1 only generates increase-only sleep CFs
-    caveat: str                       # always: "correlation in your past data, not proven causation"
+    direction: Literal["increase_only"]
+    framing_label: Literal["model-estimated change in your past data"]
+    caveat: Literal["correlation, not proven causation"]
+
+@dataclass(frozen=True)
+class CounterfactualResult:
+    status: Literal["available", "suppressed"]
+    suppression_reason: SuppressionReason | None
+    counterfactual: RetroCF | None
+    provenance: CounterfactualProvenance
 ```
 
-The provenance fields (`model_version`, `model_trained_through_date`, `feature_version`) make every rendered insight auditable. If a user asks "is this insight from the current model or from an old snapshot?" the answer is in the response. They also enable a future v2 "model audit" feature without changing the wire format.
+The generator always returns `CounterfactualResult`, never bare `None`.
+`available` requires a counterfactual and no suppression reason; `suppressed`
+requires exactly one reason and no counterfactual. The complete field,
+nullability, validation, and reason-precedence contract is frozen in
+`docs/gstack/s06-counterfactual-generator-autoplan.md` revision 3.
+
+The provenance fields identify the selected eval cutoff, current canonical
+training/target digests, same-cohort recomputed baseline gate, point refit, and
+the separately configured and executed sign-stability and delta bootstraps.
+They do not imply that current warehouse rows are byte-identical to a historical
+warehouse snapshot; S05 does not yet persist a cohort digest. Exact field,
+nullability, and state rules are normative in the S06 revision-3 autoplan.
 
 **SHAP configuration:** v1 uses **interventional linear contributions** on StandardScaler-transformed features (`shap.LinearExplainer(model, scaled_X_train, feature_perturbation="interventional")`). Avoid correlation-aware SHAP at small N — covariance estimates would be unstable. In the UI, label these as "model contributions" rather than "SHAP values" to keep terminology accessible.
 
 ### Model Lifecycle
 
-- **v1 default:** sklearn `Ridge(alpha=1.0)` on StandardScaler-transformed features. `alpha=1.0` is a chosen default, not magic. Optional refinement at N≥45: tiny `RidgeCV` over `[0.1, 1.0, 10.0]` with leave-one-out evaluation. Don't optimize alpha before then — variance in CV at small N exceeds the gain.
-- **Two launchd plists:** (a) `health.sync.plist` at 8am pulls Oura + 8 Sleep data and recomputes `daily_features`. (b) `health.retrain.plist` at 11pm retrains the model on whatever data has accumulated, including that evening's mood log. Separate plists because morning sync and evening retrain have different inputs and failure modes. **First-run safety:** the retrain script no-ops gracefully when N<30 paired days — it logs `{"n_paired_days": N, "skipped": true}` to `eval.jsonl` and exits 0. No model file required to exist before that point.
+- **v1 model:** sklearn `Ridge(alpha=1.0)` on StandardScaler-transformed features. `alpha=1.0` is a chosen fixed v1 contract, not magic. Any future `RidgeCV` or alpha change requires a new model version and persisted verified alpha before S06 may consume it.
+- **Two launchd plists:** (a) `health.sync.plist` at 8am pulls Oura and recomputes Oura-only `daily_features`; the 8 Sleep fallback is inactive unless a future provider-reopening decision explicitly enables it. (b) `health.retrain.plist` at 11pm retrains the model on whatever data has accumulated, including that evening's mood log. Separate plists because morning sync and evening retrain have different inputs and failure modes. **First-run safety:** the retrain script no-ops gracefully when N<30 paired days — it logs `{"n_paired_days": N, "skipped": true}` to `eval.jsonl` and exits 0. No model file required to exist before that point.
 - **Retrain cadence:** evening plist retrains on all-history; persists to `models/ridge-{date}.pkl` alongside the fitted scaler. Walk-forward residuals logged to `models/eval.jsonl`.
 
 **`eval.jsonl` record schema** (one JSON object per line, written nightly):
@@ -709,46 +829,89 @@ At `N_model ≥ 37`, **the baseline gate** above takes over — the model still 
 
 ### Counterfactual Algorithm (v1 — single-feature, mutability- and safety-gated)
 
-Runs only when ALL of the following hold:
+**Point-in-time boundary:** for target date `D`, use the newest coherent
+model/eval context with `model_trained_through_date < D`. Its Oura-only
+model-ready cohort is the entire history input. The target row is separate,
+and neither it nor any later row may enter training, envelope statistics,
+similarity checks, or bootstrap samples. Context mismatch is a contract error;
+expected absence is represented by the structured suppression result above.
+S06's `build_counterfactual_context` owns this selection: it reads only the
+verified S05 feature loader and eval log, chooses by trained-through date then
+eval timestamp instant normalized to UTC and JSONL order, and binds the
+Oura-only cohort with canonical SHA-256 attestations that the pure generator
+recomputes. Because the selected
+S05 eval record has no cohort digest, its stored gate booleans are not accepted
+as same-cohort evidence. The builder recomputes S05 `BaselineGateResult` on the
+hashed current cohort through the lightweight S06 fit/predict adapter. This is
+deterministic for current canonical rows but is not a claim of byte-for-byte
+historical warehouse reconstruction.
 
-- (a) `N_model ≥ 37` (baseline gate begins evaluating here; see Baseline Gating § window math)
-- (b) baseline gate passed for this date
-- (c) at least one feature with `mutable=True` AND `recommendation_policy ∈ {"allowed", "allowed_with_caveat"}` is sign-stable
-- (d) the bootstrapped delta interval excludes "trivial improvement" thresholds (see step 6)
+Runs only when all of the following hold:
 
-For v1, the only feature meeting (a-c) is `total_sleep_min`. The algorithm is a **single-feature 1D scan**:
+- `N_model ≥ 37`
+- the same-cohort baseline gate is eligible and passed
+- one S05 `RidgePredictor` fit on that exact cohort reports
+  `total_sleep_min` sign stability at `≥ 0.90`
+- at least one plausible candidate has a bootstrap low bound above zero and a
+  median delta of at least 0.5 mood points
 
-1. Identify mutable + recommendable + sign-stable features. Call the chosen feature `f`. (v1: always `total_sleep_min`.)
-2. Compute `f`'s **unconditional 5th-95th percentile** from `daily_features` history — the "realistic perturbation envelope."
-3. Add **direction and safe-floor constraints**:
-   - **Increase-only:** v1 counterfactuals for `total_sleep_min` may only consider *increasing* sleep duration. Never propose a candidate below yesterday's actual value. Even if ridge learned a negative coefficient (confounded by illness/recovery days correlating with long sleep), we don't surface "you'd have felt better with less sleep" — that's actively harmful for a sleep-conscious user and contradicts CDC/AASM adult-sleep guidance.
-   - **Safe floor:** candidate must be ≥ 420 minutes (7 hours, per CDC/AASM consensus for adult sleep; configurable per user).
-   - **Threshold check:** if actual sleep yesterday was already ≥ user's recent median total_sleep, suppress the counterfactual ("no useful sleep-increase suggestion — yesterday's sleep was already at your normal upper range").
-4. Generate 10 candidate values within the envelope ∩ [safe_floor, 95th_pct].
-5. **Plausibility filter (corrected):** for each candidate, build the **full candidate vector** by substituting `x_cand` for `f` while keeping all other features at yesterday's values. Compute standardized Euclidean distance from this full candidate vector to its nearest historical day (excluding the target day itself). Reject if distance > 2.0 standardized units. *This is different from the prior version which excluded `f` from the distance — that defeated the purpose because the candidate would always equal yesterday on the remaining features.*
-   - Additional plausibility check: at least one historical day must have similar HRV/deep-sleep/prior-mood context AND `total_sleep_min` within ±30 minutes of the candidate. If no such day exists, the candidate is suppressed.
-6. Predict feeling for each surviving candidate. Compute **bootstrap delta interval** (90% CI):
-   ```text
-   For each of 200 bootstrap resamples of training days:
-     refit scaler + ridge
-     compute predicted_delta = pred(candidate) - pred(actual)
-   Return 5th and 95th percentiles of predicted_delta → (model_delta_low, model_delta_high)
-   ```
-   This answers "how uncertain is the model-estimated change between actual and counterfactual?" — distinct from a residual-based prediction interval which would answer "what range of actual moods might occur."
-7. **Trivial-effect suppression:** reject if `model_delta_low ≤ 0` (interval crosses zero) OR `median(deltas) < 0.5` mood points (effect too small to be meaningful).
-8. Return the candidate that maximizes `(median_predicted_delta − λ × |x_cand − x_actual| / scaler.scale_[f])` with `λ = 0.1`. λ penalizes large jumps from yesterday's actual value, scaled in standard deviations of `f`.
-9. Render as: *"Looking at days with similar HRV and deep-sleep context, the model estimates that a `{feature_display_name}` of `{comparison_value}` (vs your `{actual_value}` yesterday) was associated with a +{model_delta_low} to +{model_delta_high} point higher rating. This is a correlation in your past data, not proof of causality."*
-10. Always include the causal caveat. Always include the delta interval, not a point estimate.
+For v1, the algorithm is a single-feature 1D scan:
 
-**If step 7 (trivial-effect suppression) fires:** show *"The estimated change is too uncertain to call useful."* No counterfactual rendered.
+1. Select `total_sleep_min` from `FEATURE_POLICY`; no other feature is mutable.
+2. Compute the unconditional p5 and p95 over the full as-of sleep history with
+   `numpy.quantile(..., method="linear")`.
+3. Compute the recent median from the latest 28 chronological model-ready
+   history rows. If target sleep is greater than or equal to it, return
+   `actual_at_or_above_recent_median`.
+4. Set `lower = max(actual, 420, p5)` and `upper = p95`. If `upper <= lower`,
+   return `empty_candidate_envelope`. Otherwise generate exactly ten float
+   candidates with `numpy.linspace(lower, upper, num=11)[1:]`: the lower
+   endpoint and unchanged actual are excluded, p95 is included, and values are
+   not rounded before filtering or scoring.
+5. Fit one `StandardScaler` on all four model features in the as-of cohort. For
+   each candidate, replace target sleep only. Require nearest historical
+   full-vector Euclidean distance `<= 2.0` standardized units.
+6. Also require at least one historical row within 30 minutes inclusive of
+   candidate sleep and within 1.0 standardized unit independently for each of
+   `hrv_z`, `deep_sleep_pct`, and `prior_day_feeling` relative to the target.
+   The nearest full-vector row and this similar-context witness may differ.
+7. Sort history by `feature_date`; initialize
+   `numpy.random.default_rng(config.delta_bootstrap_seed)`, whose product
+   default is `20260611`; draw 200 row-index resamples of size
+   `N_model` with replacement; and reuse the same samples for every candidate.
+   For each sample, call `fit_scaled_ridge_once` exactly once and reuse that fit
+   to predict the target and all candidates. The helper fits one scaler and one
+   ridge in `MODEL_FEATURES` order with the as-of model context's `alpha`; it runs
+   no sign-stability or residual bootstrap.
+8. For each candidate, compute raw, unclipped
+   `prediction(candidate) - prediction(actual)` and summarize it with linear
+   p5, median, and p95 quantiles. Reject low `<= 0`; among the rest reject
+   median `< 0.5`.
+9. If every plausible candidate has low `<= 0`, return
+   `delta_interval_not_positive`. If at least one has low `> 0` but all such
+   candidates have median `< 0.5`, return `delta_below_materiality_floor`.
+10. Maximize `median_delta - 0.1 * abs(candidate - actual) /
+    total_sleep_scale`; an exact score tie selects the smaller candidate.
+11. Return structured values, the delta interval and median, the exact framing
+    label `model-estimated change in your past data`, and the exact caveat
+    `correlation, not proven causation`. S07 renders both strings unchanged and
+    owns display rounding.
 
-**Multi-feature counterfactuals deferred to v2** — they introduce joint-implausibility risks and require a user-feedback loop to calibrate `change_size_penalty`. Single-feature is the honest v1 choice.
-
-This is *attribution-driven retrospective explanation*, NOT DiCE and NOT causal inference. The v1 retrospective counterfactual is a model-explanation statement, not an intervention recommendation. The Autopilot tier (v2+) will introduce intentional N-of-1 experiments to support real causal claims.
+The closed suppression list and precedence, exact public dataclasses,
+provenance requirements, one-fit helper contract, and validation rules are
+normative in `docs/gstack/s06-counterfactual-generator-autoplan.md` revision 3.
+Multi-feature methods remain deferred. The v1 output is a retrospective
+model-explanation statement about association.
 
 ### Model module shape (v1)
 
-v1 ships a single `RidgePredictor` class with `fit`, `predict`, `predict_interval`, and `explain` methods. **No Protocol abstraction in v1** — abstracting "for future predictors" is YAGNI when only one model exists. Extract a Protocol when the second predictor actually lands (v2+).
+v1 ships a single full predictor, `RidgePredictor`, with `fit`, `predict`,
+`predict_interval`, and `explain` methods. S06's narrow `ScaledRidgeFit` return
+value exists only to reuse one scaler-plus-ridge fit within a bootstrap sample;
+it is not an alternative predictor abstraction and exposes `predict` only. **No
+Protocol abstraction in v1** — abstracting "for future predictors" is YAGNI
+when only one model exists. Extract a Protocol when the second predictor
+actually lands (v2+).
 
 ### Testing Strategy
 
@@ -756,7 +919,7 @@ v1 ships a single `RidgePredictor` class with `fit`, `predict`, `predict_interva
 - **Daily data-freshness check** — `GET /api/health` returns last sync timestamp per source. Cron job alerts if >36 hours stale.
 - **Unit tests:**
   - `test_features.py` — feature engineering produces expected values from a fixture day; HRV zero-MAD fallback paths
-  - `test_counterfactual.py` — single-feature CF returns None when gates fail OR when no candidate passes plausibility OR when delta interval crosses zero OR when median delta < 0.5; returns a valid candidate on synthetic data with known positive sleep effect; **never proposes `total_sleep_min` below safe floor (420 min) or below yesterday's actual (increase-only)**.
+  - `test_counterfactual.py` — verifies the mandatory context builder, canonical hashes, stored-gate rejection and same-cohort baseline recomputation; returns a structured suppression reason when a gate fails, no candidate passes plausibility, the delta interval crosses zero, or median delta is below 0.5; returns `available` on synthetic data with a known positive sleep effect; performs one S05 point/stability fit plus exactly 200 lightweight delta-bootstrap fits when the generator reaches bootstrap (separate from lightweight baseline-fold fits in the builder); and **never proposes `total_sleep_min` below safe floor (420 min) or at/below the target's actual value (increase-only)**.
   - `test_mood_date.py` — date-attribution rule:
       - logged_at_utc → 23:30 local → mood_date = same date
       - logged_at_utc → 00:30 local → mood_date = previous date
@@ -780,9 +943,9 @@ The product is a model-explanation tool, not a coach. Wording matters because it
 
 **Use** (explanation-framed language):
 - "top model contributors"
-- "patterns the model associated with this rating"
+- "patterns associated with this rating"
 - "model-estimated change in your past data"
-- "this is correlation, not proven causation"
+- "correlation, not proven causation"
 - "may reflect unmeasured factors like stress, illness, schedule"
 
 **Mood-first rule (mandatory, but non-blocking UX):** the UI **must not show model output for date D until `feeling[D]` has been logged.** A hyper-health-conscious user may unconsciously conform to model outputs if shown them first. To avoid a "blank app" UX:
@@ -828,7 +991,7 @@ Whether and how to build the Autopilot vs. Coach tier is itself a decision defer
 1. **Mood-log schema.** MVP locked to {feeling (1-10), energy (1-10 optional), notes (free text optional)}, logged 1x per day in the evening. Open question for v2: is 3x/day (morning/afternoon/evening) worth the friction? Resolve only after 30 days of consistent 1x/day logging — friction tolerance is a personal calibration.
 2. **Oura ingestion path.** Open Wearables release notes (0.5.1, May 2026) claim Oura webhooks, but their provider docs are inconsistent and their stack is heavier than expected (Docker Compose with FastAPI + React + Postgres + Redis + Celery; project is pre-1.0 with API churn warning). **Use periodic-pull, not webhooks, in v1** — webhooks need a publicly-reachable HTTPS endpoint, which contradicts local-first. Smoke-test Open Wearables in week 1; if not producing Oura sleep data in <1 weekend, fall back to **direct Oura OAuth2** (authorization-code flow with access + refresh tokens — current Oura developer documentation emphasizes OAuth2, not PAT, for new integrations). Either path is fine; don't over-invest in Open Wearables.
 3. **8 Sleep ingestion stability.** `pyEight` is reverse-engineered. Could break on 8 Sleep firmware updates. Build a thin abstraction layer so the ingestion source can swap without changing downstream code. **Maintenance budget:** assume 1-2 weekends per year for pyEight breakage. If 8 Sleep ever ships a CSV export or stable API, switch immediately. **Mid-build contingency:** if pyEight breaks before week 9, ship v1 as **Oura-only** — the sleep source reconciliation collapses to identity (Oura is sole source). Reintroduce 8 Sleep when stable. This protects the critical path.
-4. **Confounding handling.** Codex flagged fake causality as a real risk. v1 surfaces "this is a correlation the model found in YOUR past, not a proven cause" framing on every counterfactual output. Real intentional experiments (e.g., "vary dinner timing this week") are an Autopilot-tier feature, post-week-16.
+4. **Confounding handling.** v1 includes `model-estimated change in your past data` and `correlation, not proven causation` on every available counterfactual output. Experimental guidance remains outside v1.
 5. **Statistical quality milestones.** At N=30 the only meaningful gate is **"does ridge beat rolling-mean and prior-day baselines under walk-forward evaluation?"** (see Baseline Gating). R² targets at small N are unreliable: low R² can reflect label noise, insufficient behavioral variation, or unmeasured confounders (stress, illness, travel) — not necessarily a wrong feature set. Track R² in `eval.jsonl` for visibility; do not make it a UI claim or a decision criterion in v1.
 6. **Nocebo loop guardrails.** UX should never frame predictions as fate ("you WILL feel bad tomorrow"). Always frame as "this is what the data has correlated with in YOUR past — small experiments will tell us what's actually causal." Specific UI rule: confidence labels (low/medium/high) always shown next to predictions; counterfactual labeled "model suggestion, not medical advice."
 7. **Mood-log transport.** v1 default: **home Wi-Fi only**. Simpler, no Tailscale dependency, no iOS Shortcut auth fragility. Trade-off: you must remember to log mood before leaving the house, or wait until you return. If this proves untenable after 30 days, upgrade path is Tailscale (Phase 2 — not v1). The iMessage-to-API bridge is an explicit post-v1 option and not in scope. This locks one well-known fragility out of the critical path.
