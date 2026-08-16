@@ -1,0 +1,58 @@
+{
+  "details": {
+    "completed_lineage": [
+      "S01",
+      "S02",
+      "S03",
+      "S04",
+      "S05"
+    ],
+    "continuation_commit": "4baf66c39765596303f7e42970daac9228e581c8",
+    "integration_receipt_sha256": {
+      "docs/evidence/s01-canonical-integration-reconciliation.json": "a6005da37495b4d3dd4afaf857a4a214d35461600fbe6e3e850f84f1926ca736",
+      "docs/evidence/s02-canonical-integration-reconciliation.json": "703c9eefa054a85b464069afe9a9d0eae3675aaa0dcd57a64bc71c244ce6be98",
+      "docs/evidence/s03-canonical-integration-reconciliation.json": "2707c5ab518818b30cbaeda4ca3be982c8c9bcc5bd9b9d6840ddb266e0bc7087",
+      "docs/evidence/s04-canonical-integration-reconciliation.json": "95ac9f70b5b469e5ef93c9fd03894b04ca3450cb4d6c0c1e996f46fb616a9421",
+      "docs/evidence/s05-canonical-integration-reconciliation.json": "fe4c64dc018af172d31fa951d673cc51fd12b3f30db7690e68acdaabd3c8820a"
+    },
+    "integration_receipts": [
+      "docs/evidence/s01-canonical-integration-reconciliation.json",
+      "docs/evidence/s02-canonical-integration-reconciliation.json",
+      "docs/evidence/s03-canonical-integration-reconciliation.json",
+      "docs/evidence/s04-canonical-integration-reconciliation.json",
+      "docs/evidence/s05-canonical-integration-reconciliation.json"
+    ],
+    "no_autokeel_iteration": true,
+    "no_paid_compiler_execution": true,
+    "no_private_evidence_payload_read": true,
+    "no_provider_call": true,
+    "progress_sha256": "3067bb9242c7147202ee7eab3ed9ccf61c385d6b3789ba351f481c0fa363b1bc",
+    "ratification_artifact_sha256": {
+      "docs/evidence/s01-detached-ship-acceptance-recertification-20260816t183631-0400.json": "c80ab2d91dbb8ac9f89bc7d54ab66c71f693c2d9614164602d362cc15310cd82",
+      "docs/evidence/s01-post-completion-review-integration-20260816t183318-0400.json": "f00bc08b193e2fe51765f102548a07683cef1146d8a8ca8a26a1603142dd8a1d",
+      "docs/evidence/s02-post-completion-review-integration-20260816t183318-0400.json": "81f895d43feb98cf392bc2ad25191606015967f13a951ea32db14905bcb3e01c",
+      "docs/evidence/s03-post-completion-review-integration-20260816t183318-0400.json": "b508fd6e0d624f98dce47a9915faac9ceea16cdd52bd33a52031144b57c5eddf",
+      "docs/evidence/s04-post-completion-review-integration-20260816t183318-0400.json": "95729406e16f46ef5b3ffe016c3c920134cf32ab0df90797d435115d41aa1ca2",
+      "docs/evidence/s05-post-completion-review-integration-20260816t184724-0400.json": "e18865e3d54fad199d76ad07168a9f3a7048bfd04a48e092fa8c3c1d33d6a084"
+    },
+    "ratification_artifacts": [
+      "docs/evidence/s01-post-completion-review-integration-20260816t183318-0400.json",
+      "docs/evidence/s02-post-completion-review-integration-20260816t183318-0400.json",
+      "docs/evidence/s03-post-completion-review-integration-20260816t183318-0400.json",
+      "docs/evidence/s04-post-completion-review-integration-20260816t183318-0400.json",
+      "docs/evidence/s05-post-completion-review-integration-20260816t184724-0400.json",
+      "docs/evidence/s01-detached-ship-acceptance-recertification-20260816t183631-0400.json"
+    ],
+    "s11_status": "pending_stopped_before_spend",
+    "s12_failure_artifact": "ops/autonomy/failures/S12-provider_terms_conflict-20260816T160521-0400.md",
+    "s12_failure_artifact_sha256": "6def2980a28e3f15bc7ddafb13861a4f9b3e0ea497965db50b75a26f6b55598a",
+    "s12_failure_id": "failure_s12_oura_provider_terms_authority_20260816t160521_0400",
+    "s12_status": "blocked_external"
+  },
+  "name": "pre-s06-control-plane-recovery-final",
+  "reason": "Finalize the non-paid pre-S06 recovery: S01-S05 landed lineage and reviews are receipt-bound, S11 is stopped before spend on its isolation boundary, and S12 is truthfully blocked on provider authority.",
+  "recorded_at": "2026-08-16T18:48:57-04:00",
+  "recorded_by": "codex-owner",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": null
+}
