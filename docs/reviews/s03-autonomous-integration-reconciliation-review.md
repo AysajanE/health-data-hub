@@ -1,6 +1,6 @@
 # S03 Autonomous Integration Reconciliation Review
 
-Autonomous slice review provenance: independent reviewer for the post-completion S03 integration reconciliation on canonical main.
+Autonomous slice review provenance: independent reviewer for the post-completion S03 integration reconciliation at frozen verification commit `db99843196a1ee7fe1f9ee0e321ba586235dae46`.
 
 Slice: S03
 Review mode: autonomous_gate_review
@@ -11,7 +11,7 @@ Blocking findings: none
 
 ## Scope and historical boundary
 
-This review evaluates the current S03 provider-decision and ingestion-evidence surfaces against the committed S03 acceptance contract. It is a post-completion reconciliation review. It does not claim that this artifact existed during the historical PO run, does not rewrite the 2026-05-29 completion record, and does not represent human approval.
+This review evaluates the S03 provider-decision and ingestion-evidence surfaces at committed verification point `db99843196a1ee7fe1f9ee0e321ba586235dae46` against the committed S03 acceptance contract. It is a post-completion reconciliation review. It does not claim that this artifact existed during the historical PO run, does not rewrite the 2026-05-29 completion record, and does not represent human approval.
 
 The historical S03 run remains `RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864`, its ship branch remains `ship/s03`, and its recorded ship commit remains `c9349b337df6e36861468368669dc65cef5cf64d`.
 
@@ -51,7 +51,7 @@ Command evidence: docs/evidence/s03-post-completion-integration-reconciliation-c
 
 ### Provider decision of record
 
-The active provider decision remains Oura-only v1 through direct Oura API v2 periodic pull. The later pyEight decision explicitly supersedes the earlier include decision, records `status: fallback_accepted`, `action: oura_only_v1`, and `fallback_active: true`, and keeps 8 Sleep optional rather than a required active source.
+The active S03 provider choice remains Oura-only v1, with 8 Sleep inactive and fallback-only. The later pyEight decision explicitly supersedes the earlier include decision, records `status: fallback_accepted`, `action: oura_only_v1`, and `fallback_active: true`, and keeps 8 Sleep optional rather than a required active source. This historical source choice does not authorize production Oura API use: S12 separately blocks compiler and provider activity until qualifying current authority exists.
 
 ### Evidence and failure posture
 
@@ -63,18 +63,18 @@ The S03 collector layer remains bounded to evidence collection and provider-deci
 
 ### Canonical continuation
 
-The historical S03 ship range changed thirteen repository surfaces. Because the continuation is still moving, this pre-anchor review intentionally does not assert the final exact/evolved split. Known evolution retains the S03 purpose through provider-decision supersession metadata, collector hardening, readiness behavior, and regression coverage. A separate committed integration receipt must recompute all thirteen paths and bind every exact ship and frozen-continuation tree entry before this lineage can be classified as durably reconciled. This review does not substitute for that receipt.
+The historical S03 ship range changed thirteen repository surfaces. At the frozen verification commit, six are identical to the historical ship and seven are reviewed later evolutions; none is retired or restored to its pre-ship object. Known evolution retains the S03 purpose through provider-decision supersession metadata, collector hardening, readiness behavior, and regression coverage. The separate committed integration receipt recomputes all thirteen paths and binds every exact ship and frozen-continuation tree entry. This review does not substitute for that receipt.
 
 ### Acceptance and hygiene
 
-The registered S03 acceptance commands passed against the current working tree. Provider-decision validation resolved one active decision with no lineage errors, both autonomous review artifacts validated, and the tracked-data hygiene check passed. No raw provider payload, health-data file, token, database, snapshot, or quarantine payload was introduced by this review.
+Three non-private S03 acceptance commands were freshly rerun against the clean verification parent: provider-decision validation returned two valid lineage records, the registered reviews validated, and tracked-data hygiene passed. The readiness command's earlier real passing result is carried forward with an explicit committed-input-equivalence proof because rerunning it would reopen private evidence JSON; the command evidence does not mislabel that inherited result as a fresh private observation. No raw provider payload, health-data file, token, database, snapshot, or quarantine payload was introduced by this review.
 
 ## Limitations
 
 - This review validates tracked local contracts and sanitized evidence. It does not inspect sensitive private evidence or make a fresh live provider call.
 - It does not claim medical validity, causal inference, prospective prediction, or recommendations.
-- It does not claim that the post-completion review or future integration receipt existed at the historical ship commit.
-- It does not create the integration receipt, mutate control-plane state, or authorize an AutoKeel, Keel, or PO run.
+- It does not claim that the post-completion review or integration receipt existed at the historical ship commit.
+- It does not itself create lineage authority, mutate runtime state, or authorize an AutoKeel, Keel, PO, compiler, or provider run; the separate receipt audit commit supplies lineage authority only.
 
 ## Review result
 

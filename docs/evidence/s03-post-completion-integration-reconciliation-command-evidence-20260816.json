@@ -1,6 +1,6 @@
 {
   "schema_version": "autokeel_command_evidence_v1",
-  "created_at": "2026-08-16T18:36:37Z",
+  "created_at": "2026-08-16T22:24:03.371766Z",
   "slice": "S03",
   "status": "ok",
   "evidence_kind": "post_completion_integration_reconciliation",
@@ -9,16 +9,8 @@
   "historical_ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
   "reviewed_files": [
     {
-      "path": "docs/gstack/s03-ingestion-provider-autoplan.md",
-      "sha256": "f17f0e60a7486f902fd152f58e0ac97d6a5389e79f5ebe1bdbcabb43dea3c2a6"
-    },
-    {
       "path": "docs/briefs/s03-ingestion-provider.autonomous-brief.md",
       "sha256": "e62d7ef98ecfe651d4a2e3096d46bac079713719b002f65c2bdef4f1b38e28b3"
-    },
-    {
-      "path": "docs/playbooks/s03-ingestion-provider.playbook.md",
-      "sha256": "bee85ad8597db143cb2ea7edc2bdb13c649f38894a2690695781e50e5396a5cb"
     },
     {
       "path": "docs/evidence/ingestion/s03-command-evidence.json",
@@ -33,6 +25,14 @@
       "sha256": "81850be1600e8ca0f46ad0fb975e8ff8b192e9a608be3f61cba53bc8e216f2e2"
     },
     {
+      "path": "docs/gstack/s03-ingestion-provider-autoplan.md",
+      "sha256": "f17f0e60a7486f902fd152f58e0ac97d6a5389e79f5ebe1bdbcabb43dea3c2a6"
+    },
+    {
+      "path": "docs/playbooks/s03-ingestion-provider.playbook.md",
+      "sha256": "bee85ad8597db143cb2ea7edc2bdb13c649f38894a2690695781e50e5396a5cb"
+    },
+    {
       "path": "docs/reviews/s03-autonomous-ingestion-evidence-review.md",
       "sha256": "8b5500abaf76ef6893be0bbc983d5bb9e89d3e50e0942b350ba2fccb52484167"
     },
@@ -43,6 +43,22 @@
     {
       "path": "ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json",
       "sha256": "12e5b41c32069fffd81d07f1a4d3c44632564ebec44660558f06686ec5211239"
+    },
+    {
+      "path": "ops/autonomy/schemas/slice_integration_receipt_v2.schema.json",
+      "sha256": "d381fe8df879ac470ab9802b10b185398a793664c364b7c4b6fb05c3d80091b0"
+    },
+    {
+      "path": "scripts/build_slice_integration_receipt.py",
+      "sha256": "12b684a15b7f1906fb6ca42f51d3c875b23f5c77ee636c849d31ff897706c91e"
+    },
+    {
+      "path": "scripts/check_autonomous_review_exists.py",
+      "sha256": "269f759de39c93baacbe13c5374e2449d16895019f082ef34ddb767b073158e1"
+    },
+    {
+      "path": "scripts/check_no_tracked_data.py",
+      "sha256": "0934116e13c0b489e691f19baa84defef38d854dbab675d10c2d167625afd803"
     },
     {
       "path": "scripts/evidence/_collector_common.py",
@@ -65,51 +81,92 @@
       "sha256": "d87e0d88c04b6ff6df2bb5f81ad3f53776ee107070113b097c0a4cf1c4e7c7c2"
     },
     {
-      "path": "scripts/verify_s03_readiness.py",
-      "sha256": "da0a5d941691e33c8d42f2ec251ee71babb99b26feaa0abf8a6fe2ec7f75f2bf"
+      "path": "scripts/slice_integration.py",
+      "sha256": "74b4a8a1007a728e074aee55358733b562674333af0efb52a0026818f34772c7"
     },
     {
       "path": "scripts/validate_provider_decisions.py",
       "sha256": "cfb5171c5cd3eb2c26bc4fb6f4ac99afe2dc35ddbe6202d22e53bd4584275bfe"
     },
     {
-      "path": "scripts/check_autonomous_review_exists.py",
-      "sha256": "269f759de39c93baacbe13c5374e2449d16895019f082ef34ddb767b073158e1"
+      "path": "scripts/verify_s03_readiness.py",
+      "sha256": "da0a5d941691e33c8d42f2ec251ee71babb99b26feaa0abf8a6fe2ec7f75f2bf"
     },
     {
-      "path": "scripts/check_no_tracked_data.py",
-      "sha256": "0934116e13c0b489e691f19baa84defef38d854dbab675d10c2d167625afd803"
+      "path": "scripts/verify_ship_invariants.py",
+      "sha256": "d6ef932c8b0fe15b5582113379354c34f770fcfcebd85f800aaa4a0c1e47f536"
+    },
+    {
+      "path": "scripts/verify_slice_integration.py",
+      "sha256": "cdc899362e0f75bbb752e0bc0367ada8c4df0d1cdb10a7fae8eefcce443342f7"
+    },
+    {
+      "path": "tests/autonomy/test_slice_integration.py",
+      "sha256": "96dffbfac9c54e8b99c33713d7dee31c0bebdda356ad53af0186a83b5df1d6e5"
     },
     {
       "path": "tests/autonomy/test_verify_scripts.py",
-      "sha256": "e04f624c45fff74a2546b3b701f2f8debd8bec82bb75d8cecd125241fcef494c"
+      "sha256": "dda22bc9eebcaee638103ae096b741ac235676a33870a2dd4710c66a01391626"
     }
   ],
   "commands": [
     {
       "command": "python scripts/verify_s03_readiness.py --json",
       "exit_code": 0,
+      "status": "ok",
       "stdout_tail": "status=ok; S01 and S02 complete; Oura local evidence status ok; provider-decision validation ok with two decision records; pyEight fallback explicit; both S03 review artifacts registered; private evidence root ignored; no errors or warnings",
-      "stderr_tail": ""
+      "stderr_tail": "",
+      "execution_provenance": {
+        "mode": "prior_real_execution_plus_committed_input_equivalence",
+        "prior_execution_checkpoint": "pre-Freeze-A on 2026-08-16",
+        "tracked_input_equivalence_from": "b366676b3aea5ba62adfb7d645f344cdd7ff373a",
+        "tracked_input_equivalence_to": "db99843196a1ee7fe1f9ee0e321ba586235dae46",
+        "tracked_input_diff_exit_code": 0,
+        "private_evidence_payload_reopened_for_audit": false,
+        "limitation": "The command was not re-executed at tested_commit because it opens private evidence JSON. Its real passing result is carried forward only because all tracked code/state/decision inputs are unchanged; no claim is made about a new private-payload observation."
+      }
     },
     {
       "command": "python scripts/validate_provider_decisions.py S03 --json",
       "exit_code": 0,
+      "status": "ok",
       "stdout_tail": "{\n  \"decision_count\": 2,\n  \"decisions\": [\n    \"ops/autonomy/decisions/S03-pyeight-evidence-20260529T175729-0400.json\",\n    \"ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json\"\n  ],\n  \"errors\": [],\n  \"slice\": \"S03\",\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n",
       "stderr_tail": ""
     },
     {
       "command": "python scripts/check_autonomous_review_exists.py S03",
       "exit_code": 0,
+      "status": "ok",
       "stdout_tail": "ok\n",
       "stderr_tail": ""
     },
     {
       "command": "python scripts/check_no_tracked_data.py",
       "exit_code": 0,
+      "status": "ok",
       "stdout_tail": "ok\n",
       "stderr_tail": ""
     }
   ],
-  "redaction": "Command tails are sanitized summaries. Environment values, raw provider payloads, private evidence contents, account identifiers, health metrics, database files, snapshots, and quarantine payloads are excluded."
+  "redaction": "Command tails are sanitized summaries. Environment values, raw provider payloads, private evidence contents, account identifiers, health metrics, database files, snapshots, and quarantine payloads are excluded.",
+  "tested_commit": "db99843196a1ee7fe1f9ee0e321ba586235dae46",
+  "historical_integration_base_commit": "26e3eebe67b2191526a194ba14d84155638ee9a8",
+  "surface_summary": {
+    "ship_changed_paths": 13,
+    "identical_verified_entries": 6,
+    "evolved_verified_entries": 7,
+    "retired_verified_entries": 0,
+    "reverted_verified_entries": 0,
+    "classification_basis": "exact committed Git entries at tested_commit"
+  },
+  "supplemental_commands": [
+    {
+      "command": "git diff --exit-code b366676b3aea5ba62adfb7d645f344cdd7ff373a..HEAD -- scripts/verify_s03_readiness.py scripts/validate_provider_decisions.py scripts/check_autonomous_review_exists.py scripts/check_no_tracked_data.py ops/autonomy/slices.json ops/autonomy/failure_ledger.jsonl ops/autonomy/decisions .gitignore",
+      "exit_code": 0,
+      "stdout_tail": "",
+      "stderr_tail": ""
+    }
+  ],
+  "privacy_boundary": "No private evidence payload was reopened for this receipt audit. The readiness row is explicitly inherited from a real prior execution with unchanged tracked inputs; the other three acceptance commands were freshly rerun.",
+  "commit_boundary": "Reviewed-file hashes and freshly run non-private commands bind the clean tested_commit. The readiness row records its narrower inherited-execution provenance instead of fabricating a rerun."
 }

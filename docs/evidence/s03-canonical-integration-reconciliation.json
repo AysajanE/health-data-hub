@@ -1,0 +1,269 @@
+{
+  "audit_delta": [
+    "docs/evidence/s03-canonical-integration-reconciliation.json",
+    "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json",
+    "docs/reviews/s03-autonomous-integration-reconciliation-review.md"
+  ],
+  "command_evidence": [
+    {
+      "path": "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json",
+      "tree_entry": {
+        "mode": "100644",
+        "object": "5a714fa3710317971f0a4e89a711479fa2f7ae78",
+        "type": "blob"
+      }
+    }
+  ],
+  "command_evidence_trust_boundary": {
+    "claim_limit": "structural_integrity_and_committed_hash_binding_only",
+    "evidence_kind": "self_attested_command_transcript",
+    "runner_attestation": "not_cryptographically_verified"
+  },
+  "continuation_ref": "main",
+  "merge_base": "26e3eebe67b2191526a194ba14d84155638ee9a8",
+  "review_artifacts": [
+    {
+      "path": "docs/reviews/s03-autonomous-integration-reconciliation-review.md",
+      "tree_entry": {
+        "mode": "100644",
+        "object": "824bcc8882beea06f28b4b7df6ad99e8dd044ae9",
+        "type": "blob"
+      }
+    }
+  ],
+  "schema_version": "autokeel.slice_integration.v2",
+  "ship_branch": "ship/s03",
+  "ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
+  "slice": "S03",
+  "surfaces": [
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "0df211115e1f5f13ab348af981a931d42e583d47",
+        "type": "blob"
+      },
+      "disposition": "identical",
+      "path": "docs/evidence/ingestion/s03-command-evidence.json",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "0df211115e1f5f13ab348af981a931d42e583d47",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "83481a161551d27e8a218fb575c67319be97022c",
+        "type": "blob"
+      },
+      "disposition": "identical",
+      "path": "docs/evidence/ingestion/s03-ingestion-evidence.md",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "83481a161551d27e8a218fb575c67319be97022c",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "fe3f431a958bc6adde6b27a4009f5f1b7fb2036e",
+        "type": "blob"
+      },
+      "disposition": "identical",
+      "path": "docs/evidence/s03-item06-readiness-verifier-repair-20260529.md",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "fe3f431a958bc6adde6b27a4009f5f1b7fb2036e",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "809235ba17e1d189c5dd7fb167f485cd3fd1d29b",
+        "type": "blob"
+      },
+      "disposition": "identical",
+      "path": "docs/reviews/s03-autonomous-ingestion-evidence-review.md",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "809235ba17e1d189c5dd7fb167f485cd3fd1d29b",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "000d1f2ffb8a6652f0e3805c6caeb1f0328c3af1",
+        "type": "blob"
+      },
+      "disposition": "evolved",
+      "path": "ops/autonomy/decisions/S03-pyeight-evidence-20260529T175729-0400.json",
+      "reason": "The S03 post-completion reconciliation review confirms that this exact verified continuation object preserves or strengthens the historical slice contract.",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "30af6913cfaf2e3bf72cd32605d7e05d17a8f768",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "7569d168c829a094aa6d48f9e1ac44cabec9cb33",
+        "type": "blob"
+      },
+      "disposition": "evolved",
+      "path": "ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json",
+      "reason": "The S03 post-completion reconciliation review confirms that this exact verified continuation object preserves or strengthens the historical slice contract.",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "5e6b5e42f07e9b82c6a23e1bed9e9ee07a934ab8",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "6c5a3ae5dbd95bca96e65c1f524b04ddaa2d63ad",
+        "type": "blob"
+      },
+      "disposition": "evolved",
+      "path": "scripts/evidence/_collector_common.py",
+      "reason": "The S03 post-completion reconciliation review confirms that this exact verified continuation object preserves or strengthens the historical slice contract.",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "7aec0fbc00ec8543d26ea1faeaa4579796f82b5d",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "e55df116c2223da9f89d6c16cff48a2307113997",
+        "type": "blob"
+      },
+      "disposition": "identical",
+      "path": "scripts/evidence/oura_smoke.py",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "e55df116c2223da9f89d6c16cff48a2307113997",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "9da385e7023d9133cb54b7e80aa4ab3b093b6f05",
+        "type": "blob"
+      },
+      "disposition": "evolved",
+      "path": "scripts/evidence/pyeight_smoke.py",
+      "reason": "The S03 post-completion reconciliation review confirms that this exact verified continuation object preserves or strengthens the historical slice contract.",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "0d8c6952374f9862dca6bd8f3cbb1c3e898da328",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "eea087fa84da979a0d6c51e28a83354490b29dd4",
+        "type": "blob"
+      },
+      "disposition": "identical",
+      "path": "scripts/evidence/test_oura_smoke.py",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "eea087fa84da979a0d6c51e28a83354490b29dd4",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "f63bba5202d56326ec20ce1b683c57a528a0b071",
+        "type": "blob"
+      },
+      "disposition": "evolved",
+      "path": "scripts/evidence/test_pyeight_smoke.py",
+      "reason": "The S03 post-completion reconciliation review confirms that this exact verified continuation object preserves or strengthens the historical slice contract.",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "136768e1d9946c25579a5eb98429f6aeba52b38d",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "a38dc938609de6dc0b3f1d21343cb7ad8e1ea1d3",
+        "type": "blob"
+      },
+      "disposition": "evolved",
+      "path": "scripts/verify_s03_readiness.py",
+      "reason": "The S03 post-completion reconciliation review confirms that this exact verified continuation object preserves or strengthens the historical slice contract.",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "82fb89f7d9eaf1c0449e8494ede8eb2ffa28288b",
+        "type": "blob"
+      }
+    },
+    {
+      "continuation_entry": {
+        "mode": "100644",
+        "object": "b11b0f3f057e856022a691f8d95ea49a0eb815e9",
+        "type": "blob"
+      },
+      "disposition": "evolved",
+      "path": "tests/autonomy/test_verify_scripts.py",
+      "reason": "The S03 post-completion reconciliation review confirms that this exact verified continuation object preserves or strengthens the historical slice contract.",
+      "retention": "immutable",
+      "ship_entry": {
+        "mode": "100644",
+        "object": "295b4bfb389cfb3d7c6ea47418ef93dfa4d7767f",
+        "type": "blob"
+      }
+    }
+  ],
+  "verification_commands": [
+    {
+      "command": "python scripts/verify_s03_readiness.py --json",
+      "evidence_path": "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json",
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "command": "python scripts/validate_provider_decisions.py S03 --json",
+      "evidence_path": "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json",
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "command": "python scripts/check_autonomous_review_exists.py S03",
+      "evidence_path": "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json",
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "command": "python scripts/check_no_tracked_data.py",
+      "evidence_path": "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json",
+      "exit_code": 0,
+      "status": "ok"
+    }
+  ],
+  "verification_commit": "db99843196a1ee7fe1f9ee0e321ba586235dae46"
+}
