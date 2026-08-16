@@ -1,6 +1,6 @@
 {
   "schema_version": "autokeel_command_evidence_v1",
-  "created_at": "2026-08-16T19:39:26Z",
+  "created_at": "2026-08-16T22:09:51.752443Z",
   "slice": "S01",
   "status": "ok",
   "evidence_kind": "post_completion_integration_reconciliation",
@@ -8,14 +8,14 @@
   "historical_ship_branch": "ship/s01",
   "historical_ship_commit": "50a58201058536b7518cd8fb4d5774a3c69df53d",
   "historical_integration_base_commit": "65af28eb1ccfc37a1a614a8c936258466de7f1af",
-  "candidate_base_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+  "candidate_base_head": "b366676b3aea5ba62adfb7d645f344cdd7ff373a",
   "ship_surface_summary": {
     "changed_paths": 69,
-    "candidate_identical_paths": 48,
-    "candidate_evolved_paths": 21,
-    "candidate_missing_paths": 0,
-    "candidate_reverted_to_base_paths": 0,
-    "classification_basis": "git diff --no-renames integration_base_commit..ship_commit plus current candidate Git blob identities"
+    "verified_identical_paths": 46,
+    "verified_evolved_paths": 23,
+    "verified_missing_paths": 0,
+    "verified_reverted_to_base_paths": 0,
+    "classification_basis": "git diff --no-renames integration_base_commit..ship_commit plus exact committed blob identities at tested_commit"
   },
   "reviewed_files": [
     {
@@ -52,11 +52,11 @@
     },
     {
       "path": "scripts/setup_permissions.py",
-      "sha256": "89bb1f388e618a1be7a16fdb5ca1a4de4a7ffbabee3559c6731be4669ab8c694"
+      "sha256": "1a0ed2f153414d4b0be5e119ae16f0a74a01a2142c1da73e2511aeb9b1ba9585"
     },
     {
       "path": "scripts/test_setup_permissions.py",
-      "sha256": "4cf10131de6ba08a3a57980e813e915bfc92b8839d9d5aebb54324c39c1c936c"
+      "sha256": "ed8d7ae3c80183f11deadf3984418342a73947de11d6eb7df9816588ef528ad4"
     },
     {
       "path": "src/db/schema.sql",
@@ -64,7 +64,7 @@
     },
     {
       "path": "src/warehouse/models.py",
-      "sha256": "607a1e618d71e435b7d4f6c0980ddf9245b167949db5b9e4b2ceea02d1f2b296"
+      "sha256": "7cdeb93c417b9bb3468106c1f3bb0b8582ccef89ddffa9b16ee0838df3d06455"
     },
     {
       "path": "src/warehouse/warehouse.py",
@@ -87,7 +87,7 @@
     {
       "command": "python -m pytest tests/warehouse -q",
       "exit_code": 0,
-      "stdout_tail": "............                                                             [100%]\n12 passed in 1.41s\n",
+      "stdout_tail": "............                                                             [100%]\n12 passed in 1.42s\n",
       "stderr_tail": ""
     },
     {
@@ -107,14 +107,17 @@
       "exit_code": 0,
       "stdout_tail": "ok\n",
       "stderr_tail": ""
-    },
-    {
-      "command": "python -m pytest scripts/test_setup_permissions.py -q",
-      "exit_code": 0,
-      "stdout_tail": "..                                                                       [100%]\n2 passed in 0.07s\n",
-      "stderr_tail": ""
     }
   ],
   "redaction": "Command tails and hashes contain only sanitized local verification facts. No raw health data, private evidence contents, provider payloads, credentials, database files, snapshots, or quarantine payloads are included.",
-  "commit_boundary": "This is candidate-tree command evidence, not proof that the candidate has landed on main. A canonical integration receipt must be generated from the final committed continuation objects."
+  "commit_boundary": "Acceptance was executed against the clean, committed tested_commit. The separately committed canonical receipt binds that parent and the exact review/evidence blobs in its single-parent audit commit.",
+  "tested_commit": "b366676b3aea5ba62adfb7d645f344cdd7ff373a",
+  "supplemental_commands": [
+    {
+      "command": "python -m pytest scripts/test_setup_permissions.py -q",
+      "exit_code": 0,
+      "stdout_tail": ".....                                                                    [100%]\n5 passed in 0.03s\n",
+      "stderr_tail": ""
+    }
+  ]
 }

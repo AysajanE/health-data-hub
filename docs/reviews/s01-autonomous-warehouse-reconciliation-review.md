@@ -1,6 +1,6 @@
 # S01 Autonomous Warehouse Reconciliation Review
 
-Autonomous slice review provenance: independent reviewer for the post-completion S01 warehouse reconciliation candidate.
+Autonomous slice review provenance: independent reviewer for the post-completion S01 warehouse reconciliation at frozen verification commit `b366676b3aea5ba62adfb7d645f344cdd7ff373a`.
 
 Slice: S01
 Review mode: autonomous_gate_review
@@ -11,7 +11,7 @@ Blocking findings: none
 
 ## Scope and historical boundary
 
-This review evaluates the current S01 warehouse foundation against the committed S01 brief, autoplan, playbook, historical ship range, current product implementation, and deterministic acceptance contract. It is a post-completion review of the local continuation candidate. It does not claim that this review existed during the historical PO run, does not rewrite the 2026-05-24 completion, does not represent human approval, and does not by itself prove that the candidate has landed on `main`.
+This review evaluates the S01 warehouse foundation at committed verification point `b366676b3aea5ba62adfb7d645f344cdd7ff373a` against the committed S01 brief, autoplan, playbook, historical ship range, current product implementation, and deterministic acceptance contract. It is a post-completion review of the frozen local continuation. It does not claim that this review existed during the historical PO run, does not rewrite the 2026-05-24 completion, and does not represent human approval. Landed-state authority comes from the separately generated canonical receipt committed with this review and evidence in a single-parent audit commit.
 
 The historical run remains `RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370`. Its recorded ship branch remains `ship/s01`, its ship commit remains `50a58201058536b7518cd8fb4d5774a3c69df53d`, and its recorded integration base is `65af28eb1ccfc37a1a614a8c936258466de7f1af`.
 
@@ -52,7 +52,7 @@ The historical run remains `RUN_20260524T193154Z_e951f746da684e32be47a51d50cf037
 - `tests/warehouse/test_schema.py`
 - `docs/evidence/s01-post-completion-integration-reconciliation-command-evidence-20260816.json`
 
-The historical change set was enumerated with `git diff --no-renames` from the recorded integration base to the recorded ship commit. It contains 69 sorted paths. Because the continuation is still moving, this pre-anchor review intentionally does not assert a final ship-identical/evolved count. The canonical builder must recompute all 69 paths from the frozen verification commit, reject any absent or pre-ship-restored surface, and bind the final committed Git objects.
+The historical change set was enumerated with `git diff --no-renames` from the recorded integration base to the recorded ship commit. It contains 69 sorted paths. At the frozen verification commit, 46 paths are byte/object-identical to the historical ship and 23 are reviewed later evolutions; none is absent or restored to its pre-ship object. The canonical builder independently recomputes all 69 paths from that commit and binds their exact committed Git objects.
 
 ## Exact commands run
 
@@ -83,11 +83,11 @@ Validation failures still produce redacted general-log metadata and place sensit
 
 ### Later feature-policy evolution
 
-`src/warehouse/models.py` and `src/warehouse/warehouse.py` have evolved after S01. The active provider policy now narrows v1 feature construction to Oura rather than allowing 8 Sleep to populate model features. The warehouse also contains later S04 labeled-row and prior-only HRV behavior. Those changes strengthen the current v1 provider and missing-data contracts without removing S01's schema creation, validated inserts, correction lineage, quarantine, or exact five-table boundary. All twelve warehouse tests passed on the current candidate.
+`src/warehouse/models.py` and `src/warehouse/warehouse.py` have evolved after S01. The active provider policy now narrows v1 feature construction to Oura rather than allowing 8 Sleep to populate model features. The warehouse also contains later S04 labeled-row and prior-only HRV behavior. Those changes strengthen the current v1 provider and missing-data contracts without removing S01's schema creation, validated inserts, correction lineage, quarantine, or exact five-table boundary. All twelve warehouse tests passed at the frozen verification commit.
 
 ## Known evolved-surface disposition
 
-The following known non-identical ship surfaces were inspected rather than inferred from blob inequality. The frozen-commit review and receipt must refresh this list and the exact classification before anchoring:
+The following known non-identical ship surfaces were inspected rather than inferred from blob inequality. The receipt is authoritative for the exhaustive exact-object classification:
 
 - `.gitignore` preserves every S01 sensitive-data exclusion and adds later model, task-pack, and virtual-environment exclusions.
 - `docs/gstack/health-data-hub-office-hours.md` retains the S01 warehouse axioms while recording later provider, feature, model, UI, and recovery decisions.
@@ -111,18 +111,18 @@ The following known non-identical ship surfaces were inspected rather than infer
 - `tests/autonomy/test_autokeel_ops_tools.py` preserves S01 operational-tool coverage and adds later supervisor and evidence controls.
 - `tests/autonomy/test_autokeel_v1_feedback.py` preserves S01 feedback-loop coverage and adds later slice, recovery, and invariant regressions.
 
-No S01 ship surface is proposed as retired. The canonical receipt, not this moving-worktree inventory, is authoritative for the final exact/evolved split.
+No S01 ship surface is retired or restored to its pre-ship object. The canonical receipt is authoritative for the final exact/evolved split.
 
 ## Verification result
 
-The four exact S01 acceptance commands passed at the recorded pre-freeze checkpoint. The warehouse suite reported 12 passing tests, the schema contract returned `ok`, the tracked-data check returned `ok`, and the autonomous-review existence check returned `ok`. The supplemental setup-permissions suite reported two passing tests. All command evidence and reviewed-file hashes must be rerun and refreshed at the frozen verification commit before receipt creation.
+The four exact S01 acceptance commands passed against clean commit `b366676b3aea5ba62adfb7d645f344cdd7ff373a`. The warehouse suite reported 12 passing tests, the schema contract returned `ok`, the tracked-data check returned `ok`, and the autonomous-review existence check returned `ok`. The supplemental setup-permissions suite reported five passing tests. The command evidence names that tested commit and binds sorted reviewed-file hashes from its committed objects.
 
 ## Limitations and commit boundary
 
 - This review validates deterministic local code and tracked evidence only. It does not inspect raw health data, private quarantine payloads, secrets, or live provider responses.
 - It does not claim medical validity, causal inference, prospective prediction, or recommendation behavior.
 - It does not authorize an AutoKeel, Keel, PO, compiler, commit, push, deploy, or external action.
-- Because the continuation candidate is uncommitted and shared control-plane files can still receive append-only updates, this review is not a canonical landed-state receipt. The final receipt must be generated only after the candidate tree is frozen and committed, using the exact committed continuation entries for all 69 paths.
+- This review is not itself a landed-state receipt. The canonical receipt is generated from the frozen verification commit and binds this exact review/evidence pair in the separate single-parent audit commit.
 
 ## Review result
 
