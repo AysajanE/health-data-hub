@@ -1,0 +1,39 @@
+{
+  "details": {
+    "command": "PYTHONDONTWRITEBYTECODE=1 python scripts/verify_slice.py S01 --json",
+    "commands": [
+      {
+        "command": "python -m pytest tests/warehouse -q",
+        "exit_code": 0,
+        "result": "12 passed in 1.02s"
+      },
+      {
+        "command": "python scripts/check_schema_contract.py",
+        "exit_code": 0,
+        "result": "ok"
+      },
+      {
+        "command": "python scripts/check_no_tracked_data.py",
+        "exit_code": 0,
+        "result": "ok"
+      },
+      {
+        "command": "python scripts/check_autonomous_review_exists.py S01",
+        "exit_code": 0,
+        "result": "ok"
+      }
+    ],
+    "detached_worktree": ".local/autokeel/ship-checkouts/s01-recertification-20260816t1836-0400",
+    "historical_run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
+    "historical_ship_branch": "ship/s01",
+    "historical_ship_commit": "50a58201058536b7518cd8fb4d5774a3c69df53d",
+    "purpose": "Truthful post-completion detached recertification for the legacy S01 acceptance event that predates cwd recording.",
+    "verification_status": "ok"
+  },
+  "name": "s01-detached-ship-acceptance-recertification",
+  "reason": "The original S01 acceptance event recorded all four successful commands but predates detached-worktree cwd logging; the recorded ship commit has now been reverified in a real detached ship checkout.",
+  "recorded_at": "2026-08-16T18:36:31-04:00",
+  "recorded_by": "codex-owner",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S01"
+}

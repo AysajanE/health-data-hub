@@ -1,0 +1,29 @@
+{
+  "details": {
+    "command_evidence": [
+      "docs/evidence/s01-post-completion-integration-reconciliation-command-evidence-20260816.json"
+    ],
+    "command_evidence_sha256": {
+      "docs/evidence/s01-post-completion-integration-reconciliation-command-evidence-20260816.json": "774d4168960c8cf1e545b2d7884321b89346bcb9d1950347eb62ac2c50ea882f"
+    },
+    "historical_run_id": "RUN_20260524T193154Z_e951f746da684e32be47a51d50cf0370",
+    "historical_ship_branch": "ship/s01",
+    "historical_ship_commit": "50a58201058536b7518cd8fb4d5774a3c69df53d",
+    "integration_receipt": "docs/evidence/s01-canonical-integration-reconciliation.json",
+    "integration_receipt_sha256": "a6005da37495b4d3dd4afaf857a4a214d35461600fbe6e3e850f84f1926ca736",
+    "review_artifact_sha256": {
+      "docs/reviews/s01-autonomous-warehouse-reconciliation-review.md": "e0cf0ac5acc176b69befe1287084d417db69b599426b18dffd7d63234466402f"
+    },
+    "review_artifacts": [
+      "docs/reviews/s01-autonomous-warehouse-reconciliation-review.md"
+    ],
+    "slice_config_sha256": "8876f11efc8ab1242ff10c21b0fcf539333eac4c802ef162813200475553af8c",
+    "verification_status": "ok"
+  },
+  "name": "s01-post-completion-review-integration",
+  "reason": "S01 post-completion review and canonical integration receipt are verified against the historical ship and current continuation.",
+  "recorded_at": "2026-08-16T18:33:18-04:00",
+  "recorded_by": "codex-owner",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S01"
+}

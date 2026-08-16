@@ -251,6 +251,10 @@
       "S04"
     ],
     "id": "S05",
+    "integration_receipt": "docs/evidence/s05-canonical-integration-reconciliation.json",
+    "integration_review_artifacts": [
+      "docs/reviews/s05-autonomous-integration-reconciliation-review.md"
+    ],
     "lane": "swr_preferred",
     "lane_decision": "ops/autonomy/decisions/S05-lane-decision-20260531T190554-0400.json",
     "name": "Model lifecycle and gates",
@@ -265,7 +269,8 @@
     "retry_count": 0,
     "review_artifacts": [
       "docs/reviews/s05-autonomous-model-gate-review.md",
-      "docs/reviews/s05-autonomous-statistical-validity-review.md"
+      "docs/reviews/s05-autonomous-statistical-validity-review.md",
+      "docs/reviews/s05-autonomous-integration-reconciliation-review.md"
     ],
     "risk": "high",
     "run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",

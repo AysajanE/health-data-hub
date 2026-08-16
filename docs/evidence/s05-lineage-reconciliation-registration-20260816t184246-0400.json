@@ -1,0 +1,23 @@
+{
+  "details": {
+    "command_evidence": "docs/evidence/s05-post-completion-integration-reconciliation-command-evidence-20260816.json",
+    "continuation_commit_before_registration": "e671bf014d3fc8bef6d127a9540be9806c354cff",
+    "historical_integration_base_commit": "378b87443ab2ee3c57c44a7e5079b9ce7a6fff66",
+    "historical_run_id": "RUN_20260611T134151Z_8508f50bb1094466b6cd8ed1b776e1f6",
+    "historical_ship_branch": "ship/s05",
+    "historical_ship_commit": "6dce352ead0729f9bfde9a52a5aa28e08161acb6",
+    "integration_receipt": "docs/evidence/s05-canonical-integration-reconciliation.json",
+    "integration_review_artifacts": [
+      "docs/reviews/s05-autonomous-integration-reconciliation-review.md"
+    ],
+    "previous_slices_sha256": "7d8b123669256cee4adc113d5dfcce36844e87c22af23df6882cbe4b8b826142",
+    "reason": "S05 was historically completed and materialized on main, but later finite-value and exact-provider-provenance hardening evolved four of its eleven ship surfaces. A committed anchored receipt and independent post-completion review are required before S06 readiness can be trusted.",
+    "registered_slices_sha256": "b0536daa260458c98778c31b1e1f97b663ee0f89644f792156ef13959de961a8"
+  },
+  "name": "s05-lineage-reconciliation-registration",
+  "reason": "Register the required post-completion S05 review and canonical receipt after finite-value and exact-provider-provenance hardening evolved historical S05 surfaces.",
+  "recorded_at": "2026-08-16T18:42:46-04:00",
+  "recorded_by": "codex-owner",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S05"
+}

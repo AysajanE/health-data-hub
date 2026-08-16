@@ -1,0 +1,29 @@
+{
+  "details": {
+    "command_evidence": [
+      "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json"
+    ],
+    "command_evidence_sha256": {
+      "docs/evidence/s03-post-completion-integration-reconciliation-command-evidence-20260816.json": "06127e90c7278814babcbe3233e57ab0fcac78c76c41e4e53a95f48408c5bdbc"
+    },
+    "historical_run_id": "RUN_20260529T212731Z_4400a6b66bc7499f8bb577260bc05864",
+    "historical_ship_branch": "ship/s03",
+    "historical_ship_commit": "c9349b337df6e36861468368669dc65cef5cf64d",
+    "integration_receipt": "docs/evidence/s03-canonical-integration-reconciliation.json",
+    "integration_receipt_sha256": "2707c5ab518818b30cbaeda4ca3be982c8c9bcc5bd9b9d6840ddb266e0bc7087",
+    "review_artifact_sha256": {
+      "docs/reviews/s03-autonomous-integration-reconciliation-review.md": "938940a80e8d579ecce64dc4cff64391898bb836def80e5e134ac17ffcb96aeb"
+    },
+    "review_artifacts": [
+      "docs/reviews/s03-autonomous-integration-reconciliation-review.md"
+    ],
+    "slice_config_sha256": "2c30d722a9ec72ea004e653f8860ed4bb5870fc6d711eb62d10d4b6c9a125d2e",
+    "verification_status": "ok"
+  },
+  "name": "s03-post-completion-review-integration",
+  "reason": "S03 post-completion reconciliation review and canonical integration receipt are verified without reopening private evidence payloads.",
+  "recorded_at": "2026-08-16T18:33:18-04:00",
+  "recorded_by": "codex-owner",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S03"
+}

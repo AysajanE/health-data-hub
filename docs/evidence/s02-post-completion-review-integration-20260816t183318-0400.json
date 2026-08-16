@@ -1,0 +1,31 @@
+{
+  "details": {
+    "command_evidence": [
+      "docs/evidence/s02-post-completion-integration-reconciliation-command-evidence-20260816.json"
+    ],
+    "command_evidence_sha256": {
+      "docs/evidence/s02-post-completion-integration-reconciliation-command-evidence-20260816.json": "c021a42ba75150df54742ee55bcbad6f7fabd4172672b5207874110234f7ca8e"
+    },
+    "historical_run_id": "RUN_20260528T012206Z_d1a034d3e30d4b26a26273e07597d115",
+    "historical_ship_branch": "ship/s02",
+    "historical_ship_commit": "9b9a72bd9201eca69f94949d66aba9b71ee30b5c",
+    "integration_receipt": "docs/evidence/s02-canonical-integration-reconciliation.json",
+    "integration_receipt_sha256": "703c9eefa054a85b464069afe9a9d0eae3675aaa0dcd57a64bc71c244ce6be98",
+    "review_artifact_sha256": {
+      "docs/reviews/s02-autonomous-integration-reconciliation-review.md": "44b150ff6860cab93430a035e9780c1fe49f96dd6d4d8ebbf858e35e459f8ddf",
+      "docs/reviews/s02-autonomous-security-privacy-reconciliation-review.md": "446c4162cb3c883ed4901c994d9aa2f12e8bf69c778d365d77d0094f801d3ebf"
+    },
+    "review_artifacts": [
+      "docs/reviews/s02-autonomous-integration-reconciliation-review.md",
+      "docs/reviews/s02-autonomous-security-privacy-reconciliation-review.md"
+    ],
+    "slice_config_sha256": "f3406e4edf348d063cb31138af557d4b20006666a99cf56acd737de2ddcd8a9c",
+    "verification_status": "ok"
+  },
+  "name": "s02-post-completion-review-integration",
+  "reason": "S02 post-completion integration and security/privacy reviews plus canonical receipt are verified against the historical ship and current continuation.",
+  "recorded_at": "2026-08-16T18:33:18-04:00",
+  "recorded_by": "codex-owner",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S02"
+}
