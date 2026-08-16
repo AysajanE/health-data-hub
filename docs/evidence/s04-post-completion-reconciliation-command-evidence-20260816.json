@@ -1,36 +1,28 @@
 {
   "schema_version": "autokeel_command_evidence_v1",
-  "created_at": "2026-08-16T17:24:54Z",
+  "created_at": "2026-08-16T22:26:52.811177Z",
   "slice": "S04",
   "status": "ok",
   "evidence_kind": "post_completion_reconciliation",
   "historical_run_id": "RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1",
   "historical_ship_commit": "6d2eb8eaa1e02229cb917c0485840c4ab9602fca",
-  "canonical_base_head": "483848fa6b4cb89b4934c1f1696ce6c11b5e5a41",
+  "canonical_base_head": "9dc3b1ebcf9e4cf3dc244006da4fb477a1f73632",
   "reviewed_files": [
     {
-      "path": "src/warehouse/features.py",
-      "sha256": "56c907a2286478770d5f88635e52f13aae36625a2829e5a68a2a5d41992f456d"
+      "path": "docs/briefs/s04-feature-engineering.autonomous-brief.md",
+      "sha256": "ac3ce37bd5b1a0068e28d455f7ae4ddbf46d6995f0a695bb96005a6331be1970"
     },
     {
-      "path": "src/warehouse/warehouse.py",
-      "sha256": "ddbcdcf43c4ce344099666fac58383a9401b8c6dfc457b718e087a0d4d23fa29"
+      "path": "docs/evidence/s04-feature-engineering-command-evidence-provenance.json",
+      "sha256": "bfb134261fb95155ebd7a9e33f49ae1a2af1d2c82e370014533076e60a69537a"
     },
     {
-      "path": "tests/test_features.py",
-      "sha256": "34f2cd2c25e56246b8623815d0a2c25ef188ed6dfe871b6a3ad252a34f41e6fd"
-    },
-    {
-      "path": "scripts/verify_s04_readiness.py",
-      "sha256": "aa45762eb9f23b08c1abbaeef1c6a6ad5cf1ac350b5d783e66334982841aca2d"
+      "path": "docs/evidence/s04-feature-engineering-command-evidence.json",
+      "sha256": "63aed86d48917d9369cc1a949c4c3746005667b3d367abd777b552334d67e99b"
     },
     {
       "path": "docs/gstack/s04-feature-engineering-autoplan.md",
       "sha256": "5e4c6f627573be71f4eb16d5c04bd4c7d4c1fa4d1d5bb1cb9df6375995df3710"
-    },
-    {
-      "path": "docs/briefs/s04-feature-engineering.autonomous-brief.md",
-      "sha256": "ac3ce37bd5b1a0068e28d455f7ae4ddbf46d6995f0a695bb96005a6331be1970"
     },
     {
       "path": "docs/playbooks/s04-feature-engineering.playbook.md",
@@ -39,27 +31,109 @@
     {
       "path": "ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json",
       "sha256": "12e5b41c32069fffd81d07f1a4d3c44632564ebec44660558f06686ec5211239"
+    },
+    {
+      "path": "ops/autonomy/schemas/slice_integration_receipt_v2.schema.json",
+      "sha256": "d381fe8df879ac470ab9802b10b185398a793664c364b7c4b6fb05c3d80091b0"
+    },
+    {
+      "path": "scripts/build_slice_integration_receipt.py",
+      "sha256": "12b684a15b7f1906fb6ca42f51d3c875b23f5c77ee636c849d31ff897706c91e"
+    },
+    {
+      "path": "scripts/check_autonomous_review_exists.py",
+      "sha256": "269f759de39c93baacbe13c5374e2449d16895019f082ef34ddb767b073158e1"
+    },
+    {
+      "path": "scripts/slice_integration.py",
+      "sha256": "74b4a8a1007a728e074aee55358733b562674333af0efb52a0026818f34772c7"
+    },
+    {
+      "path": "scripts/verify_s04_readiness.py",
+      "sha256": "aa45762eb9f23b08c1abbaeef1c6a6ad5cf1ac350b5d783e66334982841aca2d"
+    },
+    {
+      "path": "scripts/verify_ship_invariants.py",
+      "sha256": "d6ef932c8b0fe15b5582113379354c34f770fcfcebd85f800aaa4a0c1e47f536"
+    },
+    {
+      "path": "scripts/verify_slice_integration.py",
+      "sha256": "cdc899362e0f75bbb752e0bc0367ada8c4df0d1cdb10a7fae8eefcce443342f7"
+    },
+    {
+      "path": "src/warehouse/features.py",
+      "sha256": "71b2bb24fec6ebc1b7ed7eb875375cce3ff5fde36649f5bece7458dc5e1d398b"
+    },
+    {
+      "path": "src/warehouse/warehouse.py",
+      "sha256": "ddbcdcf43c4ce344099666fac58383a9401b8c6dfc457b718e087a0d4d23fa29"
+    },
+    {
+      "path": "tests/autonomy/test_slice_integration.py",
+      "sha256": "96dffbfac9c54e8b99c33713d7dee31c0bebdda356ad53af0186a83b5df1d6e5"
+    },
+    {
+      "path": "tests/test_features.py",
+      "sha256": "a01f9bb518baa066d5e5b5a5a789c0c38b4f59e0d6f37e057c36624b957ef2ca"
     }
   ],
   "commands": [
     {
       "command": "python scripts/verify_s04_readiness.py --json",
       "exit_code": 0,
-      "stdout_tail": "{\n  \"checks\": {\n    \"open_high_or_critical_failures\": 0,\n    \"provider_reopening_slice_complete\": false,\n    \"pyeight_decision\": \"ops/autonomy/decisions/S03-pyeight-fallback-20260529T191320-0400.json\",\n    \"pyeight_state\": \"fallback_active\",\n    \"s01_status\": \"complete\",\n    \"s02_status\": \"complete\",\n    \"s03_8sleep_addendum\": \"docs/evidence/S03-8sleep-provider-status-addendum-20260531.md\",\n    \"s03_completed_tracked_handoff\": false,\n    \"s03_evidence_summary\": \"docs/evidence/ingestion/s03-ingestion-evidence.md\",\n    \"s03_provider_decision_count\": 2,\n    \"s03_provider_decisions_status\": \"ok\",\n    \"s03_readiness_status\": \"ok\",\n    \"s03_ship_branch\": \"ship/s03\",\n    \"s03_ship_commit\": \"c9349b337df6e36861468368669dc65cef5cf64d\",\n    \"s03_status\": \"complete\",\n    \"s04_autoplan\": \"docs/gstack/s04-feature-engineering-autoplan.md\",\n    \"s04_brief\": \"docs/briefs/s04-feature-engineering.autonomous-brief.md\"\n  },\n  \"errors\": [],\n  \"status\": \"ok\",\n  \"warnings\": []\n}\n",
-      "stderr_tail": ""
+      "status": "ok",
+      "stdout_tail": "status=ok; S01-S03 complete; S03 provider decisions valid; pyEight fallback_active; no provider reopening; S04 brief/autoplan contract present; no errors",
+      "stderr_tail": "",
+      "execution_provenance": {
+        "mode": "prior_real_execution_plus_committed_input_equivalence",
+        "prior_execution_checkpoint": "pre-Freeze-A on 2026-08-16",
+        "tracked_input_equivalence_from": "b366676b3aea5ba62adfb7d645f344cdd7ff373a",
+        "tracked_input_equivalence_to": "9dc3b1ebcf9e4cf3dc244006da4fb477a1f73632",
+        "tracked_input_diff_exit_code": 0,
+        "private_evidence_payload_reopened_for_audit": false,
+        "limitation": "The command was not re-executed at tested_commit because it transitively opens private S03 evidence JSON. Its real passing result is carried forward only because every tracked readiness input is unchanged; no claim is made about a new private-payload observation."
+      }
     },
     {
       "command": "python -m pytest tests/test_features.py -q",
       "exit_code": 0,
-      "stdout_tail": ".................                                                        [100%]\n17 passed in 2.98s\n",
+      "status": "ok",
+      "stdout_tail": ".........................                                                [100%]\n25 passed in 1.99s\n",
       "stderr_tail": ""
     },
     {
       "command": "python scripts/check_no_tracked_data.py",
       "exit_code": 0,
+      "status": "ok",
       "stdout_tail": "ok\n",
       "stderr_tail": ""
     }
   ],
-  "redaction": "Command tails contain only sanitized local verification summaries. No raw health data, private evidence contents, provider payloads, credentials, database files, snapshots, or quarantine payloads are included."
+  "redaction": "Command tails contain only sanitized local verification summaries. No raw health data, private evidence contents, provider payloads, credentials, database files, snapshots, or quarantine payloads are included.",
+  "tested_commit": "9dc3b1ebcf9e4cf3dc244006da4fb477a1f73632",
+  "historical_integration_base_commit": "2cf6135a292158a6b882bca9842e358f3f98e467",
+  "surface_summary": {
+    "ship_changed_paths": 7,
+    "identical_verified_entries": 3,
+    "evolved_verified_entries": 4,
+    "retired_verified_entries": 0,
+    "reverted_verified_entries": 0,
+    "classification_basis": "exact committed Git entries at tested_commit"
+  },
+  "supplemental_commands": [
+    {
+      "command": "python scripts/check_autonomous_review_exists.py S04",
+      "exit_code": 0,
+      "stdout_tail": "ok\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "git diff --exit-code b366676b3aea5ba62adfb7d645f344cdd7ff373a..HEAD -- scripts/verify_s04_readiness.py scripts/verify_s03_readiness.py ops/autonomy/slices.json ops/autonomy/failure_ledger.jsonl ops/autonomy/decisions docs/briefs/s04-feature-engineering.autonomous-brief.md docs/gstack/s04-feature-engineering-autoplan.md docs/evidence/ingestion/s03-ingestion-evidence.md docs/evidence/S03-8sleep-provider-status-addendum-20260531.md .gitignore",
+      "exit_code": 0,
+      "stdout_tail": "",
+      "stderr_tail": ""
+    }
+  ],
+  "privacy_boundary": "No private evidence payload was reopened for this receipt audit. The readiness row is explicitly inherited from a real prior execution with unchanged tracked inputs; feature tests and hygiene were freshly rerun.",
+  "commit_boundary": "Reviewed-file hashes and freshly run non-private commands bind the clean tested_commit. The readiness row records narrower inherited-execution provenance instead of fabricating a rerun."
 }

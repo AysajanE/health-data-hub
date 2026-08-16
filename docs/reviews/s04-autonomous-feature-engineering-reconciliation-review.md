@@ -1,6 +1,6 @@
 # S04 Autonomous Feature-Engineering Reconciliation Review
 
-Autonomous slice review provenance: independent reviewer for the post-completion S04 reconciliation on canonical main.
+Autonomous slice review provenance: independent reviewer for the post-completion S04 reconciliation at frozen verification commit `9dc3b1ebcf9e4cf3dc244006da4fb477a1f73632`.
 
 Slice: S04
 Review mode: autonomous_gate_review
@@ -11,7 +11,7 @@ Blocking findings: none
 
 ## Scope and historical boundary
 
-This review evaluates the current S04 feature-engineering reconciliation against the existing S04 brief, autoplan, playbook, active S03 provider decision, implementation, and deterministic tests. It is a post-completion review of the reconciled canonical tree. It does not claim that this artifact existed during the historical PO run, does not rewrite the 2026-05-31 S04 completion, and does not represent human approval.
+This review evaluates S04 feature engineering at committed verification point `9dc3b1ebcf9e4cf3dc244006da4fb477a1f73632` against the existing S04 brief, autoplan, playbook, active S03 provider decision, implementation, and deterministic tests. It is a post-completion review of the frozen canonical continuation. It does not claim that this artifact existed during the historical PO run, does not rewrite the 2026-05-31 S04 completion, and does not represent human approval.
 
 The historical S04 run remains `RUN_20260531T195938Z_c4376275285148e89301757f7cfeb5e1`, and its recorded ship commit remains `6d2eb8eaa1e02229cb917c0485840c4ab9602fca`.
 
@@ -29,7 +29,7 @@ The historical S04 run remains `RUN_20260531T195938Z_c4376275285148e89301757f7cf
 - `docs/evidence/s04-feature-engineering-command-evidence-provenance.json`
 - `docs/evidence/s04-post-completion-reconciliation-command-evidence-20260816.json`
 
-The preliminary command-evidence artifact records SHA-256 values for the implementation, test, contract, readiness, and provider-decision files reviewed at that checkpoint. Because the continuation is still moving, those hashes are not landed-state proof and must be recomputed at the frozen verification commit before the canonical receipt is created. No new PO or ship commit is claimed.
+The command-evidence artifact names the clean tested commit and records SHA-256 values for the implementation, tests, contract, readiness, provider-decision, and receipt-verifier files. The canonical receipt separately binds all seven historical ship surfaces and this exact review/evidence pair. No new PO or ship commit is claimed.
 
 ## Exact commands run
 
@@ -43,7 +43,7 @@ Command evidence: docs/evidence/s04-post-completion-reconciliation-command-evide
 
 ### Provider-policy boundary
 
-The current implementation loads the active S03 provider decision and keeps Oura as the sole v1 feature source. An 8 Sleep row cannot supply total sleep, sleep stages, or HRV and is not counted as an active source. When present, it is marked as ignored fallback-only diagnostic context; it does not alter the selected Oura feature values. The readiness command passed with `pyeight_state` equal to `fallback_active` and no provider-reopening slice active.
+The current implementation loads the active S03 provider decision and keeps Oura as the sole v1 feature source. An 8 Sleep row cannot supply total sleep, sleep stages, or HRV and is not counted as an active source. When present, it is marked as ignored fallback-only diagnostic context; it does not alter the selected Oura feature values. The earlier real readiness result reported `pyeight_state` equal to `fallback_active` and no provider-reopening slice active; for this audit that result is carried forward only after proving all tracked readiness inputs unchanged, without reopening private S03 evidence.
 
 ### Date and label contract
 
@@ -59,7 +59,11 @@ The v1 model inputs remain exactly `total_sleep_min`, `hrv_z`, `deep_sleep_pct`,
 
 ### Verification and hygiene
 
-The focused S04 suite passed all 17 tests. It covers the active provider decision, Oura-only feature construction, ignored fallback rows, same-day target selection, missing-sleep behavior, prior-only and future-excluding HRV history, minimum-history behavior, zero-MAD fallback, zero-variance suppression, explicit display-only mood imputation, and the historical command-evidence provenance pair. The tracked-data hygiene check also passed.
+The focused S04 suite passed all 25 tests against the clean verification parent. It covers the active provider decision, Oura-only feature construction, ignored fallback rows, same-day target selection, missing-sleep behavior, prior-only and future-excluding HRV history, minimum-history behavior, zero-MAD fallback, zero-variance suppression, non-finite rejection, explicit display-only mood imputation, and the historical command-evidence provenance pair. The tracked-data hygiene and review checks also passed.
+
+### Canonical continuation
+
+The historical S04 range changes seven paths. At the frozen verification commit, three are identical to the historical ship and four are reviewed later evolutions; none is retired or restored to its pre-ship object. The canonical receipt independently recomputes and binds all seven exact committed entries.
 
 ## Limitations
 
@@ -67,7 +71,7 @@ The focused S04 suite passed all 17 tests. It covers the active provider decisio
 - S04 trusts the stored `sleep_date`; it does not by itself prove morning-D attribution from a provider wake timestamp. S12's derived wake-date/DST acceptance remains a hard prerequisite for production ingestion and downstream model use.
 - It does not claim medical validity, causal inference, prospective prediction, or a recommendation capability.
 - It does not replace a future S06 review or authorize an AutoKeel, Keel, or PO run.
-- The review becomes a durable control-plane requirement only when separately registered and ratified without changing the historical S04 run or ship pointers.
+- This review is not itself lineage authority. The canonical receipt binds it in the single-parent audit commit, and a later hash-bound ratification must preserve the historical S04 run and ship pointers.
 
 ## Review result
 
