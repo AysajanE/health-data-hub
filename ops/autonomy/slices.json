@@ -313,19 +313,17 @@
       "scripts/sync_oura.py",
       "scripts/evidence/oura_sync_attestation.py",
       "scripts/verify_s12_sync.py",
-      "docs/reviews/s12-autonomous-authority-review.md",
+      "tests/ingestion/test_oura_retention.py",
       "docs/reviews/s12-autonomous-security-privacy-review.md",
       "docs/reviews/s12-autonomous-ingestion-integrity-review.md",
       "docs/evidence/s12-oura-production-sync-command-evidence.json"
     ],
     "evidence_dirs": [
-      "private/evidence/S12/authority",
       "private/evidence/S12/oura_sync"
     ],
-    "failure_path": "ops/autonomy/failures/S12-provider_terms_conflict-20260816T160521-0400.md",
     "id": "S12",
-    "lane": "compiler_external_evidence",
-    "name": "Oura production sync authority and runtime",
+    "lane": "compiler",
+    "name": "Oura production sync",
     "playbook": "docs/playbooks/s12-oura-production-sync.playbook.md",
     "pre_po_commands": [
       "python scripts/verify_s12_readiness.py --json"
@@ -333,17 +331,15 @@
     "pre_ship_commands": [
       "python scripts/verify_s12_readiness.py --json"
     ],
-    "reason": "Current Oura API terms conflict with the planned API-to-model path; separate written authority or a legally confirmed non-API route is required before compiler or provider use.",
     "required": true,
     "review_artifacts": [
-      "docs/reviews/s12-autonomous-authority-review.md",
       "docs/reviews/s12-autonomous-security-privacy-review.md",
       "docs/reviews/s12-autonomous-ingestion-integrity-review.md"
     ],
     "risk": "high",
     "slug": "s12-oura-production-sync",
-    "status": "blocked_external",
-    "updated_at": "2026-08-16T16:05:21-04:00"
+    "status": "pending",
+    "updated_at": "2026-08-17T08:03:50-04:00"
   },
   {
     "acceptance": [

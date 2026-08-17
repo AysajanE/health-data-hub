@@ -14,6 +14,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.validate_provider_decisions import validate_provider_decisions
+from scripts.verify_failure_ledger import effective_failure_rows
 from scripts.verify_s03_readiness import verify_s03_readiness
 
 
@@ -178,11 +179,16 @@ def verify_s04_readiness(root: Path) -> dict[str, Any]:
             if phrase not in addendum_text:
                 errors.append(error)
 
+    failure_rows, successor_errors = effective_failure_rows(
+        root,
+        list(iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl") or []),
+    )
     open_high = [
         row
-        for row in (iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl") or [])
+        for row in failure_rows
         if row.get("open", True) and row.get("severity") in {"high", "critical"}
     ]
+    errors.extend(f"failure ledger successor: {error}" for error in successor_errors)
     checks["open_high_or_critical_failures"] = len(open_high)
     if open_high:
         errors.append(

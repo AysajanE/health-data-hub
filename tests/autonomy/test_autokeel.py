@@ -76,39 +76,6 @@ def init_git_repo(root: Path) -> None:
     subprocess.run(["git", "commit", "-m", "seed"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
 
-def s12_readiness_wire_report(status: str = "blocked_external") -> dict[str, object]:
-    if status == "blocked_external":
-        errors = ["issuer-authenticated authority unavailable"]
-        control_count = 0
-        authority_count = 1
-    elif status == "error":
-        errors = ["sealed control input invalid"]
-        control_count = 1
-        authority_count = 0
-    else:
-        errors = []
-        control_count = 0
-        authority_count = 0
-    return {
-        "status": status,
-        "errors": errors,
-        "warnings": [],
-        "checks": {
-            "phase": "pre_compiler_or_pre_ship",
-            "paid_execution_performed": False,
-            "network_accessed": False,
-            "oauth_or_token_inspected": False,
-            "private_source_contents_read": False,
-            "private_source_contents_parsed": False,
-            "issuer_authenticated_authority_validator": "not_implemented",
-            "committed_inputs": {"sealed-input": {}},
-            "control_error_count": control_count,
-            "authority_blocker_count": authority_count,
-            "provider_policy": "oura_only_v1_not_reopened",
-        },
-    }
-
-
 class AutoKeelTests(unittest.TestCase):
     def test_command_runner_blocks_manual_gate_command(self) -> None:
         policy = {"manual_gates": {"forbidden_commands": ["keel-run mark-manual-gate", "mark-manual-gate"]}}
@@ -422,7 +389,6 @@ Manual gates are forbidden.
             "evidence_path": "private/evidence/S11/activation/report.json",
             "evidence_sha256": None,
             "observed_at": "2026-08-16T16:00:00-04:00",
-            "authority_sha256": None,
         }
         errors = AutoKeel.activation_payload_errors(
             payload,
@@ -430,7 +396,6 @@ Manual gates are forbidden.
             run_id="RUN_S11",
             ship_commit="a" * 40,
             verifier_sha256="b" * 64,
-            authority_sha256=None,
         )
         self.assertEqual(errors, [])
 
@@ -444,7 +409,6 @@ Manual gates are forbidden.
                 run_id="RUN_S11",
                 ship_commit="a" * 40,
                 verifier_sha256="b" * 64,
-                authority_sha256=None,
             )
             self.assertTrue(any("required binding fields" in error for error in errors))
             self.assertTrue(any("evidence_path" in error for error in errors))
@@ -464,91 +428,12 @@ Manual gates are forbidden.
             runner = PassingRunner()
             op = AutoKeel(root=root, dry_run=False)
             op.runner = runner
-            authority_sha256 = "d" * 64
-            op.s12_operation_readiness = lambda slice_id, operation: (
-                CommandResult([], 0, '{"status":"ok"}', ""),
-                {"status": "ok", "checks": {"private_source": {"sha256": authority_sha256}}},
-            )
             result = op.run_activation_acceptance("S12", worktree, run_id="RUN_S12")
 
             self.assertEqual(result.exit_code, AutoKeel.ACTIVATION_CONTROL_ERROR_EXIT)
             self.assertIn("trusted outer evidence", result.stderr)
 
-    def test_s12_blocked_external_readiness_is_normalized_before_resume_recovery_and_ship(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            copy_autonomy_fixture(root)
-            op = AutoKeel(root=root, dry_run=True)
-            s12 = next(item for item in op.load_slices() if item["id"] == "S12")
-            s12["run_id"] = "RUN_S12"
-            readiness_calls: list[str] = []
-
-            def blocked_readiness(slice_id):
-                self.assertEqual(slice_id, "S12")
-                readiness_calls.append(slice_id)
-                return CommandResult([], 2, json.dumps(s12_readiness_wire_report()), "authority missing")
-
-            op.run_slice_readiness = blocked_readiness
-
-            started = op.start_or_resume_po(s12)
-            recovered = op.recover_passed_slice_run(s12)
-            shipped = op.ship_slice("S12", "RUN_S12")
-
-            self.assertEqual(started.exit_code, AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT)
-            self.assertIsNotNone(recovered)
-            self.assertEqual(recovered.exit_code, AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT)
-            self.assertEqual(shipped.exit_code, AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT)
-            self.assertEqual(readiness_calls, ["S12", "S12", "S12"])
-            self.assertEqual(op.find_slice("S12")["status"], "blocked_external")
-
-    def test_s12_readiness_rejects_incomplete_or_wrong_exit_blocked_external_reports(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            copy_autonomy_fixture(root)
-            op = AutoKeel(root=root, dry_run=True)
-
-            op.run_slice_readiness = lambda _slice_id: CommandResult(
-                [], 2, '{"status":"blocked_external"}', ""
-            )
-            incomplete, _payload = op.s12_operation_readiness("S12", "start_or_resume_po")
-            self.assertEqual(incomplete.exit_code, AutoKeel.ACTIVATION_CONTROL_ERROR_EXIT)
-            self.assertIn("exactly status, errors, warnings, and checks", incomplete.stderr)
-            self.assertNotEqual(op.find_slice("S12")["status"], "blocked_external")
-
-            op.run_slice_readiness = lambda _slice_id: CommandResult(
-                [], 1, json.dumps(s12_readiness_wire_report()), ""
-            )
-            wrong_exit, _payload = op.s12_operation_readiness("S12", "ship")
-            self.assertEqual(wrong_exit.exit_code, AutoKeel.ACTIVATION_CONTROL_ERROR_EXIT)
-            self.assertIn("requires raw exit 2", wrong_exit.stderr)
-            self.assertNotEqual(op.find_slice("S12")["status"], "blocked_external")
-
-    def test_s12_normalized_blocked_external_is_not_recorded_as_po_test_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            copy_autonomy_fixture(root)
-            op = AutoKeel(root=root, dry_run=True)
-            s12 = op.find_slice("S12")
-            self.assertIsNotNone(s12)
-
-            code = op.run_po_and_handle_status(
-                s12,
-                CommandResult(
-                    [],
-                    AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT,
-                    json.dumps(s12_readiness_wire_report()),
-                    "provider authority missing",
-                ),
-            )
-
-            self.assertEqual(code, AutoKeel.ACTIVATION_BLOCKED_EXTERNAL_EXIT)
-            self.assertEqual(op.find_slice("S12")["status"], "blocked_external")
-            self.assertNotIn(
-                '"failure_class": "test_failure"',
-                (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8"),
-            )
-
-    def test_handle_po_status_rejects_unvalidated_s12_blocked_external_stdout(self) -> None:
+    def test_handle_po_status_rejects_unvalidated_blocked_external_ship_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_autonomy_fixture(root)

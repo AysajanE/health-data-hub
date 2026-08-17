@@ -85,55 +85,6 @@ def copy_autonomy_fixture(dst: Path) -> None:
 
 
 class AutoKeelOpsToolTests(unittest.TestCase):
-    def test_append_ledger_builds_valid_scoped_s12_authority_blocker(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            copy_autonomy_fixture(root)
-            evidence_rel = "ops/autonomy/failures/S12-provider-terms-test.md"
-            evidence = root / evidence_rel
-            evidence.parent.mkdir(parents=True, exist_ok=True)
-            evidence.write_text("# S12 provider authority blocker\n", encoding="utf-8")
-            slices_path = root / "ops/autonomy/slices.json"
-            slices = json.loads(slices_path.read_text(encoding="utf-8"))
-            s12 = next(item for item in slices if item.get("id") == "S12")
-            s12["status"] = "blocked_external"
-            s12["failure_path"] = evidence_rel
-            write_json_atomic(slices_path, slices)
-            source = root / "candidate.json"
-            source.write_text(
-                json.dumps(
-                    {
-                        "slice": "S12",
-                        "failure_class": "provider_terms_conflict",
-                        "severity": "high",
-                        "description": "Current provider authority is unavailable.",
-                        "action_taken": "Stopped before compiler or provider use.",
-                        "evidence_path": evidence_rel,
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            report = cmd_append_ledger(SimpleNamespace(root=str(root), source=str(source)))
-
-            self.assertEqual(report["status"], "ok", report)
-            rows = [
-                json.loads(line)
-                for line in (root / "ops/autonomy/failure_ledger.jsonl").read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["schema_version"], "autokeel.failure_ledger.v2")
-            self.assertEqual(rows[0]["failure_origin"], "external_provider")
-            self.assertTrue(rows[0]["failure_id"].startswith("failure_"))
-            self.assertEqual(
-                rows[0]["evidence_sha256"],
-                hashlib.sha256(evidence.read_bytes()).hexdigest(),
-            )
-            verified = verify_failure_ledger(root)
-            self.assertEqual(verified["status"], "ok", verified)
-            self.assertEqual(verified["scoped_external_blockers"], 1)
-
     def test_append_ledger_rejects_semantically_incomplete_v2_row(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -143,7 +94,7 @@ class AutoKeelOpsToolTests(unittest.TestCase):
                 json.dumps(
                     {
                         "slice": "S12",
-                        "failure_class": "provider_terms_conflict",
+                        "failure_class": "audit_failure",
                         "severity": "high",
                         "description": "Missing action and evidence.",
                     }
@@ -161,19 +112,19 @@ class AutoKeelOpsToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             copy_autonomy_fixture(root)
-            evidence_rel = "ops/autonomy/failures/S12-provider-terms-test.md"
+            evidence_rel = "ops/autonomy/failures/S12-audit-test.md"
             evidence = root / evidence_rel
             evidence.parent.mkdir(parents=True, exist_ok=True)
-            evidence.write_text("# S12 provider authority blocker\n", encoding="utf-8")
+            evidence.write_text("# S12 audit failure\n", encoding="utf-8")
             source = root / "candidate.json"
             source.write_text(
                 json.dumps(
                     {
                         "slice": "S12",
-                        "failure_class": "provider_terms_conflict",
+                        "failure_class": "audit_failure",
                         "severity": "high",
-                        "description": "Current provider authority is unavailable.",
-                        "action_taken": "Stopped before compiler or provider use.",
+                        "description": "Fixture audit failed.",
+                        "action_taken": "Stopped before execution.",
                         "evidence_path": evidence_rel,
                         "evidence_sha256": "0" * 64,
                     }
@@ -223,45 +174,6 @@ class AutoKeelOpsToolTests(unittest.TestCase):
             self.assertEqual(report["status"], "error")
             self.assertEqual(report["scoped_external_blockers"], 0)
             self.assertTrue(any("open high/critical" in error for error in report["errors"]))
-
-    def test_scoped_s12_authority_failure_does_not_become_global_s11_stop(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            evidence_rel = "ops/autonomy/failures/S12-provider-terms-test.md"
-            evidence = root / evidence_rel
-            evidence.parent.mkdir(parents=True)
-            evidence.write_text("# real tracked authority blocker\n", encoding="utf-8")
-            slices = [
-                {"id": "S11", "status": "pending", "depends_on": ["S01", "S02"]},
-                {
-                    "id": "S12",
-                    "status": "blocked_external",
-                    "depends_on": ["S11"],
-                    "failure_path": evidence_rel,
-                },
-            ]
-            row = {
-                "schema_version": "autokeel.failure_ledger.v2",
-                "failure_id": "failure_s12_authority_test",
-                "root_cause_id": "S12-OURA-PROVIDER-TERMS-AUTHORITY",
-                "failure_origin": "external_provider",
-                "slice": "S12",
-                "failure_class": "provider_terms_conflict",
-                "severity": "high",
-                "open": True,
-                "evidence_path": evidence_rel,
-                "evidence_sha256": hashlib.sha256(evidence.read_bytes()).hexdigest(),
-            }
-
-            scoped, global_blockers = partition_open_high_failures(root, [row], slices)
-
-            self.assertEqual(scoped, [row])
-            self.assertEqual(global_blockers, [])
-
-            forged = {**row, "evidence_sha256": "0" * 64}
-            scoped, global_blockers = partition_open_high_failures(root, [forged], slices)
-            self.assertEqual(scoped, [])
-            self.assertEqual(global_blockers, [forged])
 
     def test_close_failure_marks_matching_open_rows_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -42,16 +42,16 @@ def common_patches():
     )
 
 
-def test_final_gate_revalidates_s12_even_when_acceptance_commands_are_skipped() -> None:
+def test_final_gate_revalidates_s12_readiness_even_when_acceptance_commands_are_skipped() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         make_fixture(root)
         continuity = {
-            "status": "blocked_external",
-            "errors": ["S12 current authority: authority has expired"],
+            "status": "error",
+            "errors": ["S12 current readiness: S11 is incomplete"],
             "checks": {
-                "authority_status": "blocked_external",
-                "sync_proof_status": "not_run_authority_blocked",
+                "readiness_status": "error",
+                "sync_proof_status": "not_run_readiness_failed",
             },
         }
         patches = common_patches()
@@ -66,15 +66,15 @@ def test_final_gate_revalidates_s12_even_when_acceptance_commands_are_skipped() 
 
     current_gate.assert_called_once_with(root)
     assert report["status"] == "error"
-    assert "final provider continuity gate: S12 current authority: authority has expired" in report["errors"]
+    assert "final production-sync continuity gate: S12 current readiness: S11 is incomplete" in report["errors"]
     assert report["s12_continuity"] == {
-        "status": "blocked_external",
-        "authority_status": "blocked_external",
-        "sync_proof_status": "not_run_authority_blocked",
+        "status": "error",
+        "readiness_status": "error",
+        "sync_proof_status": "not_run_readiness_failed",
     }
 
 
-def test_final_gate_requires_current_activation_sync_proof_after_current_authority() -> None:
+def test_final_gate_requires_current_activation_sync_proof() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         make_fixture(root)
@@ -82,7 +82,7 @@ def test_final_gate_requires_current_activation_sync_proof_after_current_authori
             "status": "blocked_external",
             "errors": ["S12 current sync proof: production evidence is stale"],
             "checks": {
-                "authority_status": "ok",
+                "readiness_status": "ok",
                 "sync_proof_status": "blocked_external",
             },
         }
@@ -96,8 +96,8 @@ def test_final_gate_requires_current_activation_sync_proof_after_current_authori
         ):
             report = verifier.verify_v1(root, run_acceptance_commands=False)
 
-    assert "final provider continuity gate: S12 current sync proof: production evidence is stale" in report["errors"]
-    assert report["s12_continuity"]["authority_status"] == "ok"
+    assert "final production-sync continuity gate: S12 current sync proof: production evidence is stale" in report["errors"]
+    assert report["s12_continuity"]["readiness_status"] == "ok"
     assert report["s12_continuity"]["sync_proof_status"] == "blocked_external"
 
 

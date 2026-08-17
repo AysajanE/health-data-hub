@@ -25,14 +25,11 @@ this contract win.
 Before any billed S06 generation, S11 and S12 must both be complete, their
 recorded ship results must be durably integrated, and their distinct runtime
 activation acceptances must have passed. Typed S11 tripwire evidence must still
-evaluate green. S12 provider authority must still authorize the exact data
-acquisition, retention, Ridge training/evaluation, mood-correlation, and
-retrospective-explanation path; OAuth or token possession alone is never
-authority. The fresh S06 lane decision must be created after that committed
-state and bind every required S11/S12 product surface, both briefs/autoplans,
-both readiness verifiers, the provider-authority schema and tracked decision,
-and the landed-slice verification controls. Missing or stale inputs stop at
-zero spend.
+evaluate green. The fresh S06 lane decision must be created after that
+committed state and bind every required S11/S12 product surface, both
+briefs/autoplans, the mood-readiness verifier, the production-sync activation
+contract, and the landed-slice verification controls. Missing or stale inputs
+stop at zero spend.
 
 ## Frozen Implementation Boundary
 

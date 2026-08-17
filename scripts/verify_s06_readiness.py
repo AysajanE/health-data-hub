@@ -59,7 +59,6 @@ REQUIRED_RECOVERY_DEPENDENCY_SURFACES = (
     "scripts/sync_oura.py",
     "scripts/evidence/oura_sync_attestation.py",
     "scripts/verify_s12_sync.py",
-    "docs/evidence/s12-oura-provider-authority-decision.json",
 )
 
 REQUIRED_INPUT_DOCS = (
@@ -76,7 +75,6 @@ REQUIRED_CONTROL_SURFACES = (
     "docs/gstack/s12-oura-production-sync-autoplan.md",
     "ops/autonomy/autokeel.py",
     "ops/autonomy/policy.yaml",
-    "ops/autonomy/schemas/provider_authority_decision.schema.json",
     "ops/autonomy/schemas/slice_integration_receipt_v2.schema.json",
     "ops/autonomy/schemas/slices.schema.json",
     "ops/autonomy/schemas/tripwire_baseline_gate.schema.json",
@@ -189,9 +187,8 @@ def verify_s06_readiness(root: Path) -> dict[str, Any]:
         if status != "complete":
             errors.append(f"{dep} must be complete before S06 launch: {status}")
 
-    # A past S12 completion is not durable authority. Revalidate current
-    # issuer authority (including expiry/revocation/source presence) and only
-    # then the shipped read-only aggregate activation/sync proof.
+    # Revalidate the current technical S12 contract and its read-only
+    # aggregate activation/sync proof before any paid S06 work.
     s12_continuity = verify_s12_continuity(root)
     checks["s12_continuity"] = {
         "status": s12_continuity.get("status"),
@@ -199,9 +196,9 @@ def verify_s06_readiness(root: Path) -> dict[str, Any]:
     }
     if s12_continuity.get("status") != "ok":
         continuity_errors = s12_continuity.get("errors", []) or [
-            "S12 current authority and activation/sync proof are not ok"
+            "S12 current readiness and activation/sync proof are not ok"
         ]
-        errors.extend(f"S06 provider continuity gate: {error}" for error in continuity_errors)
+        errors.extend(f"S06 production-sync continuity gate: {error}" for error in continuity_errors)
 
     checks["s06_status"] = s06.get("status")
     if s06.get("status") not in {"pending", "replan_required", "waiting_for_playbook", "evidence_ready"}:

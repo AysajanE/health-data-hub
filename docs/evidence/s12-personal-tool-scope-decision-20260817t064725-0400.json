@@ -1,0 +1,21 @@
+{
+  "details": {
+    "decision": "Remove the repository-enforced outside approval stop from S12.",
+    "historical_record_policy": "Preserve the former stop as history and retire it with an append-only successor row.",
+    "product_scope": "Private, single-user personal health tool using the owner's own Oura data.",
+    "retained_controls": [
+      "private credential handling",
+      "Oura-only v1 source policy",
+      "wake-date and daylight-saving correctness",
+      "locked and checkpointed warehouse writes",
+      "aggregate-only production sync evidence"
+    ],
+    "s12_status": "pending"
+  },
+  "name": "s12-personal-tool-scope-decision",
+  "reason": "The owner explicitly confirmed that Health Data Hub is a private, single-user personal tool using the owner's own Oura data and removed the repository-enforced outside approval stop. S12 remains pending ordinary technical production-sync work behind S11.",
+  "recorded_at": "2026-08-17T06:47:25-04:00",
+  "recorded_by": "operator-for-explicit-owner-instruction",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S12"
+}

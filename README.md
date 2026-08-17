@@ -54,9 +54,8 @@ You can run the app without caring about AutoKeel. You can study AutoKeel withou
 
 The diagram is the target shape of the original Shortcut branch. The active
 tripwire recovery uses a tiny Streamlit mobile form and defers FastAPI to v1.1;
-8 Sleep remains inactive. S12 now owns the production Oura sync, but it is
-fail-closed before compiler or provider use because current provider terms do
-not yet authorize this API-to-model path.
+8 Sleep remains inactive. S12 owns the still-unbuilt production Oura sync for
+this private, single-user personal tool.
 
 - **Local-first.** DuckDB file on your laptop. No hosted backend. No SaaS.
 - **You own the model.** It learns your baseline from your own data. Nobody else's.
@@ -75,7 +74,7 @@ v1 currently has eleven required slices: the original S01–S09, the S11 mood-lo
 | ✅ | **S04** Feature engineering | Daily features your model trains on (`total_sleep_min`, `hrv_z`, `deep_sleep_pct`, `prior_day_feeling`) | recorded complete; continuation lineage requires canonical reconciliation |
 | ✅ | **S05** Model lifecycle + gates | The model — but only allowed to speak after it beats baselines | recorded complete |
 | ☐ | **S11** Tripwire recovery | Tiny authenticated Streamlit form, real mobile/LAN persistence, typed compliance evidence, and an independently verified collecting-state guard | next required slice |
-| ⛔ | **S12** Oura production sync | Authority-gated OAuth, wake-date/DST mapping, locked warehouse sync, chronological recompute, retention, and aggregate attestation | blocked on qualifying provider authority |
+| ☐ | **S12** Oura production sync | Private OAuth, wake-date/DST mapping, locked warehouse sync, chronological recompute, and aggregate attestation | pending behind S11 |
 | ☐ | **S06** Counterfactual generator | The "a sleep duration nearer your usual upper range was associated with…" line | pending |
 | ☐ | **S07** Read API + Streamlit UI | The explainer card you saw at the top, rendered against your data | pending |
 | ☐ | **S08** Backups + restore | launchd-scheduled encrypted snapshots to iCloud, verified restore path | pending |
@@ -86,7 +85,7 @@ v1 currently has eleven required slices: the original S01–S09, the S11 mood-lo
 - **Not medical advice.** v1 explains correlations in *your* past data. It does not predict your future, recommend interventions, or make any clinical claim.
 - **Not a hosted service.** Everything runs on your Mac, against your data, with your credentials on your filesystem.
 - **Not multi-tenant.** Single user, single device, single dataset by design.
-- **Not finished.** S01–S05 are recorded complete. Before S11 may spend on compilation, the control plane still needs a trusted outer activation validator and enforceable isolation from repo-local secrets; S11 then needs real mobile evidence. S12 cannot compile or call Oura until a qualifying separate written agreement or legally confirmed non-API route exists.
+- **Not finished.** S01–S05 are recorded complete. Before S11 may spend on compilation, the control plane still needs a trusted outer activation validator and enforceable isolation from repo-local secrets; S11 then needs real mobile evidence. S12 is ordinary unfinished product work and follows S11 in dependency order.
 
 If you wanted a coach in your pocket, that's not this. The Autopilot tier (action features, N-of-1 experiments, prospective recommendations) lives in the v2+ vision — explicitly out of scope here because at this data scale, prospective recommendations are exactly where false precision and nocebo loops do the most damage.
 
@@ -94,7 +93,7 @@ If you wanted a coach in your pocket, that's not this. The Autopilot tier (actio
 
 **If you just want to understand the system** — open [`docs/keel-walkthrough_v1.html`](docs/keel-walkthrough_v1.html) in a browser. It's the click-through tour of how Keel + AutoKeel build a real feature end to end.
 
-**If you want to run the product on your own data** — there is no honest Quickstart yet. S11 must first clear its non-paid activation/isolation control stop and then prove the real phone/LAN form. S12 needs qualifying provider authority before a production Oura sync can be built and activated. Watch the slice ledger:
+**If you want to run the product on your own data** — there is no honest Quickstart yet. S11 must first clear its non-paid activation/isolation control stop and then prove the real phone/LAN form. S12 must then build and prove the production Oura sync. Watch the slice ledger:
 
 ```bash
 python -m ops.autonomy.autokeel --status --failures
@@ -152,9 +151,9 @@ One iteration touches exactly one slice. AutoKeel reads `policy.yaml`, picks the
 - macOS, Python 3.12+
 - [Keel](https://github.com/AysajanE/keel) installed and on PATH
 - Codex CLI and Claude Code, installed and authenticated
-- An Oura account is not sufficient for the planned model path. S12 additionally
-  requires a qualifying separate Oura agreement or a legally confirmed non-API
-  acquisition route before any production pull is compiled or run.
+- An Oura account and credentials are needed only when the future production
+  sync is activated. Deterministic development and tests must use fake
+  transports and must never expose real credentials.
 
 ## Non-negotiables
 

@@ -884,9 +884,18 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
     def po_repaired_escalation_resume_attempts(self) -> int:
         return int(self.policy.get("loop", {}).get("po_repaired_escalation_resume_attempts", 1))
 
+    def effective_failure_rows(self) -> list[dict[str, Any]]:
+        from scripts.verify_failure_ledger import effective_failure_rows
+
+        rows = list(iter_jsonl(self.failure_path) or [])
+        effective, errors = effective_failure_rows(self.root, rows)
+        if errors:
+            raise AutoKeelError("invalid failure-ledger successor history: " + "; ".join(errors))
+        return effective
+
     def open_failures(self, slice_id: str, failure_class: str | None = None, run_id: str | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        for row in iter_jsonl(self.failure_path):
+        for row in self.effective_failure_rows():
             if row.get("slice") != slice_id:
                 continue
             if failure_class and row.get("failure_class") != failure_class:
@@ -1015,7 +1024,7 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
 
     def evidence_closed_failures(self, slice_id: str, failure_class: str | None = None, run_id: str | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        for row in iter_jsonl(self.failure_path):
+        for row in self.effective_failure_rows():
             if row.get("slice") != slice_id:
                 continue
             if failure_class and row.get("failure_class") != failure_class:
@@ -1030,7 +1039,7 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
 
     def high_or_critical_open_failures(self, slice_id: str | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        for row in iter_jsonl(self.failure_path):
+        for row in self.effective_failure_rows():
             if slice_id is not None and row.get("slice") != slice_id:
                 continue
             if not row.get("open", True):
@@ -1190,7 +1199,7 @@ Manual gates are forbidden for this autonomous run. Any former signoff must be r
         max_closed_total = int(loop.get("max_closed_repairs_total_per_slice", 5))
         max_closed_same_root = int(loop.get("max_closed_repairs_same_root_cause_per_slice", 2))
         max_retargets = int(loop.get("max_run_retargets_per_slice", 2))
-        all_rows = [row for row in iter_jsonl(self.failure_path) if row.get("slice") == slice_["id"]]
+        all_rows = [row for row in self.effective_failure_rows() if row.get("slice") == slice_["id"]]
         rows = [row for row in all_rows if self.failure_counts_against_budget(row)]
         if len(rows) > max_total:
             return CommandResult([], 37, "", f"failure budget exceeded for {slice_['id']}: {len(rows)} > {max_total}")
@@ -5861,7 +5870,7 @@ Additional validator requirements:
                         and row.get("slice") == "GLOBAL"
                         and row.get("failure_class") == "tripwire_triggered"
                         and row.get("root_cause_id") == root_cause_id
-                        for row in iter_jsonl(self.autonomy_dir / "failure_ledger.jsonl")
+                        for row in self.effective_failure_rows()
                     )
                     if open_same_root:
                         continue
@@ -6052,147 +6061,6 @@ Additional validator requirements:
         return errors
 
     @staticmethod
-    def s12_readiness_report_errors(result: CommandResult, payload: Any) -> list[str]:
-        """Validate the one trusted S12 readiness wire contract."""
-
-        if not isinstance(payload, dict):
-            return ["S12 readiness report must be a JSON object"]
-        errors: list[str] = []
-        required_top = {"status", "errors", "warnings", "checks"}
-        if set(payload) != required_top:
-            errors.append("S12 readiness report must contain exactly status, errors, warnings, and checks")
-        status = payload.get("status")
-        if status not in {"ok", "blocked_external", "error"}:
-            errors.append("S12 readiness status must be ok, blocked_external, or error")
-        report_errors = payload.get("errors")
-        warnings = payload.get("warnings")
-        checks = payload.get("checks")
-        if not isinstance(report_errors, list) or not all(isinstance(item, str) for item in report_errors):
-            errors.append("S12 readiness errors must be a list of strings")
-            report_errors = []
-        if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
-            errors.append("S12 readiness warnings must be a list of strings")
-        if not isinstance(checks, dict):
-            errors.append("S12 readiness checks must be an object")
-            checks = {}
-
-        exact_checks = {
-            "phase": "pre_compiler_or_pre_ship",
-            "paid_execution_performed": False,
-            "network_accessed": False,
-            "oauth_or_token_inspected": False,
-            "private_source_contents_read": False,
-            "private_source_contents_parsed": False,
-            "provider_policy": "oura_only_v1_not_reopened",
-        }
-        for key, expected in exact_checks.items():
-            if checks.get(key) != expected or type(checks.get(key)) is not type(expected):
-                errors.append(f"S12 readiness checks.{key} must be {expected!r}")
-        if not isinstance(checks.get("issuer_authenticated_authority_validator"), str):
-            errors.append("S12 readiness checks.issuer_authenticated_authority_validator must be a string")
-        committed_inputs = checks.get("committed_inputs")
-        if not isinstance(committed_inputs, dict) or not committed_inputs or not all(
-            isinstance(key, str) and isinstance(value, dict)
-            for key, value in committed_inputs.items()
-        ):
-            errors.append("S12 readiness checks.committed_inputs must be an object of objects")
-        control_count = checks.get("control_error_count")
-        authority_count = checks.get("authority_blocker_count")
-        if not isinstance(control_count, int) or isinstance(control_count, bool) or control_count < 0:
-            errors.append("S12 readiness checks.control_error_count must be a non-negative integer")
-        if not isinstance(authority_count, int) or isinstance(authority_count, bool) or authority_count < 0:
-            errors.append("S12 readiness checks.authority_blocker_count must be a non-negative integer")
-        if (
-            isinstance(control_count, int)
-            and not isinstance(control_count, bool)
-            and isinstance(authority_count, int)
-            and not isinstance(authority_count, bool)
-            and len(report_errors) != control_count + authority_count
-        ):
-            errors.append("S12 readiness blocker counts must equal the number of reported errors")
-
-        expected_exit = {"ok": 0, "blocked_external": 2, "error": 1}.get(status)
-        if expected_exit is not None and result.exit_code != expected_exit:
-            errors.append(f"S12 readiness status={status} requires raw exit {expected_exit}")
-        if status == "ok" and (report_errors or control_count != 0 or authority_count != 0):
-            errors.append("S12 readiness status=ok requires no errors or blockers")
-        if status == "blocked_external" and (
-            not report_errors or control_count != 0 or not isinstance(authority_count, int) or authority_count < 1
-        ):
-            errors.append("S12 readiness blocked_external requires external blockers and no control errors")
-        if status == "error" and (
-            not report_errors or not isinstance(control_count, int) or control_count < 1
-        ):
-            errors.append("S12 readiness error requires at least one control error")
-        return errors
-
-    def s12_normalized_blocked_external(
-        self,
-        result: CommandResult,
-        payload: Any,
-    ) -> bool:
-        """Accept only exit-67 results produced from a strict raw exit-2 report."""
-
-        if result.exit_code != self.ACTIVATION_BLOCKED_EXTERNAL_EXIT or not isinstance(payload, dict):
-            return False
-        raw_result = CommandResult(
-            result.argv,
-            2,
-            result.stdout,
-            result.stderr,
-        )
-        return (
-            payload.get("status") == "blocked_external"
-            and not self.s12_readiness_report_errors(raw_result, payload)
-        )
-
-    def s12_operation_readiness(self, slice_id: str, operation: str) -> tuple[CommandResult, dict[str, Any]]:
-        """Revalidate S12 authority immediately before a provider-capable boundary."""
-
-        if slice_id != "S12":
-            return CommandResult([], 0, "S12 readiness not required", ""), {}
-        result = self.run_slice_readiness("S12")
-        payload: dict[str, Any] = {}
-        try:
-            decoded = json.loads(result.stdout)
-        except (json.JSONDecodeError, TypeError):
-            decoded = None
-        if isinstance(decoded, dict):
-            payload = decoded
-        validation_errors = self.s12_readiness_report_errors(result, payload)
-        status = str(payload.get("status") or "")
-        if validation_errors:
-            result = CommandResult(
-                result.argv,
-                self.ACTIVATION_CONTROL_ERROR_EXIT,
-                result.stdout,
-                "; ".join(validation_errors),
-            )
-        elif status == "blocked_external":
-            result = CommandResult(
-                result.argv,
-                self.ACTIVATION_BLOCKED_EXTERNAL_EXIT,
-                result.stdout,
-                result.stderr,
-            )
-            if self.find_slice("S12") is not None:
-                self.mark_slice_status(
-                    "S12",
-                    "blocked_external",
-                    reason="provider authority is not established",
-                )
-        self.log_event(
-            "s12_operation_readiness_passed" if result.ok else "s12_operation_readiness_blocked",
-            {
-                "operation": operation,
-                "exit_code": result.exit_code,
-                "reported_status": status or None,
-            },
-            slice_id="S12",
-        )
-        return result, payload
-
-    @staticmethod
     def _git_identity(cwd: Path) -> tuple[str, str, str]:
         env = CommandRunner.safe_environment()
 
@@ -6349,7 +6217,6 @@ Additional validator requirements:
         run_id: str,
         ship_commit: str,
         verifier_sha256: str,
-        authority_sha256: str | None,
     ) -> list[str]:
         required = {
             "schema_version",
@@ -6361,7 +6228,6 @@ Additional validator requirements:
             "evidence_path",
             "evidence_sha256",
             "observed_at",
-            "authority_sha256",
         }
         errors: list[str] = []
         if set(payload) != required:
@@ -6405,16 +6271,6 @@ Additional validator requirements:
             not isinstance(evidence_hash, str) or hash_pattern.fullmatch(evidence_hash) is None
         ):
             errors.append("blocked activation evidence_sha256 must be null or lowercase SHA-256")
-        reported_authority = payload.get("authority_sha256")
-        if slice_id == "S12" and status == "ok":
-            if authority_sha256 is None or reported_authority != authority_sha256:
-                errors.append("successful S12 activation authority hash does not match current readiness")
-        elif slice_id == "S11" and reported_authority is not None:
-            errors.append("S11 activation must report authority_sha256 as null")
-        elif reported_authority is not None and (
-            not isinstance(reported_authority, str) or hash_pattern.fullmatch(reported_authority) is None
-        ):
-            errors.append("authority_sha256 must be null or lowercase SHA-256")
         return errors
 
     def run_activation_acceptance(self, slice_id: str, cwd: Path, *, run_id: str = "") -> CommandResult:
@@ -6440,9 +6296,6 @@ Additional validator requirements:
         if not run_id:
             return CommandResult(argv, self.ACTIVATION_CONTROL_ERROR_EXIT, "", "activation run_id binding is required")
 
-        readiness, _readiness_payload = self.s12_operation_readiness(slice_id, "activation")
-        if not readiness.ok:
-            return readiness
         control_errors = [
             "generated activation verifier execution is disabled pending a certified sandbox and trusted receipt validator"
         ]
@@ -6764,10 +6617,6 @@ Use local files and commands only. If evidence is missing, write a failing revie
         if not isolation.ok:
             return isolation
 
-        readiness, _payload = self.s12_operation_readiness(slice_["id"], "resume_with_evidence")
-        if not readiness.ok:
-            return readiness
-
         evidence_dir = self.root / str(evidence_rel)
         if not evidence_dir.exists():
             return CommandResult([], 52, "", f"cannot resume evidence: missing directory {evidence_dir}")
@@ -6833,10 +6682,6 @@ Use local files and commands only. If evidence is missing, write a failing revie
         isolation = self.generated_tool_file_read_guard(slice_["id"], "resume_active_po")
         if not isolation.ok:
             return isolation
-
-        readiness, _payload = self.s12_operation_readiness(slice_["id"], "resume_active_po")
-        if not readiness.ok:
-            return readiness
 
         if not skip_checkpoint:
             checkpoint = self.checkpoint_allowed_pre_po_changes(slice_["id"])
@@ -6930,9 +6775,6 @@ Use local files and commands only. If evidence is missing, write a failing revie
         isolation = self.generated_tool_file_read_guard(slice_["id"], "recover_passed_run")
         if not isolation.ok:
             return isolation
-        readiness, _payload = self.s12_operation_readiness(slice_["id"], "recover_passed_run")
-        if not readiness.ok:
-            return readiness
         if self.open_failures(slice_["id"], run_id=run_id):
             self.log_event(
                 "po_terminal_recovery_blocked_open_failure",
@@ -6969,10 +6811,6 @@ Use local files and commands only. If evidence is missing, write a failing revie
 
         isolation = self.generated_tool_file_read_guard(slice_["id"], "restore_escalated_run")
         if not isolation.ok:
-            return False
-
-        readiness, _payload = self.s12_operation_readiness(slice_["id"], "restore_escalated_run")
-        if not readiness.ok:
             return False
 
         state = self.load_state()
@@ -7018,9 +6856,6 @@ Use local files and commands only. If evidence is missing, write a failing revie
         isolation = self.generated_tool_file_read_guard(slice_["id"], "start_or_resume_po")
         if not isolation.ok:
             return isolation
-        readiness, _payload = self.s12_operation_readiness(slice_["id"], "start_or_resume_po")
-        if not readiness.ok:
-            return readiness
         state = self.load_state()
         active = state.get("active_run") or {}
         playbook = self.root / slice_["playbook"]
@@ -7345,14 +7180,6 @@ Use local files and commands only. If evidence is missing, write a failing revie
                     decoded_shipped = None
                 if isinstance(decoded_shipped, dict):
                     shipped_payload = decoded_shipped
-                if slice_id == "S12" and self.s12_normalized_blocked_external(shipped, shipped_payload):
-                    self.mark_slice_status(
-                        slice_id,
-                        "blocked_external",
-                        run_id=run_id,
-                        reason="provider authority is not established at ship boundary",
-                    )
-                    return "blocked_external"
                 if shipped.exit_code == self.SECRET_ISOLATION_CONTROL_ERROR_EXIT:
                     return "secret_isolation_control_error"
                 failure = self.record_failure(
@@ -7403,13 +7230,6 @@ Use local files and commands only. If evidence is missing, write a failing revie
                 if (
                     failed_phase == "activation_acceptance"
                     and shipped_validation.exit_code == self.ACTIVATION_BLOCKED_EXTERNAL_EXIT
-                    and (
-                        slice_id != "S12"
-                        or self.s12_normalized_blocked_external(
-                            shipped_validation,
-                            self.parse_json_stdout(shipped_validation, {}),
-                        )
-                    )
                 ):
                     failure = self.record_failure(
                         slice_id,
@@ -7648,7 +7468,6 @@ Use local files and commands only. If evidence is missing, write a failing revie
     def failure_origin_for_class(self, failure_class: str) -> str:
         mapping = {
             "provider_auth_failure": "external_provider",
-            "provider_terms_conflict": "external_provider",
             "blocked_external_missing_evidence": "external_provider",
             "audit_failure": "po_kernel",
             "manual_gate_leak": "po_kernel",
@@ -7729,9 +7548,6 @@ Use local files and commands only. If evidence is missing, write a failing revie
         isolation = self.generated_tool_file_read_guard(slice_id, "ship")
         if not isolation.ok:
             return isolation
-        readiness, _payload = self.s12_operation_readiness(slice_id, "ship")
-        if not readiness.ok:
-            return readiness
         lane_guard = self.assert_slice_execution_lane(slice_, self.root / str(slice_.get("playbook", "")))
         if not lane_guard.ok:
             self.log_event(
@@ -7872,46 +7688,7 @@ Use local files and commands only. If evidence is missing, write a failing revie
 
     def run_po_and_handle_status(self, slice_: dict[str, Any], run: CommandResult) -> int:
         if not run.ok:
-            payload: dict[str, Any] = {}
-            try:
-                decoded = json.loads(run.stdout)
-            except (json.JSONDecodeError, TypeError):
-                decoded = None
-            if isinstance(decoded, dict):
-                payload = decoded
             if run.exit_code == self.SECRET_ISOLATION_CONTROL_ERROR_EXIT:
-                return run.exit_code
-            if slice_["id"] == "S12" and (
-                run.exit_code == self.ACTIVATION_CONTROL_ERROR_EXIT
-                or (
-                    run.exit_code == self.ACTIVATION_BLOCKED_EXTERNAL_EXIT
-                    and not self.s12_normalized_blocked_external(run, payload)
-                )
-            ):
-                failure = self.record_failure(
-                    "S12",
-                    "control_error",
-                    "high",
-                    "S12 readiness did not satisfy its strict trusted report contract.",
-                    "Blocked compiler and PO; malformed or mistyped readiness output is not external evidence.",
-                    None,
-                )
-                self.mark_slice_status(
-                    "S12",
-                    "blocked_compile_inputs",
-                    failure_path=str(failure.relative_to(self.root)),
-                    reason="invalid S12 readiness report",
-                )
-                return run.exit_code
-            if (
-                slice_["id"] == "S12"
-                and self.s12_normalized_blocked_external(run, payload)
-            ):
-                self.mark_slice_status(
-                    "S12",
-                    "blocked_external",
-                    reason="provider authority is not established",
-                )
                 return run.exit_code
             self.record_failure(
                 slice_["id"],
@@ -8122,67 +7899,10 @@ Use local files and commands only. If evidence is missing, write a failing revie
             return self.run_po_and_handle_status(slice_, run)
 
         if self.should_run_slice_readiness(slice_):
-            readiness = (
-                self.s12_operation_readiness("S12", "initial_start")[0]
-                if slice_["id"] == "S12"
-                else self.run_slice_readiness(slice_["id"])
-            )
+            readiness = self.run_slice_readiness(slice_["id"])
             if not readiness.ok:
-                readiness_payload: dict[str, Any] = {}
-                try:
-                    decoded = json.loads(readiness.stdout)
-                except json.JSONDecodeError:
-                    decoded = {}
-                if isinstance(decoded, dict):
-                    readiness_payload = decoded
                 if readiness.exit_code == self.SECRET_ISOLATION_CONTROL_ERROR_EXIT:
                     return readiness.exit_code
-                if slice_["id"] == "S12" and readiness.exit_code == self.ACTIVATION_CONTROL_ERROR_EXIT:
-                    failure = self.record_failure(
-                        "S12",
-                        "control_error",
-                        "high",
-                        "S12 readiness did not satisfy its strict trusted report contract.",
-                        "Stopped before compiler/PO and classified the malformed control result separately from external evidence.",
-                        None,
-                    )
-                    self.mark_slice_status(
-                        "S12",
-                        "blocked_compile_inputs",
-                        failure_path=str(failure.relative_to(self.root)),
-                        reason="invalid S12 readiness report",
-                    )
-                    return readiness.exit_code
-                if slice_["id"] == "S12" and self.s12_normalized_blocked_external(readiness, readiness_payload):
-                    root_cause_id = "S12-OURA-PROVIDER-TERMS-AUTHORITY"
-                    existing = next(
-                        (
-                            row
-                            for row in iter_jsonl(self.autonomy_dir / "failure_ledger.jsonl")
-                            if row.get("open", True)
-                            and row.get("slice") == "S12"
-                            and row.get("root_cause_id") == root_cause_id
-                        ),
-                        None,
-                    )
-                    evidence = self.root / "ops/autonomy/failures/S12-provider_terms_conflict-20260816T160521-0400.md"
-                    if existing is None:
-                        self.record_failure(
-                            "S12",
-                            "provider_terms_conflict",
-                            "high",
-                            "Current provider terms do not authorize the planned Oura API-to-model path.",
-                            "Stopped before compiler, OAuth, token, network, or provider-data access; require an exact separate authority package.",
-                            evidence if evidence.is_file() else None,
-                            root_cause_id=root_cause_id,
-                        )
-                    self.mark_slice_status(
-                        "S12",
-                        "blocked_external",
-                        failure_path=str(evidence.relative_to(self.root)) if evidence.is_file() else None,
-                        reason="provider authority is not established",
-                    )
-                    return readiness.exit_code or 2
                 self.record_failure(
                     slice_["id"],
                     "audit_failure",
@@ -8507,7 +8227,7 @@ def _main_dispatch(args: argparse.Namespace, root: Path) -> int:
     if args.status:
         payload = {"state": autokeel.load_state(), "slices": autokeel.load_slices()}
         if args.failures:
-            payload["failures"] = list(iter_jsonl(autokeel.failure_path) or [])
+            payload["failures"] = autokeel.effective_failure_rows()
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     if args.once:

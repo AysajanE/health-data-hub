@@ -8,7 +8,13 @@ from collections import Counter
 import html
 import json
 from pathlib import Path
+import sys
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.verify_failure_ledger import effective_failure_rows
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -44,7 +50,8 @@ def next_actionable_slice(slices: list[dict[str, Any]]) -> dict[str, Any] | None
 def render(root: Path) -> str:
     state = read_json(root / "ops/autonomy/autonomy_state.json", {})
     slices = read_json(root / "ops/autonomy/slices.json", [])
-    failures = read_jsonl(root / "ops/autonomy/failure_ledger.jsonl")
+    failure_history = read_jsonl(root / "ops/autonomy/failure_ledger.jsonl")
+    failures, successor_errors = effective_failure_rows(root, failure_history)
     events = read_jsonl(root / "ops/autonomy/events.jsonl")[-25:]
     counts = Counter(str(item.get("status", "unknown")) for item in slices)
     count_rows = "\n".join(f"<li>{html.escape(status)}: {count}</li>" for status, count in sorted(counts.items()))
@@ -95,6 +102,8 @@ code, pre {{ background: #f6f8fa; padding: 2px 4px; }}
 <table><tr><th>ID</th><th>Name</th><th>Status</th></tr>{rows}</table>
 <h2>Open Failures</h2>
 <ul>{open_failures or '<li>none</li>'}</ul>
+<h2>Failure History Errors</h2>
+<ul>{''.join(f'<li>{html.escape(error)}</li>' for error in successor_errors) or '<li>none</li>'}</ul>
 <h2>Tripwire Decisions</h2>
 <ul>{tripwire_rows or '<li>none</li>'}</ul>
 <h2>Recent Events</h2>

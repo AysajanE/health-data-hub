@@ -14,12 +14,11 @@ The frozen implementation contract is `docs/gstack/s06-counterfactual-generator-
 
 S06 must not enter its usage-billed SWR lane until S11 and S12 are complete and
 durably integrated. S11 completion includes the separate real mobile-form
-activation acceptance and green typed tripwires. S12 completion includes a
-currently valid provider-authority decision, hermetic production-sync code
-acceptance, and separate read-only runtime sync acceptance. A functioning Oura
-token or historical smoke result is not authority. The S06 lane decision must
-be materialized only after those completed dependency trees are committed, and
-must hash-bind their product/runtime surfaces plus both readiness contracts.
+activation acceptance and green typed tripwires. S12 completion includes
+hermetic production-sync code acceptance and separate read-only runtime sync
+acceptance. The S06 lane decision must be materialized only after those
+completed dependency trees are committed and must hash-bind their product and
+runtime surfaces.
 
 ## Provider Policy Requirements
 

@@ -1,0 +1,23 @@
+{
+  "details": {
+    "current_effect": "S12 is pending ordinary technical production-sync work behind S11. No outside approval stop remains active.",
+    "current_policy_sources": [
+      "ops/autonomy/slices.json",
+      "docs/briefs/s12-oura-production-sync.autonomous-brief.md",
+      "docs/gstack/s12-oura-production-sync-autoplan.md",
+      "scripts/verify_s12_readiness.py"
+    ],
+    "decision": "Treat former outside-stop statements in frozen integration reviews as superseded historical policy, not current execution rules.",
+    "historical_artifacts_preserved": [
+      "docs/reviews/s03-autonomous-integration-reconciliation-review.md",
+      "docs/reviews/s05-autonomous-integration-reconciliation-review.md"
+    ],
+    "preservation_reason": "Their exact bytes are bound into historical integration receipts."
+  },
+  "name": "s12-historical-review-policy-supersession",
+  "reason": "The August 17 owner scope decision supersedes the former outside-stop statements in the frozen S03 and S05 integration reviews as current policy. Those receipt-bound files remain unchanged only as historical evidence and no longer block S12 or downstream work.",
+  "recorded_at": "2026-08-17T08:04:12-04:00",
+  "recorded_by": "operator-for-explicit-owner-instruction",
+  "schema_version": "autokeel.manual_intervention.v1",
+  "slice": "S12"
+}

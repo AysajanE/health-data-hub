@@ -18,7 +18,7 @@ from ops.autonomy.autokeel import load_policy
 from scripts.slice_integration import verify_slice_integration
 from scripts.swr_lane_policy import validate_swr_lane_requirements
 from scripts.verify_event_log import verify_event_log
-from scripts.verify_failure_ledger import is_scoped_external_blocker
+from scripts.verify_failure_ledger import effective_failure_rows
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -88,16 +88,14 @@ def partition_open_high_failures(
     failures: list[dict[str, Any]],
     slices: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    del slices  # dependency status never exempts an open high-severity failure
+    effective, _successor_errors = effective_failure_rows(root, failures)
     open_high = [
         row
-        for row in failures
+        for row in effective
         if row.get("open", True) and row.get("severity") in {"high", "critical"}
     ]
-    scoped_external = [
-        row for row in open_high if is_scoped_external_blocker(root, row, slices=slices)
-    ]
-    global_blockers = [row for row in open_high if row not in scoped_external]
-    return scoped_external, global_blockers
+    return [], open_high
 
 
 def next_actionable_slice_id(slices: list[Any], state: dict[str, Any]) -> str | None:
@@ -283,17 +281,14 @@ def verify_autokeel_invariants(root: Path) -> dict[str, Any]:
                     errors.append(f"{slice_id}: single-stage review repair missing source_review_bundle")
 
     failures = list(iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl") or [])
+    _effective_failures, successor_errors = effective_failure_rows(root, failures)
+    errors.extend(f"failure ledger successor: {error}" for error in successor_errors)
     scoped_external, global_blockers = partition_open_high_failures(root, failures, slices)
     checks["open_high_failures"] = len(scoped_external) + len(global_blockers)
     checks["scoped_external_blockers"] = len(scoped_external)
     checks["global_high_failure_blockers"] = len(global_blockers)
     if global_blockers:
         errors.append(f"open high/critical failures exist: {len(global_blockers)}")
-    if scoped_external:
-        warnings.append(
-            "S12 provider authority remains blocked_external; S12 and dependent slices remain unavailable"
-        )
-
     if repo:
         code, tracked_lock, _ = git(root, "ls-files", "ops/autonomy/.autokeel.lock")
         if code == 0 and tracked_lock:

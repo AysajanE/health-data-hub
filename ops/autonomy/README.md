@@ -72,6 +72,16 @@ broaden an older intervention. Unrelated future slice-status changes do not
 invalidate historical review ratification. Ship-time reviews still require
 their original detached ship-checkout validation event.
 
+Frozen integration reviews prove what was reviewed at their recorded commit;
+they are historical evidence, not a source of current product policy. Current
+behavior comes from the live slice row, brief, autoplan, and executable
+readiness checks. The August 17, 2026 owner scope decision recorded in
+`docs/evidence/s12-personal-tool-scope-decision-20260817t064725-0400.json`
+supersedes the former outside-stop statements in the frozen S03 and S05
+integration reviews. Those files remain byte-identical only so the historical
+receipts stay truthful; their old policy prose cannot block S12 or downstream
+work.
+
 The event log retains historical rows exactly. Known legacy duplicate ids are
 accepted only when `scripts/verify_event_log.py` matches every raw row to the
 hash-bound reconciliation receipt; new duplicate or non-monotonic ids fail.
@@ -363,7 +373,7 @@ not yet implemented, so a generated verifier cannot self-attest completion
 with a dummy hash. The future receipt contract requires an exact aggregate
 `evidence_path`, independently recomputed SHA-256, and offset-aware
 `observed_at`, bound to the slice, run, detached ship commit, verifier hash,
-and (for S12) current authority hash.
+and no extra outside-approval field.
 
 The macOS sandbox profile is a disabled, uncertified draft, not an enabled
 execution path. It allows exact executable paths only; file-content reads only
@@ -382,18 +392,13 @@ generic `{"status":"ok"}` output cannot complete a slice. Activation control
 errors remain `blocked_compile_inputs`; they do not make S11 actionable for
 another paid compile.
 
-S12 uses the same two-boundary lifecycle for a different purpose. Its offline
-readiness gate runs before any compiler, OAuth, token, network, or provider
-operation and returns `blocked_external` until an exact authority package is
-present. Deterministic ship acceptance remains hermetic. A later read-only
+S12 uses the same two-boundary lifecycle for production Oura sync. Its offline
+readiness check validates committed technical inputs, dependency order, and
+the Oura-only contract without reading credentials, private evidence, or the
+network. Deterministic ship acceptance remains hermetic. A later read-only
 `activation_acceptance` verifies real aggregate sync evidence against the
-canonical runtime root; missing evidence blocks completion without weakening
-the authority gate or committing provider data. S12 readiness is re-run at
-every start/resume, terminal recovery, ship, and activation boundary so a stale
-run or revoked authority cannot bypass the current gate. The trusted readiness
-script's schema-valid `blocked_external` exit 2 is normalized to the dedicated
-AutoKeel blocked-external exit 67 at each of those boundaries; it is not
-recorded as a PO `test_failure` or activation `control_error`.
+canonical runtime root. Missing evidence blocks completion without committing
+provider data or fabricating a successful sync.
 Every boundary uses the same strict report validator: exact top-level fields,
 typed required safety checks and blocker counts, and raw status/exit binding.
 An incomplete `{status}` object or a `blocked_external` report with any raw

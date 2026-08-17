@@ -26,6 +26,7 @@ from scripts.acceptance_policy import command_allowed
 from scripts.slice_integration import verify_slice_integration
 from scripts.swr_lane_policy import validate_swr_lane_requirements
 from scripts.validate_playbook_autonomous import validate_playbook
+from scripts.verify_failure_ledger import effective_failure_rows
 from scripts.verify_s12_readiness import verify_s12_continuity
 
 
@@ -169,19 +170,19 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
     if incomplete:
         errors.append(f"required slices incomplete: {', '.join(incomplete)}")
 
-    # Final completion requires current provider authority and current,
-    # read-only aggregate activation evidence. Historical S12 completion is
-    # insufficient after expiry, revocation, source removal, or stale/missing
-    # sync proof. This gate is independent of --skip-acceptance.
+    # Final completion requires the current technical S12 contract and current
+    # read-only aggregate sync evidence. Historical completion alone is not a
+    # substitute for a current production proof. This runs even when ordinary
+    # acceptance commands are skipped.
     s12 = next((item for item in required if item.get("id") == "S12"), None)
     s12_continuity: dict[str, Any] | None = None
     if s12 is not None:
         s12_continuity = verify_s12_continuity(root)
         if s12_continuity.get("status") != "ok":
             continuity_errors = s12_continuity.get("errors", []) or [
-                "S12 current authority and activation/sync proof are not ok"
+                "S12 current readiness and activation/sync proof are not ok"
             ]
-            errors.extend(f"final provider continuity gate: {error}" for error in continuity_errors)
+            errors.extend(f"final production-sync continuity gate: {error}" for error in continuity_errors)
 
     for item in required:
         slice_id = item.get("id", "<unknown>")
@@ -248,7 +249,9 @@ def verify_v1(root: Path, run_acceptance_commands: bool = True, timeout: int = 9
                 if result["exit_code"] != 0:
                     errors.append(f"{slice_id}: acceptance command failed ({result['exit_code']}): {command}")
 
-    failures = list(iter_jsonl(root / "ops" / "autonomy" / "failure_ledger.jsonl") or [])
+    raw_failures = list(iter_jsonl(root / "ops" / "autonomy" / "failure_ledger.jsonl") or [])
+    failures, successor_errors = effective_failure_rows(root, raw_failures)
+    errors.extend(f"failure ledger successor: {error}" for error in successor_errors)
     open_critical = [
         item
         for item in failures

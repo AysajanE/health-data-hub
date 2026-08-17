@@ -73,7 +73,7 @@ def _strict_json_object(path: Path) -> dict[str, Any]:
 
 
 def _intervention_failure_origin(failure_class: str) -> str:
-    if failure_class in {"provider_auth_failure", "provider_terms_conflict", "blocked_external_missing_evidence"}:
+    if failure_class in {"provider_auth_failure", "blocked_external_missing_evidence"}:
         return "external_provider"
     if failure_class in {"compile_failure", "review_artifact_invalid", "unsafe_write_root"}:
         return "validator"

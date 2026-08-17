@@ -143,7 +143,7 @@ def mocked_readiness_dependencies(
                 return_value={
                     "status": "ok",
                     "errors": [],
-                    "checks": {"authority_status": "ok", "sync_proof_status": "ok"},
+                    "checks": {"readiness_status": "ok", "sync_proof_status": "ok"},
                 },
             )
         )
@@ -167,7 +167,7 @@ class VerifyS06ReadinessTests(unittest.TestCase):
         self.assertEqual(report["checks"]["dependency_closure"], ["S11", "S12"])
         self.assertEqual(report["checks"]["dependency_integration"]["S11"]["status"], "ok")
         self.assertEqual(report["checks"]["dependency_integration"]["S12"]["status"], "ok")
-        self.assertEqual(report["checks"]["s12_continuity"]["authority_status"], "ok")
+        self.assertEqual(report["checks"]["s12_continuity"]["readiness_status"], "ok")
         self.assertEqual(report["checks"]["s12_continuity"]["sync_proof_status"], "ok")
         self.assertEqual(report["checks"]["state_digest_mismatches"], [])
         self.assertEqual(report["checks"]["lane_decision_policy"], {"status": "ok", "errors": []})
@@ -247,7 +247,7 @@ class VerifyS06ReadinessTests(unittest.TestCase):
         self.assertEqual(report["checks"]["s11_status"], "pending")
         self.assertNotIn("S11", report["checks"]["dependency_integration"])
 
-    def test_current_s12_authority_or_sync_failure_blocks_s06(self) -> None:
+    def test_current_s12_sync_failure_blocks_s06(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             make_fixture(root)
@@ -259,10 +259,10 @@ class VerifyS06ReadinessTests(unittest.TestCase):
                     "verify_s12_continuity",
                     return_value={
                         "status": "blocked_external",
-                        "errors": ["S12 current authority: authority has expired"],
+                        "errors": ["S12 current sync proof: production evidence is stale"],
                         "checks": {
-                            "authority_status": "blocked_external",
-                            "sync_proof_status": "not_run_authority_blocked",
+                            "readiness_status": "ok",
+                            "sync_proof_status": "blocked_external",
                         },
                     },
                 ),
@@ -271,13 +271,13 @@ class VerifyS06ReadinessTests(unittest.TestCase):
 
         self.assertEqual(report["status"], "error")
         self.assertIn(
-            "S06 provider continuity gate: S12 current authority: authority has expired",
+            "S06 production-sync continuity gate: S12 current sync proof: production evidence is stale",
             report["errors"],
         )
-        self.assertEqual(report["checks"]["s12_continuity"]["authority_status"], "blocked_external")
+        self.assertEqual(report["checks"]["s12_continuity"]["readiness_status"], "ok")
         self.assertEqual(
             report["checks"]["s12_continuity"]["sync_proof_status"],
-            "not_run_authority_blocked",
+            "blocked_external",
         )
 
     def test_fired_typed_tripwire_blocks(self) -> None:

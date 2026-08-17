@@ -75,57 +75,114 @@ def iter_jsonl(path: Path):
             yield json.loads(line)
 
 
-def _load_slices(root: Path) -> list[dict[str, Any]]:
-    path = root / "ops/autonomy/slices.json"
-    if not path.exists():
-        return []
-    payload = json.loads(path.read_text(encoding="utf-8") or "[]")
-    return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
-
-
-def is_scoped_external_blocker(
+def effective_failure_rows(
     root: Path,
-    row: dict[str, Any],
-    *,
-    slices: list[dict[str, Any]] | None = None,
-) -> bool:
-    """Return true only for the narrow S12 provider-authority stop.
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Resolve append-only closed successors without rewriting history.
 
-    This failure must block S12 and its dependants without deadlocking the
-    independent predecessor recovery slice S11.  It is deliberately not a
-    general exemption for external or high-severity failures.
+    A later closed v2 row may retire one earlier row through ``supersedes``.
+    Invalid or ambiguous links fail closed: the earlier row remains effective
+    and the returned errors explain why it was not retired.
     """
 
-    if not (
-        row.get("open") is True
-        and row.get("severity") == "high"
-        and row.get("slice") == "S12"
-        and row.get("failure_class") == "provider_terms_conflict"
-        and row.get("failure_origin") == "external_provider"
-        and row.get("schema_version") == "autokeel.failure_ledger.v2"
-        and isinstance(row.get("failure_id"), str)
-        and bool(row.get("failure_id"))
-        and isinstance(row.get("root_cause_id"), str)
-        and bool(row.get("root_cause_id"))
-    ):
-        return False
-    slice_rows = slices if slices is not None else _load_slices(root)
-    matches = [item for item in slice_rows if item.get("id") == "S12"]
-    if len(matches) != 1 or matches[0].get("status") != "blocked_external":
-        return False
-    evidence = row.get("evidence_path")
-    failure_path = matches[0].get("failure_path")
-    if not isinstance(evidence, str) or not evidence or evidence != failure_path:
-        return False
-    candidate = _safe_regular_evidence_path(root, evidence)
-    evidence_sha = row.get("evidence_sha256")
-    return (
-        candidate is not None
-        and isinstance(evidence_sha, str)
-        and len(evidence_sha) == 64
-        and evidence_sha == evidence_sha.lower()
-        and _sha256_file(candidate) == evidence_sha
-    )
+    errors: list[str] = []
+    by_id: dict[str, tuple[int, dict[str, Any]]] = {}
+    duplicate_ids: set[str] = set()
+    for index, row in enumerate(rows):
+        failure_id = row.get("failure_id")
+        if not isinstance(failure_id, str) or not failure_id:
+            continue
+        if failure_id in by_id:
+            duplicate_ids.add(failure_id)
+        else:
+            by_id[failure_id] = (index, row)
+
+    retired: set[str] = set()
+    claimed: dict[str, str] = {}
+    ambiguous_targets: set[str] = set()
+    for index, successor in enumerate(rows):
+        successor_id = successor.get("failure_id")
+        targets = successor.get("supersedes")
+        if not isinstance(targets, list) or not targets:
+            continue
+        if not isinstance(successor_id, str) or not successor_id:
+            errors.append(f"row {index + 1} successor requires a non-empty failure_id")
+            continue
+        if successor_id in duplicate_ids:
+            errors.append(f"row {index + 1} successor has duplicate failure_id {successor_id}")
+            continue
+        if len(targets) != 1:
+            errors.append(f"row {index + 1} successor {successor_id} must supersede exactly one failure")
+            continue
+        successor_errors = validate_v2_failure_row(
+            root,
+            successor,
+            row_label=f"row {index + 1} successor",
+            require_evidence=True,
+            strict_new=True,
+        )
+        if successor_errors:
+            errors.extend(successor_errors)
+            continue
+        for target_id in targets:
+            label = f"row {index + 1} successor {successor_id}"
+            if not isinstance(target_id, str) or not target_id:
+                errors.append(f"{label} has invalid supersedes entry")
+                continue
+            if target_id in duplicate_ids:
+                errors.append(f"{label} targets duplicate failure_id {target_id}")
+                continue
+            target_entry = by_id.get(target_id)
+            if target_entry is None:
+                errors.append(f"{label} targets missing failure_id {target_id}")
+                continue
+            target_index, target = target_entry
+            if target_index >= index:
+                errors.append(f"{label} must follow the failure it supersedes")
+                continue
+            if target_id in ambiguous_targets:
+                errors.append(f"failure_id {target_id} has multiple successors")
+                continue
+            if target_id in claimed:
+                errors.append(f"failure_id {target_id} has multiple successors")
+                ambiguous_targets.add(target_id)
+                retired.discard(target_id)
+                continue
+            target_errors = validate_v2_failure_row(
+                root,
+                target,
+                row_label=f"superseded failure {target_id}",
+                require_evidence=True,
+                strict_new=True,
+            )
+            if target_errors:
+                errors.extend(target_errors)
+                continue
+            if successor.get("open") is not False:
+                errors.append(f"{label} must be closed")
+                continue
+            for key in ("slice", "failure_class", "root_cause_id"):
+                if successor.get(key) != target.get(key):
+                    errors.append(f"{label} {key} does not match {target_id}")
+            closure_evidence = successor.get("closure_evidence")
+            closure_note = successor.get("closure_note")
+            evidence_path = _safe_regular_evidence_path(root, closure_evidence)
+            if evidence_path is None or not isinstance(closure_note, str) or not closure_note.strip():
+                errors.append(f"{label} requires existing closure_evidence and non-empty closure_note")
+            if closure_evidence != successor.get("evidence_path"):
+                errors.append(f"{label} closure_evidence must equal its hash-bound evidence_path")
+            if errors and any(error.startswith(label) for error in errors):
+                continue
+            claimed[target_id] = successor_id
+            retired.add(target_id)
+
+    effective = [
+        row
+        for row in rows
+        if not (isinstance(row.get("failure_id"), str) and row.get("failure_id") in retired)
+    ]
+    return effective, errors
 
 
 def validate_v2_failure_row(
@@ -181,26 +238,19 @@ def validate_v2_failure_row(
 def verify_failure_ledger(root: Path, slice_id: str | None = None) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
-    rows = list(iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl") or [])
+    all_rows = list(iter_jsonl(root / "ops/autonomy/failure_ledger.jsonl") or [])
+    effective_rows, successor_errors = effective_failure_rows(root, all_rows)
+    errors.extend(successor_errors)
+    rows = all_rows
     if slice_id:
         rows = [row for row in rows if row.get("slice") == slice_id]
+        effective_rows = [row for row in effective_rows if row.get("slice") == slice_id]
 
     class_counts: Counter[str] = Counter()
-    slices = _load_slices(root)
-    scoped_external_blockers = 0
     for index, row in enumerate(rows, start=1):
         failure_class = str(row.get("failure_class") or "unclassified")
         class_counts[failure_class] += 1
         open_ = bool(row.get("open", True))
-        severity = str(row.get("severity") or "")
-        scoped_external = is_scoped_external_blocker(root, row, slices=slices)
-        if scoped_external:
-            scoped_external_blockers += 1
-            warnings.append(f"scoped external authority blocker remains open: row {index} {failure_class}")
-        if open_ and severity in {"high", "critical"} and not scoped_external:
-            errors.append(f"open high/critical failure: row {index} {failure_class}")
-        if open_ and failure_class in CRITICAL_CLASSES:
-            errors.append(f"{failure_class} is open")
         if not open_:
             evidence = str(row.get("closure_evidence") or "")
             if not evidence:
@@ -220,12 +270,22 @@ def verify_failure_ledger(root: Path, slice_id: str | None = None) -> dict[str, 
             else:
                 warnings.append(f"legacy repeated failure class lacks root_cause_id: {failure_class}")
 
+    for index, row in enumerate(effective_rows, start=1):
+        failure_class = str(row.get("failure_class") or "unclassified")
+        open_ = bool(row.get("open", True))
+        severity = str(row.get("severity") or "")
+        if open_ and severity in {"high", "critical"}:
+            errors.append(f"open high/critical failure: effective row {index} {failure_class}")
+        if open_ and failure_class in CRITICAL_CLASSES:
+            errors.append(f"{failure_class} is open")
+
     return {
         "status": "ok" if not errors else "error",
         "errors": errors,
         "warnings": warnings,
-        "rows": len(rows),
-        "scoped_external_blockers": scoped_external_blockers,
+        "rows": len(all_rows),
+        "effective_rows": len(effective_rows),
+        "scoped_external_blockers": 0,
     }
 
 

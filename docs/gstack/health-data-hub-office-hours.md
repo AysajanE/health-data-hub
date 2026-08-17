@@ -2,30 +2,6 @@
 
 **v1 product:** Sleep + Mood Retrospective Explainer (Oura + mood log; 8 Sleep fallback-only and inactive under the current S03 decision)
 
-## 2026-08-16 Provider-Authority Amendment
-
-The [Oura API and MCP Agreement](https://cloud.ouraring.com/legal/api-agreement)
-effective 2026-06-08 postdates the original ingestion design. Section 4(d)
-states that the Oura API may not be used to develop, train, evaluate, prompt,
-or otherwise provide data to an AI Model or AI Platform; Section 6(g)
-separately prohibits using User Data to train or enhance an AI/ML system. The
-generic prior-consent exception in Section 4(a) is therefore not treated as
-sufficient authority for this repository's API-to-Ridge path.
-
-S12 now owns production sleep ingestion. It is fail-closed before compiler,
-OAuth, token, network, or provider-data access until one of two exact bases is
-durably evidenced: (a) a separate written agreement with Oura that explicitly
-authorizes and supersedes the Section 4(d), Section 6(g), storage/retention,
-correlation, Ridge training/evaluation, retrospective-explanation, backup, and
-audit restrictions for this use; or (b) qualified legal confirmation of a
-non-API acquisition route outside those Agreement restrictions. This is an
-engineering authority gate, not legal advice or simulated human approval.
-
-All older passages below that describe direct Oura OAuth as an available or
-"fine" implementation route are conditional on S12 readiness returning `ok`.
-OAuth consent, token possession, membership, and historical smoke evidence do
-not satisfy that gate. S06 and S08 depend on completed S12, and no production
-Oura-derived model training may resume while S12 is `blocked_external`.
 **Long-term vision:** Personal Autopilot + Coach with action features, N-of-1 experiments, and conversational explanations
 
 The project is one project; the v1 product is deliberately a narrower, honest slice.
