@@ -110,6 +110,7 @@ class MoodFormHelpersTest(unittest.TestCase):
             self.assertEqual(summary.days_logged, 1)
             self.assertEqual(summary.feeling_for_target, 8)
             self.assertEqual(summary.recent, ((target, 8, 6),))
+            self.assertEqual(summary.model_ready_days, 0)
 
             with patch.object(mood_form, "SUMMARY_LOCK_TIMEOUT_SECONDS", 0.2):
                 with warehouse_write_lock(lock_path_for_database(database_path)):
@@ -235,7 +236,9 @@ class MoodFormAppTest(unittest.TestCase):
         self.assertEqual(first_source, "manual")
         self.assertIsNone(first_supersedes)
         self.assertEqual(self.mood_current_rows(), [(first_date, first_log_id)])
-        self.assertIn("**Days logged so far:** 1", [element.value for element in at.markdown])
+        markdown_values = [element.value for element in at.markdown]
+        self.assertIn("**Days logged so far:** 1", markdown_values)
+        self.assertIn("**Collecting model-ready days:** 0 / 37", markdown_values)
 
         at = self.save_rating(at, 5)
 

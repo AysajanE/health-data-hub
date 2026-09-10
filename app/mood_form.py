@@ -31,12 +31,14 @@ from src.warehouse.locking import (  # noqa: E402
     warehouse_write_lock,
 )
 from src.warehouse.models import ContextChip  # noqa: E402
+from src.model.baseline_gate import MIN_MODEL_ROWS_FOR_GATE  # noqa: E402
 from src.warehouse.warehouse import (  # noqa: E402
     DEFAULT_DATABASE_PATH,
     connect_duckdb,
     persist_mood_entry_locked,
     select_current_mood_entries,
 )
+from scripts.retrain_model import load_verified_feature_rows  # noqa: E402
 
 
 ENV_TOKEN = "MOOD_FORM_TOKEN"
@@ -65,6 +67,12 @@ PICK_FIRST = "Pick a number from 1 to 10 first."
 WAREHOUSE_BUSY = "The warehouse is busy. Try again in a few seconds."
 SAVE_FAILED = "Could not save the rating."
 HISTORY_UNAVAILABLE = "Recent history is unavailable right now."
+COLLECTING_LABEL = "Collecting model-ready days"
+MODEL_READY_NOTE = (
+    "A model-ready day has your rating, last night's Oura sleep, an HRV baseline "
+    "from earlier nights, and the previous day's rating. Model output stays hidden "
+    "until enough of them exist and the model beats simple baselines."
+)
 RECENT_DAYS = 7
 MOOD_SOURCE = "manual"
 SUMMARY_LOCK_TIMEOUT_SECONDS = 3.0
@@ -83,6 +91,7 @@ class MoodSummary:
     days_logged: int
     feeling_for_target: int | None
     recent: tuple[tuple[date, int, int | None], ...]
+    model_ready_days: int | None = None
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> FormSettings:
@@ -125,7 +134,13 @@ def read_summary(database_path: Path, target_date: date) -> MoodSummary:
     """
 
     if not database_path.exists():
-        return MoodSummary(available=True, days_logged=0, feeling_for_target=None, recent=())
+        return MoodSummary(
+            available=True,
+            days_logged=0,
+            feeling_for_target=None,
+            recent=(),
+            model_ready_days=0,
+        )
     try:
         with warehouse_write_lock(
             lock_path_for_database(database_path),
@@ -136,6 +151,10 @@ def read_summary(database_path: Path, target_date: date) -> MoodSummary:
                 entries = select_current_mood_entries(conn)
             finally:
                 conn.close()
+            try:
+                model_ready_days: int | None = len(load_verified_feature_rows(database_path))
+            except Exception:
+                model_ready_days = None
     except Exception:
         return MoodSummary(available=False, days_logged=0, feeling_for_target=None, recent=())
 
@@ -151,6 +170,7 @@ def read_summary(database_path: Path, target_date: date) -> MoodSummary:
         days_logged=len(entries),
         feeling_for_target=feeling_for_target,
         recent=recent,
+        model_ready_days=model_ready_days,
     )
 
 
@@ -206,6 +226,9 @@ def _render_summary(summary: MoodSummary) -> None:
         st.caption(HISTORY_UNAVAILABLE)
         return
     st.markdown(f"**Days logged so far:** {summary.days_logged}")
+    if summary.model_ready_days is not None:
+        st.markdown(f"**{COLLECTING_LABEL}:** {summary.model_ready_days} / {MIN_MODEL_ROWS_FOR_GATE}")
+        st.caption(MODEL_READY_NOTE)
     if summary.recent:
         st.table(
             [

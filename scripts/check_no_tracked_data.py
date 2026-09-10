@@ -31,6 +31,10 @@ ALLOWED_FAKE_SECRET_VALUES = {
     "test-mood-token",
     "fake-mood-token",
     "example-token-for-tests",
+    # Oura OAuth test fixtures (tests/ingestion, tests/test_oura_authorize.py).
+    "fixture-new-access-token",
+    "fixture-new-refresh-token",
+    "fixture-client-secret",
 }
 
 PROVIDER_SHAPED_SECRET_RE = re.compile(

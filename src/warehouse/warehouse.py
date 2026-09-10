@@ -425,6 +425,11 @@ def connect_duckdb(
     if database_path is not None and not read_only:
         database_path.parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(str(database), read_only=read_only)
+    # DuckDB converts timezone-aware Python datetimes into naive TIMESTAMP
+    # values through the session TimeZone, which defaults to the machine's
+    # local zone. Every *_utc column is read back as naive UTC, so the session
+    # must store in UTC or all stored instants shift by the local offset.
+    conn.execute("SET TimeZone = 'UTC'")
     if apply_schema:
         globals()["apply_schema"](conn)
     return conn

@@ -111,6 +111,30 @@ The mood log is the only part of the product that needs you every day. It is a s
 
 `.venv/bin/python scripts/run_mood_form.py --check` validates the settings without starting the server.
 
+## Oura sync and scheduling
+
+The Oura sync pulls your own sleep records from the Oura API v2, keeps only the main sleep episode per wake date, and writes normalized rows into the warehouse. Raw responses are never written to disk. Tokens live only in `data/secrets/oura_tokens.json` (mode 0600) and rotate on every refresh.
+
+```bash
+.venv/bin/python scripts/sync_oura.py --json            # last 14 days, recompute features
+.venv/bin/python scripts/sync_oura.py --start 2026-01-01 # one-time history backfill
+```
+
+If the sync exits with `auth_required`, the refresh token is dead. Re-authorize once in a browser:
+
+```bash
+.venv/bin/python scripts/oura_authorize.py
+```
+
+Three per-user launchd agents keep everything running on an always-on Mac: the mood form (kept alive), the Oura sync at 08:00 and 19:30, and the model retrain at 23:00 after the evening log.
+
+```bash
+.venv/bin/python scripts/install_launchd.py --install
+.venv/bin/python scripts/install_launchd.py --status
+```
+
+Logs go to `~/Library/Logs/healthhub-*.log` and contain no tokens or health values.
+
 **If you want to study the autonomous build** — read on.
 
 ## The honest-AI-build experiment
