@@ -4,6 +4,7 @@
 Three per-user agents keep the product running on an always-on Mac:
 
 - ``com.healthhub.mood-form``: the LAN-only Streamlit mood form, kept alive.
+- ``com.healthhub.explainer``: the loopback-only retrospective page, kept alive.
 - ``com.healthhub.oura-sync``: the Oura sleep sync, morning and early evening.
 - ``com.healthhub.retrain``: the nightly model retrain after the evening log.
 
@@ -30,6 +31,7 @@ LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 LOG_DIR = Path.home() / "Library" / "Logs"
 LABEL_PREFIX = "com.healthhub."
 MOOD_FORM_LABEL = f"{LABEL_PREFIX}mood-form"
+EXPLAINER_LABEL = f"{LABEL_PREFIX}explainer"
 OURA_SYNC_LABEL = f"{LABEL_PREFIX}oura-sync"
 RETRAIN_LABEL = f"{LABEL_PREFIX}retrain"
 SYNC_TIMES = ({"Hour": 8, "Minute": 0}, {"Hour": 19, "Minute": 30})
@@ -65,6 +67,15 @@ def build_plists(
     )
     mood_form.update({"RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 10})
 
+    # The explainer binds to 127.0.0.1 only; it is the same-host read surface.
+    explainer = _base_plist(
+        EXPLAINER_LABEL,
+        [str(python), str(repo_root / "scripts" / "run_explainer.py")],
+        repo_root=repo_root,
+        log_dir=log_dir,
+    )
+    explainer.update({"RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 10})
+
     oura_sync = _base_plist(
         OURA_SYNC_LABEL,
         [str(python), str(repo_root / "scripts" / "sync_oura.py"), "--json"],
@@ -83,7 +94,12 @@ def build_plists(
     )
     retrain.update({"RunAtLoad": False, "StartCalendarInterval": dict(RETRAIN_TIME)})
 
-    return {MOOD_FORM_LABEL: mood_form, OURA_SYNC_LABEL: oura_sync, RETRAIN_LABEL: retrain}
+    return {
+        MOOD_FORM_LABEL: mood_form,
+        EXPLAINER_LABEL: explainer,
+        OURA_SYNC_LABEL: oura_sync,
+        RETRAIN_LABEL: retrain,
+    }
 
 
 def plist_path(label: str, launch_agents_dir: Path = LAUNCH_AGENTS_DIR) -> Path:

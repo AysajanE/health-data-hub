@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from scripts.install_launchd import (
+    EXPLAINER_LABEL,
     MOOD_FORM_LABEL,
     OURA_SYNC_LABEL,
     RETRAIN_LABEL,
@@ -22,8 +23,11 @@ class BuildPlistsTest(unittest.TestCase):
         self.log_dir = Path("/tmp/example-logs")
         self.plists = build_plists(repo_root=self.repo_root, python=self.python, log_dir=self.log_dir)
 
-    def test_three_agents_with_expected_labels(self) -> None:
-        self.assertEqual(set(self.plists), {MOOD_FORM_LABEL, OURA_SYNC_LABEL, RETRAIN_LABEL})
+    def test_four_agents_with_expected_labels(self) -> None:
+        self.assertEqual(
+            set(self.plists),
+            {MOOD_FORM_LABEL, EXPLAINER_LABEL, OURA_SYNC_LABEL, RETRAIN_LABEL},
+        )
         for label, payload in self.plists.items():
             self.assertEqual(payload["Label"], label)
             self.assertEqual(payload["WorkingDirectory"], str(self.repo_root))
@@ -35,6 +39,12 @@ class BuildPlistsTest(unittest.TestCase):
         self.assertTrue(payload["RunAtLoad"])
         self.assertTrue(payload["KeepAlive"])
         self.assertTrue(payload["ProgramArguments"][1].endswith("scripts/run_mood_form.py"))
+
+    def test_explainer_is_kept_alive(self) -> None:
+        payload = self.plists[EXPLAINER_LABEL]
+        self.assertTrue(payload["RunAtLoad"])
+        self.assertTrue(payload["KeepAlive"])
+        self.assertTrue(payload["ProgramArguments"][1].endswith("scripts/run_explainer.py"))
 
     def test_sync_runs_morning_and_early_evening(self) -> None:
         payload = self.plists[OURA_SYNC_LABEL]
@@ -50,7 +60,7 @@ class BuildPlistsTest(unittest.TestCase):
         self.assertEqual(payload["StartCalendarInterval"], {"Hour": 23, "Minute": 0})
         self.assertTrue(payload["ProgramArguments"][1].endswith("scripts/nightly_retrain.py"))
         self.assertNotIn("--json", payload["ProgramArguments"])
-        for other in (MOOD_FORM_LABEL, OURA_SYNC_LABEL):
+        for other in (MOOD_FORM_LABEL, EXPLAINER_LABEL, OURA_SYNC_LABEL):
             self.assertFalse(
                 any(arg.endswith("retrain_model.py") for arg in self.plists[other]["ProgramArguments"])
             )

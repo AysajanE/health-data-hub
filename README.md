@@ -126,7 +126,15 @@ If the sync exits with `auth_required`, the refresh token is dead. Re-authorize 
 .venv/bin/python scripts/oura_authorize.py
 ```
 
-Three per-user launchd agents keep everything running on an always-on Mac: the mood form (kept alive), the Oura sync at 08:00 and 19:30, and the model retrain at 23:00 after the evening log.
+## The explainer page
+
+The retrospective card lives on a second Streamlit page that binds to `127.0.0.1` only, so it is readable on the Mac and nowhere else. Open `http://127.0.0.1:8502`. If today's rating is missing, the page shows the mood form first and hides model output for today until you rate it. Until 37 model-ready days exist it shows "Collecting model-ready days", and after that it only shows contributors on nights when the model beats the simple baselines.
+
+```bash
+.venv/bin/python scripts/run_explainer.py
+```
+
+Four per-user launchd agents keep everything running on an always-on Mac: the mood form and the explainer page (kept alive), the Oura sync at 08:00 and 19:30, and the model retrain at 23:00 after the evening log.
 
 ```bash
 .venv/bin/python scripts/install_launchd.py --install

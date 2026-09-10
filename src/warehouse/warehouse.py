@@ -848,6 +848,64 @@ def select_labeled_daily_features(
     return [_labeled_daily_features_from_db(row) for row in rows]
 
 
+def select_sleep_nights(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    source: str = "oura",
+) -> list[SleepNightRow]:
+    where_clauses: list[str] = ["source = ?"]
+    params: list[Any] = [source]
+
+    if start_date is not None:
+        where_clauses.append("sleep_date >= ?")
+        params.append(start_date)
+    if end_date is not None:
+        where_clauses.append("sleep_date <= ?")
+        params.append(end_date)
+
+    rows = conn.execute(
+        f"""
+        SELECT {', '.join(_SLEEP_NIGHT_COLUMNS)}
+        FROM sleep_nights
+        WHERE {' AND '.join(where_clauses)}
+        ORDER BY sleep_date
+        """,
+        params,
+    ).fetchall()
+    return [_sleep_night_from_db(row) for row in rows]
+
+
+def select_daily_features(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[DailyFeaturesRow]:
+    where_clauses: list[str] = []
+    params: list[Any] = []
+
+    if start_date is not None:
+        where_clauses.append("feature_date >= ?")
+        params.append(start_date)
+    if end_date is not None:
+        where_clauses.append("feature_date <= ?")
+        params.append(end_date)
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    rows = conn.execute(
+        f"""
+        SELECT {', '.join(_DAILY_FEATURE_COLUMNS)}
+        FROM daily_features
+        {where_sql}
+        ORDER BY feature_date
+        """,
+        params,
+    ).fetchall()
+    return [DailyFeaturesRow.model_validate(_row_dict(_DAILY_FEATURE_COLUMNS, row)) for row in rows]
+
+
 __all__ = [
     "DEFAULT_DATABASE_PATH",
     "DEFAULT_FEATURE_VERSION",
@@ -865,4 +923,6 @@ __all__ = [
     "secure_database_files",
     "select_labeled_daily_features",
     "select_current_mood_entries",
+    "select_sleep_nights",
+    "select_daily_features",
 ]

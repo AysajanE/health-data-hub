@@ -204,11 +204,14 @@ def persist_mood(
     return mood_date
 
 
-def _render_token_gate(settings: FormSettings) -> bool:
+def render_token_gate(settings: FormSettings, *, heading: str | None = PAGE_TITLE) -> bool:
+    """Render the access-token gate; return True once this browser session is authenticated."""
+
     if st.session_state.get(SESSION_AUTH_KEY) is True:
         return True
 
-    st.title(PAGE_TITLE)
+    if heading:
+        st.title(heading)
     with st.form("token_form"):
         provided = st.text_input(TOKEN_LABEL, type="password")
         submitted = st.form_submit_button("Continue")
@@ -242,19 +245,22 @@ def _render_summary(summary: MoodSummary) -> None:
         )
 
 
-def main() -> None:
-    st.set_page_config(page_title=PAGE_TITLE, layout="centered")
+def render_mood_form(
+    settings: FormSettings,
+    *,
+    heading: str | None = PAGE_TITLE,
+    show_summary: bool = True,
+) -> bool:
+    """Render the compact mood form for an authenticated session.
 
-    try:
-        settings = load_settings()
-    except ValueError as error:
-        st.error(str(error))
-        st.stop()
+    Returns True when a rating was saved during this run so an embedding page
+    can refresh what it shows. This is the only mood write path in the product;
+    the explainer page embeds this function rather than building a second one.
+    """
 
-    if not _render_token_gate(settings):
-        st.stop()
-
-    st.title(PAGE_TITLE)
+    saved = False
+    if heading:
+        st.title(heading)
     target_date = resolve_mood_date(datetime.now(UTC), settings.home_timezone)
     st.markdown(f"**Recording for:** {format_date(target_date)}")
     st.caption(CUTOFF_NOTE)
@@ -295,10 +301,28 @@ def main() -> None:
             except Exception:
                 st.error(SAVE_FAILED)
             else:
+                saved = True
                 st.success(f"Saved. Rating recorded for {format_date(saved_date)}.")
                 summary = read_summary(settings.database_path, target_date)
 
-    _render_summary(summary)
+    if show_summary:
+        _render_summary(summary)
+    return saved
+
+
+def main() -> None:
+    st.set_page_config(page_title=PAGE_TITLE, layout="centered")
+
+    try:
+        settings = load_settings()
+    except ValueError as error:
+        st.error(str(error))
+        st.stop()
+
+    if not render_token_gate(settings):
+        st.stop()
+
+    render_mood_form(settings)
 
 
 if __name__ == "__main__":
