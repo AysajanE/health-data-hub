@@ -242,6 +242,12 @@ def run_retrain(
         latest_explanation = predictor.explain([model_rows[-1]])[0]
         latest_interval = predictor.predict_interval([model_rows[-1]])[0]
         sign_stability = predictor.feature_sign_stability()
+        counterfactual = _build_counterfactual_payload(
+            model_rows,
+            targets,
+            feature_version=feature_version,
+            model_version=DEFAULT_MODEL_VERSION,
+        )
         if persist_artifacts:
             artifacts = _persist_model_artifacts(
                 model_dir=model_dir,
@@ -267,6 +273,7 @@ def run_retrain(
                 feature_version=feature_version,
                 model_version=DEFAULT_MODEL_VERSION,
                 artifacts=artifacts,
+                counterfactual=counterfactual,
             ),
         )
         return {
@@ -472,6 +479,7 @@ def _build_skipped_record(
         "latest_logged_feeling": None,
         "latest_prediction_interval": None,
         "confidence_label": None,
+        "latest_counterfactual": None,
         "r2_in_sample_diagnostic_only": None,
         "model_version": model_version,
         "feature_version": feature_version,
@@ -497,6 +505,7 @@ def _build_trained_record(
     feature_version: str,
     model_version: str,
     artifacts: Mapping[str, str],
+    counterfactual: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     sign_stability_payload = [
         _serialize_feature_sign_stability(item) for item in sign_stability
@@ -558,12 +567,55 @@ def _build_trained_record(
             "full_width": latest_interval.full_width,
         },
         "confidence_label": confidence_label_for_interval(latest_interval.full_width),
+        "latest_counterfactual": dict(counterfactual) if counterfactual is not None else None,
         "r2_in_sample_diagnostic_only": _r2_score(targets, training_predictions),
         "model_version": model_version,
         "feature_version": feature_version,
         "persisted_model_path": artifacts.get("model_path"),
         "persisted_scaler_path": artifacts.get("scaler_path"),
     }
+
+
+def _build_counterfactual_payload(
+    model_rows: Sequence[Mapping[str, Any]],
+    targets: Sequence[float],
+    *,
+    feature_version: str,
+    model_version: str,
+) -> dict[str, Any]:
+    """Run the retrospective counterfactual for the latest model row.
+
+    The history cohort is every model-ready row strictly before the latest one
+    and the target is the latest row itself, so the generator applies its own
+    as-of gate on that cohort. A missing generator or an internal error yields a
+    typed "unavailable" payload rather than failing the retrain.
+    """
+
+    if len(model_rows) < 2:
+        return {"status": "unavailable", "error_type": "InsufficientRows"}
+
+    # One exception boundary around import, invocation, and serialization: the
+    # retrain must still persist its artifacts and eval record if any of them
+    # fails, so the explainer extra can never take the model pipeline down.
+    try:
+        from src.model.counterfactual import generate_retro_counterfactual
+
+        history = [
+            {**dict(row), "feeling": float(target)}
+            for row, target in zip(model_rows[:-1], targets[:-1])
+        ]
+        target_row = {**dict(model_rows[-1]), "feeling": float(targets[-1])}
+        result = generate_retro_counterfactual(
+            history_rows=history,
+            target_row=target_row,
+            model_version=model_version,
+            feature_version=feature_version,
+        )
+        payload = result.to_dict()
+        json.dumps(payload)
+    except Exception as error:  # noqa: BLE001 - typed fallback, never a retrain failure
+        return {"status": "unavailable", "error_type": type(error).__name__}
+    return payload
 
 
 def _latest_display_metadata(row: Mapping[str, Any]) -> dict[str, Any]:

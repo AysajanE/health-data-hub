@@ -405,3 +405,75 @@ def test_retrain_entrypoint_trains_logs_gate_metrics_and_persists_artifacts(
     }
     assert Path(report["artifacts"]["model_path"]).exists()
     assert Path(report["artifacts"]["scaler_path"]).exists()
+
+
+def test_retrain_entrypoint_records_the_counterfactual_payload(tmp_path: Path) -> None:
+    report = run_retrain(
+        root=tmp_path,
+        eval_log_path=tmp_path / "models" / "eval.jsonl",
+        model_dir=tmp_path / "models",
+        run_date="2026-06-11",
+        persist_artifacts=False,
+        provider_preflight_runner=_ok_preflight,
+        feature_row_loader=lambda: _build_training_rows(48, residual_scale=0.2),
+    )
+
+    payload = report["record"]["latest_counterfactual"]
+    assert report["status"] == "trained"
+    assert payload["status"] in {"available", "suppressed"}
+    assert payload["provenance"]["n_model"] == 47
+    assert payload["provenance"]["target_date"] == "2026-02-17"
+    serialized = json.dumps(payload)
+    assert "history_rows" not in serialized
+    assert "coefficient" not in serialized
+
+
+def test_retrain_entrypoint_counterfactual_failures_never_break_the_retrain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.model.counterfactual as counterfactual_module
+
+    class BrokenResult:
+        def to_dict(self) -> dict[str, object]:
+            raise RuntimeError("serialization exploded")
+
+    monkeypatch.setattr(
+        counterfactual_module, "generate_retro_counterfactual", lambda **kwargs: BrokenResult()
+    )
+    eval_log_path = tmp_path / "models" / "eval.jsonl"
+    report = run_retrain(
+        root=tmp_path,
+        eval_log_path=eval_log_path,
+        model_dir=tmp_path / "models",
+        run_date="2026-06-11",
+        provider_preflight_runner=_ok_preflight,
+        feature_row_loader=lambda: _build_training_rows(48, residual_scale=0.2),
+    )
+
+    assert report["status"] == "trained"
+    assert report["record"]["latest_counterfactual"] == {
+        "status": "unavailable",
+        "error_type": "RuntimeError",
+    }
+    assert eval_log_path.exists()
+    assert list((tmp_path / "models").glob("ridge-*.pkl"))
+
+    monkeypatch.setattr(
+        counterfactual_module,
+        "generate_retro_counterfactual",
+        lambda **kwargs: (_ for _ in ()).throw(ValueError("generator exploded")),
+    )
+    report = run_retrain(
+        root=tmp_path,
+        eval_log_path=eval_log_path,
+        model_dir=tmp_path / "models",
+        run_date="2026-06-12",
+        persist_artifacts=False,
+        provider_preflight_runner=_ok_preflight,
+        feature_row_loader=lambda: _build_training_rows(48, residual_scale=0.2),
+    )
+    assert report["status"] == "trained"
+    assert report["record"]["latest_counterfactual"] == {
+        "status": "unavailable",
+        "error_type": "ValueError",
+    }

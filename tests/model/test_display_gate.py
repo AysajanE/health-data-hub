@@ -336,3 +336,92 @@ class FeatureDisplayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CounterfactualViewTests(unittest.TestCase):
+    AVAILABLE = {
+        "status": "available",
+        "suppression_reason": None,
+        "counterfactual": {
+            "feature_name": "total_sleep_min",
+            "feature_display_name": "Total sleep",
+            "actual_value": 372.0,
+            "comparison_value": 447.5,
+            "model_delta_low": 0.6,
+            "model_delta_high": 1.2,
+            "median_delta": 0.9,
+            "direction": "increase_only",
+            "framing_label": "model-estimated change in your past data",
+            "caveat": "correlation, not proven causation",
+        },
+        "provenance": {"n_model": 40},
+    }
+
+    def test_available_payload_is_formatted_for_display(self) -> None:
+        from src.model.display_gate import build_counterfactual_view
+
+        view = build_counterfactual_view(self.AVAILABLE)
+        self.assertEqual(view.status, "available")
+        self.assertEqual(view.actual_text, "6h 12m")
+        self.assertEqual(view.comparison_text, "7h 28m")
+        self.assertEqual((view.delta_low, view.delta_median, view.delta_high), (0.6, 0.9, 1.2))
+        self.assertEqual(view.message, "")
+
+    def test_suppressed_reasons_map_to_explanation_framed_messages(self) -> None:
+        from src.model.display_gate import build_counterfactual_view
+
+        cases = {
+            "actual_at_or_above_recent_median": "No useful sleep-increase comparison: that night's sleep was already at your normal upper range.",
+            "delta_interval_not_positive": "The estimated change is too uncertain to call useful.",
+            "delta_below_materiality_floor": "The estimated change is too uncertain to call useful.",
+            "no_plausible_candidate": "The estimated change is too uncertain to call useful.",
+            "empty_candidate_envelope": "The estimated change is too uncertain to call useful.",
+            "mutable_feature_not_stable": "Insufficient stable signal for a sleep comparison.",
+            "baseline_gate_not_passed": "Insufficient stable signal for a sleep comparison.",
+        }
+        for reason, expected in cases.items():
+            with self.subTest(reason=reason):
+                view = build_counterfactual_view({"status": "suppressed", "suppression_reason": reason})
+                self.assertEqual(view.status, "suppressed")
+                self.assertEqual(view.reason, reason)
+                self.assertEqual(view.message, expected)
+                self.assertIsNone(view.comparison_text)
+
+    def test_malformed_or_contract_violating_payloads_collapse_to_unavailable(self) -> None:
+        from src.model.display_gate import build_counterfactual_view
+
+        base = deepcopy(self.AVAILABLE)
+        violations = [
+            None,
+            {},
+            {"status": "available"},
+            {"status": "available", "counterfactual": {**base["counterfactual"], "feature_name": "hrv_z"}},
+            {"status": "available", "counterfactual": {**base["counterfactual"], "framing_label": "drivers"}},
+            {"status": "available", "counterfactual": {**base["counterfactual"], "comparison_value": 300.0}},
+            {"status": "available", "counterfactual": {**base["counterfactual"], "model_delta_low": 0.0}},
+            {"status": "available", "counterfactual": {**base["counterfactual"], "model_delta_low": "0.6"}},
+            # Below the 7-hour safety floor even though it is an increase.
+            {"status": "available", "counterfactual": {**base["counterfactual"], "actual_value": 372.0, "comparison_value": 400.0}},
+            # Positive but immaterial interval.
+            {"status": "available", "counterfactual": {**base["counterfactual"], "model_delta_low": 0.1, "median_delta": 0.2, "model_delta_high": 0.3}},
+            {"status": "available", "counterfactual": {**base["counterfactual"], "direction": "decrease"}},
+            {"status": "unavailable", "error_type": "ImportError"},
+        ]
+        for payload in violations:
+            with self.subTest(payload=payload):
+                view = build_counterfactual_view(payload)
+                self.assertEqual(view.status, "unavailable")
+                self.assertEqual(view.message, "Insufficient stable signal for a sleep comparison.")
+
+    def test_show_state_carries_the_counterfactual_view(self) -> None:
+        record = trained_record()
+        record["latest_counterfactual"] = deepcopy(self.AVAILABLE)
+        view = build_insight_view(
+            latest_record=record,
+            model_ready_days=42,
+            usual_values={},
+        )
+        self.assertEqual(view.state, DisplayState.SHOW)
+        self.assertIsNotNone(view.counterfactual)
+        self.assertEqual(view.counterfactual.status, "available")
+        self.assertEqual(view.counterfactual.comparison_text, "7h 28m")

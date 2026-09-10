@@ -91,6 +91,11 @@ def summarize(report: Mapping[str, Any]) -> dict[str, Any]:
     for key in SUMMARY_KEYS:
         if key in record:
             summary[key] = record[key]
+    counterfactual = record.get("latest_counterfactual")
+    if isinstance(counterfactual, Mapping):
+        # Status and reason only; the comparison values are health-derived.
+        summary["counterfactual_status"] = counterfactual.get("status")
+        summary["counterfactual_reason"] = counterfactual.get("suppression_reason") or counterfactual.get("error_type")
     return summary
 
 

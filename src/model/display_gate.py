@@ -7,6 +7,7 @@ from math import isclose, isfinite
 from types import MappingProxyType
 from typing import Mapping
 
+from src.model.counterfactual import FEATURE_POLICY, MUTABLE_FEATURE, CounterfactualConfig
 from src.model.eval_log import confidence_label_for_interval
 
 
@@ -28,6 +29,36 @@ class ContributorView:
     low_confidence: bool
 
 
+COUNTERFACTUAL_FRAMING = "model-estimated change in your past data"
+COUNTERFACTUAL_CAVEAT = "correlation, not proven causation"
+# The presentation layer re-checks the generator's own floors so a malformed
+# payload can never render a comparison below 7 hours or below materiality.
+COUNTERFACTUAL_SAFE_FLOOR = float(FEATURE_POLICY[MUTABLE_FEATURE].safe_floor or 0.0)
+COUNTERFACTUAL_MIN_MEDIAN_DELTA = CounterfactualConfig().min_median_delta
+COUNTERFACTUAL_UNCERTAIN_REASONS = frozenset(
+    {
+        "empty_candidate_envelope",
+        "no_plausible_candidate",
+        "delta_interval_not_positive",
+        "delta_below_materiality_floor",
+    }
+)
+
+
+@dataclass(frozen=True)
+class CounterfactualView:
+    """Presentation of the retrospective sleep comparison for the insight date."""
+
+    status: str  # "available" | "suppressed" | "unavailable"
+    reason: str | None
+    actual_text: str | None
+    comparison_text: str | None
+    delta_low: float | None
+    delta_median: float | None
+    delta_high: float | None
+    message: str
+
+
 @dataclass(frozen=True)
 class InsightView:
     state: DisplayState
@@ -44,6 +75,7 @@ class InsightView:
     confidence_label: str | None
     model_version: str | None
     trained_through_date: date | None
+    counterfactual: CounterfactualView | None = None
 
 
 FEATURE_DISPLAY: Mapping[str, str] = MappingProxyType(
@@ -107,6 +139,85 @@ def _optional_string(value: object) -> str | None:
     if value is not None and not isinstance(value, str):
         raise ValueError("Expected text")
     return value
+
+
+def _unavailable_counterfactual() -> CounterfactualView:
+    return CounterfactualView(
+        status="unavailable",
+        reason=None,
+        actual_text=None,
+        comparison_text=None,
+        delta_low=None,
+        delta_median=None,
+        delta_high=None,
+        message="Insufficient stable signal for a sleep comparison.",
+    )
+
+
+def build_counterfactual_view(payload: object) -> CounterfactualView:
+    """Turn the eval record's ``latest_counterfactual`` payload into display text.
+
+    The generator returns structured values; this is the only place that turns
+    them into words, and every word stays explanation-framed. Anything
+    malformed collapses to the safe "insufficient stable signal" message.
+    """
+
+    if not isinstance(payload, Mapping):
+        return _unavailable_counterfactual()
+    status = payload.get("status")
+    if status == "suppressed":
+        reason = payload.get("suppression_reason")
+        reason = reason if isinstance(reason, str) else None
+        if reason == "actual_at_or_above_recent_median":
+            message = (
+                "No useful sleep-increase comparison: that night's sleep was already at your "
+                "normal upper range."
+            )
+        elif reason in COUNTERFACTUAL_UNCERTAIN_REASONS:
+            message = "The estimated change is too uncertain to call useful."
+        else:
+            message = "Insufficient stable signal for a sleep comparison."
+        return CounterfactualView(
+            status="suppressed",
+            reason=reason,
+            actual_text=None,
+            comparison_text=None,
+            delta_low=None,
+            delta_median=None,
+            delta_high=None,
+            message=message,
+        )
+    if status != "available":
+        return _unavailable_counterfactual()
+    try:
+        detail = payload["counterfactual"]
+        if not isinstance(detail, Mapping) or detail.get("feature_name") != MUTABLE_FEATURE:
+            raise ValueError("Unsupported counterfactual feature")
+        if detail.get("framing_label") != COUNTERFACTUAL_FRAMING or detail.get("caveat") != COUNTERFACTUAL_CAVEAT:
+            raise ValueError("Counterfactual language mismatch")
+        if detail.get("direction") not in (None, "increase_only"):
+            raise ValueError("Unsupported counterfactual direction")
+        actual = _number(detail["actual_value"])
+        comparison = _number(detail["comparison_value"])
+        low = _number(detail["model_delta_low"])
+        median_delta = _number(detail["median_delta"])
+        high = _number(detail["model_delta_high"])
+        if comparison <= actual or comparison < COUNTERFACTUAL_SAFE_FLOOR:
+            raise ValueError("Counterfactual violates the increase-only or safe-floor contract")
+        if low <= 0 or median_delta < COUNTERFACTUAL_MIN_MEDIAN_DELTA or high < median_delta or median_delta < low:
+            raise ValueError("Counterfactual interval violates the materiality contract")
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return _unavailable_counterfactual()
+    return CounterfactualView(
+        status="available",
+        reason=None,
+        actual_text=format_feature_value("total_sleep_min", actual),
+        comparison_text=format_feature_value("total_sleep_min", comparison),
+        delta_low=low,
+        delta_median=median_delta,
+        delta_high=high,
+        message="",
+    )
 
 
 def build_insight_view(
@@ -247,6 +358,7 @@ def build_insight_view(
             interval_low=low,
             interval_high=high,
             confidence_label=confidence,
+            counterfactual=build_counterfactual_view(latest_record.get("latest_counterfactual")),
         )
     except (KeyError, TypeError, ValueError, OverflowError):
         return replace(
@@ -257,10 +369,14 @@ def build_insight_view(
 
 
 __all__ = [
+    "COUNTERFACTUAL_CAVEAT",
+    "COUNTERFACTUAL_FRAMING",
     "ContributorView",
+    "CounterfactualView",
     "DisplayState",
     "FEATURE_DISPLAY",
     "InsightView",
+    "build_counterfactual_view",
     "build_insight_view",
     "direction_text",
     "format_feature_value",

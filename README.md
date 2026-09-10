@@ -130,6 +130,8 @@ If the sync exits with `auth_required`, the refresh token is dead. Re-authorize 
 
 The retrospective card lives on a second Streamlit page that binds to `127.0.0.1` only, so it is readable on the Mac and nowhere else. Open `http://127.0.0.1:8502`. If today's rating is missing, the page shows the mood form first and hides model output for today until you rate it. Until 37 model-ready days exist it shows "Collecting model-ready days", and after that it only shows contributors on nights when the model beats the simple baselines.
 
+The card's "model-estimated change in your past data" line comes from the retrospective counterfactual generator in `src/model/counterfactual.py`, run by the nightly retrain. It varies exactly one feature, total sleep, increase-only and never below 7 hours, only among candidates that resemble nights you have actually had, and only reports a bootstrapped delta interval that excludes zero and a median change of at least half a rating point. Otherwise the card says why it stayed quiet. It is a description of association in your own past data, never a prediction or a recommendation.
+
 ```bash
 .venv/bin/python scripts/run_explainer.py
 ```

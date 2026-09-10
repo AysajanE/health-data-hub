@@ -36,6 +36,18 @@ FULL_TRAINED_REPORT = {
         "latest_logged_feeling": 4.0,
         "latest_contributions": [{"feature_name": "hrv_z", "feature_value": -0.9}],
         "latest_prediction_interval": {"low": 3.1, "high": 5.9},
+        "latest_counterfactual": {
+            "status": "available",
+            "suppression_reason": None,
+            "counterfactual": {
+                "feature_name": "total_sleep_min",
+                "actual_value": 372.0,
+                "comparison_value": 447.5,
+                "model_delta_low": 0.6,
+                "model_delta_high": 1.2,
+                "median_delta": 0.9,
+            },
+        },
         "model_version": "ridge-v1.0",
         "feature_version": "v1.0",
     },
@@ -52,18 +64,44 @@ class SummarizeTest(unittest.TestCase):
         self.assertEqual(summary["n_model"], 40)
         self.assertEqual(summary["baseline_gate_reason"], "failed_rmse_ratio")
         self.assertEqual(summary["sign_stable_features"], ["total_sleep_min"])
+        self.assertEqual(summary["counterfactual_status"], "available")
+        self.assertIsNone(summary["counterfactual_reason"])
         for forbidden in (
             "latest_feature_values",
             "latest_display_metadata",
             "latest_logged_feeling",
             "latest_contributions",
             "latest_prediction_interval",
+            "latest_counterfactual",
+            "comparison_value",
+            "447",
+            "372",
             "411",
             "38.0",
             "4.0",
             "artifacts",
         ):
             self.assertNotIn(forbidden, serialized)
+
+    def test_suppressed_counterfactual_reason_is_summarized_without_values(self) -> None:
+        summary = summarize(
+            {
+                "status": "trained",
+                "errors": [],
+                "record": {
+                    "n_model": 40,
+                    "latest_counterfactual": {
+                        "status": "suppressed",
+                        "suppression_reason": "actual_at_or_above_recent_median",
+                        "counterfactual": None,
+                        "provenance": {"recent_median": 452.0},
+                    },
+                },
+            }
+        )
+        self.assertEqual(summary["counterfactual_status"], "suppressed")
+        self.assertEqual(summary["counterfactual_reason"], "actual_at_or_above_recent_median")
+        self.assertNotIn("452", json.dumps(summary))
 
     def test_errors_are_reduced_to_type_names(self) -> None:
         summary = summarize(

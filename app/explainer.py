@@ -28,7 +28,14 @@ from app.mood_form import (  # noqa: E402
 from scripts.retrain_model import load_verified_feature_rows  # noqa: E402
 from src.api.mood_date import resolve_mood_date  # noqa: E402
 from src.model.baseline_gate import MIN_MODEL_ROWS_FOR_GATE  # noqa: E402
-from src.model.display_gate import DisplayState, InsightView, build_insight_view  # noqa: E402
+from src.model.display_gate import (  # noqa: E402
+    COUNTERFACTUAL_CAVEAT,
+    COUNTERFACTUAL_FRAMING,
+    CounterfactualView,
+    DisplayState,
+    InsightView,
+    build_insight_view,
+)
 from src.model.eval_log import read_eval_records  # noqa: E402
 from src.warehouse.locking import (  # noqa: E402
     WarehouseLockTimeout,
@@ -250,7 +257,7 @@ def render_insight(view: InsightView, data: ExplainerData, today: date) -> None:
                 line += " *(low-confidence signal)*"
             st.markdown(line)
         st.markdown("**Model-estimated change in your past data**")
-        st.caption("The retrospective counterfactual is not built yet in this version.")
+        render_counterfactual(view.counterfactual)
         st.markdown(f"**Confidence: {view.confidence_label}**")
         st.caption(
             f"90% interval {view.interval_low:.1f} to {view.interval_high:.1f} · "
@@ -262,6 +269,23 @@ def render_insight(view: InsightView, data: ExplainerData, today: date) -> None:
         and view.trained_through_date < data.latest_mood_date
     ):
         st.caption(f"Tonight's retrain will cover {format_date(data.latest_mood_date)}.")
+
+
+def render_counterfactual(counterfactual: CounterfactualView | None) -> None:
+    """Render the single-feature retrospective sleep comparison, or why it is absent."""
+    if counterfactual is None or counterfactual.status != "available":
+        st.caption(
+            counterfactual.message if counterfactual is not None
+            else "Insufficient stable signal for a sleep comparison."
+        )
+        return
+    st.markdown(
+        "Looking at days with similar HRV and deep-sleep context, a total sleep of "
+        f"**{counterfactual.comparison_text}** (vs your actual {counterfactual.actual_text}) "
+        f"was associated with a **+{counterfactual.delta_low:.1f} to +{counterfactual.delta_high:.1f} point** "
+        "higher rating."
+    )
+    st.caption(f"{COUNTERFACTUAL_FRAMING} · {COUNTERFACTUAL_CAVEAT}")
 
 
 def render_timeline(data: ExplainerData) -> None:

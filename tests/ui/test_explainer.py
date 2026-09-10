@@ -188,7 +188,7 @@ class ExplainerTest(unittest.TestCase):
         self.assertFalse(any("Deep sleep %" in line for line in lines))
         self.assertIn("**Confidence: medium**", lines)
         captions = [item.value for item in at.caption]
-        self.assertIn("The retrospective counterfactual is not built yet in this version.", captions)
+        self.assertIn("Insufficient stable signal for a sleep comparison.", captions)
         self.assertIn("90% interval 4.6 to 7.4 · correlation, not proven causation · may reflect unmeasured factors like stress, illness, schedule", captions)
         charts = at.get("vega_lite_chart")
         self.assertEqual(len(charts), 2)
@@ -196,6 +196,52 @@ class ExplainerTest(unittest.TestCase):
             layers = json.loads(chart.proto.spec)["layer"]
             self.assertEqual({layer["encoding"]["y"]["field"] for layer in layers}, {measure})
             self.assertTrue(all(layer["mark"]["type"] != "text" for layer in layers))
+
+    def test_available_counterfactual_renders_both_exact_strings(self) -> None:
+        self.history()
+        record = eval_record(self.today)
+        record["latest_counterfactual"] = {
+            "status": "available",
+            "suppression_reason": None,
+            "counterfactual": {
+                "feature_name": "total_sleep_min",
+                "feature_display_name": "Total sleep",
+                "actual_value": 372.0,
+                "comparison_value": 447.5,
+                "model_delta_low": 0.6,
+                "model_delta_high": 1.2,
+                "median_delta": 0.9,
+                "direction": "increase_only",
+                "framing_label": "model-estimated change in your past data",
+                "caveat": "correlation, not proven causation",
+            },
+            "provenance": {"n_model": 40},
+        }
+        self.write_records(record)
+        at = self.start()
+        lines = [item.value for item in at.markdown]
+        self.assertIn(
+            "Looking at days with similar HRV and deep-sleep context, a total sleep of **7h 28m** "
+            "(vs your actual 6h 12m) was associated with a **+0.6 to +1.2 point** higher rating.",
+            lines,
+        )
+        captions = [item.value for item in at.caption]
+        self.assertIn("model-estimated change in your past data · correlation, not proven causation", captions)
+
+    def test_suppressed_counterfactual_reasons_render_explanation_only(self) -> None:
+        self.history()
+        for reason, expected in (
+            ("actual_at_or_above_recent_median", "No useful sleep-increase comparison: that night's sleep was already at your normal upper range."),
+            ("delta_interval_not_positive", "The estimated change is too uncertain to call useful."),
+            ("mutable_feature_not_stable", "Insufficient stable signal for a sleep comparison."),
+        ):
+            with self.subTest(reason=reason):
+                record = eval_record(self.today)
+                record["latest_counterfactual"] = {"status": "suppressed", "suppression_reason": reason, "counterfactual": None}
+                self.write_records(record)
+                at = self.start()
+                self.assertIn(expected, [item.value for item in at.caption])
+                self.assertFalse(any("was associated with" in line for line in [item.value for item in at.markdown]))
 
     def test_mood_first_embeds_existing_form_and_reruns_after_save(self) -> None:
         at = self.start()
