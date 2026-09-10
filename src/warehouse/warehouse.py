@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 import json
 import os
 from pathlib import Path
+import stat
 import statistics
 from typing import Any, Mapping, Sequence, TypeVar
 from uuid import UUID, uuid4
@@ -19,6 +20,11 @@ from src.warehouse.features import (
     compute_prior_only_hrv_z,
     eligible_sleep_rows_for_v1,
     load_sleep_provider_policy,
+)
+from src.warehouse.locking import (
+    DEFAULT_TIMEOUT_SECONDS as DEFAULT_WRITE_LOCK_TIMEOUT_SECONDS,
+    lock_path_for_database,
+    warehouse_write_lock,
 )
 from src.warehouse.models import (
     DailyFeaturesRow,
@@ -36,6 +42,7 @@ DEFAULT_GENERAL_LOG_PATH = Path.home() / "Library" / "Logs" / "healthhub.log"
 DEFAULT_QUARANTINE_DIR = REPO_ROOT / "data" / "quarantine"
 DEFAULT_FEATURE_VERSION = "v1.0"
 EIGHT_SLEEP_FALLBACK_IGNORED_WARNING = "8sleep_fallback_ignored"
+PRIVATE_FILE_MODE = 0o600
 
 _ModelT = TypeVar("_ModelT", SleepNightRow, MoodEntryRow, DailyFeaturesRow, SleepMergeDiagnosticsRow)
 
@@ -516,6 +523,113 @@ def insert_mood_entry(
     return row
 
 
+def secure_database_files(database: str | Path) -> None:
+    """Restrict the DuckDB file and its write-ahead log to the owner (mode 0600)."""
+
+    database_path = Path(database)
+    for candidate in (database_path, Path(f"{database_path}.wal")):
+        if candidate.is_symlink() or not candidate.is_file():
+            continue
+        if stat.S_IMODE(candidate.stat().st_mode) != PRIVATE_FILE_MODE:
+            candidate.chmod(PRIVATE_FILE_MODE)
+
+
+def _append_redacted_maintenance_log(general_log_path: Path, *, event: str, error: BaseException) -> None:
+    """Record a post-commit maintenance problem without any row values or paths."""
+
+    try:
+        general_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with general_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "event": event,
+                        "error_type": type(error).__name__,
+                        "detected_at_utc": datetime.now(UTC).isoformat(),
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+            handle.write("\n")
+    except OSError:
+        pass
+
+
+def _checkpoint(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute("CHECKPOINT")
+
+
+def _refuse_symlink_database(database_path: Path) -> None:
+    """Fail closed when the warehouse file or its WAL would be reached through a symlink."""
+
+    for candidate in (database_path, Path(f"{database_path}.wal")):
+        if candidate.is_symlink():
+            raise OSError("refusing symlink warehouse path")
+
+
+def persist_mood_entry_locked(
+    database: str | Path,
+    payload: MoodEntryRow | Mapping[str, Any],
+    *,
+    lock_timeout_seconds: float = DEFAULT_WRITE_LOCK_TIMEOUT_SECONDS,
+    quarantine_dir: Path | None = None,
+    general_log_path: Path = DEFAULT_GENERAL_LOG_PATH,
+) -> MoodEntryRow:
+    """Write one mood entry to a DuckDB file under the shared warehouse lock.
+
+    The connection is opened only after the lock is held and closed before it is
+    released. The database file is made owner-only before any row is written.
+    The insert runs inside one transaction; once ``COMMIT`` succeeds the entry is
+    durable (DuckDB replays its write-ahead log on the next open), so a failing
+    ``CHECKPOINT`` or permission touch-up afterwards is logged in redacted form
+    and never reported as a failed save.
+    """
+
+    database_path = Path(database)
+    _refuse_symlink_database(database_path)
+    quarantine = quarantine_dir if quarantine_dir is not None else database_path.parent / "quarantine"
+    with warehouse_write_lock(
+        lock_path_for_database(database_path),
+        timeout_seconds=lock_timeout_seconds,
+    ):
+        _refuse_symlink_database(database_path)
+        conn = connect_duckdb(database_path, apply_schema=True)
+        try:
+            secure_database_files(database_path)
+            conn.execute("BEGIN")
+            try:
+                row = insert_mood_entry(
+                    conn,
+                    payload,
+                    quarantine_dir=quarantine,
+                    general_log_path=general_log_path,
+                )
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            conn.execute("COMMIT")
+            try:
+                _checkpoint(conn)
+            except Exception as error:
+                _append_redacted_maintenance_log(
+                    general_log_path,
+                    event="checkpoint_failed_after_commit",
+                    error=error,
+                )
+        finally:
+            conn.close()
+        try:
+            secure_database_files(database_path)
+        except OSError as error:
+            _append_redacted_maintenance_log(
+                general_log_path,
+                event="permission_touch_up_failed_after_commit",
+                error=error,
+            )
+    return row
+
+
 def insert_daily_features_row(
     conn: duckdb.DuckDBPyConnection,
     payload: DailyFeaturesRow | Mapping[str, Any],
@@ -742,6 +856,8 @@ __all__ = [
     "insert_mood_entry",
     "insert_sleep_merge_diagnostics",
     "insert_sleep_night",
+    "persist_mood_entry_locked",
+    "secure_database_files",
     "select_labeled_daily_features",
     "select_current_mood_entries",
 ]

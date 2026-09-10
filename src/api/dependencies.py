@@ -12,13 +12,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.schemas import MoodLogRequest, MoodLogResponse
-from src.warehouse.warehouse import DEFAULT_DATABASE_PATH, connect_duckdb, insert_mood_entry
+from src.warehouse.warehouse import DEFAULT_DATABASE_PATH, persist_mood_entry_locked
 
 
 ENV_MOOD_TOKEN = "MOOD_TOKEN"
 ENV_LAN_BIND_IP = "LAN_BIND_IP"
 ENV_HOME_TIMEZONE = "HOME_TIMEZONE"
 DEFAULT_HOME_TIMEZONE = "America/Toronto"
+MOOD_WRITE_LOCK_TIMEOUT_SECONDS = 10.0
 
 
 class ApiSettings(BaseModel):
@@ -109,24 +110,21 @@ def persist_mood_entry_to_warehouse(
     database: str | Path = DEFAULT_DATABASE_PATH,
 ) -> MoodLogResponse:
     logged_at_utc = payload.logged_at_utc or datetime.now(UTC)
-    conn = connect_duckdb(database, apply_schema=True)
-    try:
-        entry = insert_mood_entry(
-            conn,
-            {
-                "log_id": uuid4(),
-                "logged_at_utc": logged_at_utc,
-                "mood_date": mood_date,
-                "feeling": payload.feeling,
-                "energy": payload.energy,
-                "notes": payload.notes,
-                "context_chips": payload.context_chips,
-                "source": "ios_shortcut",
-                "supersedes_log_id": None,
-            },
-        )
-    finally:
-        conn.close()
+    entry = persist_mood_entry_locked(
+        database,
+        {
+            "log_id": uuid4(),
+            "logged_at_utc": logged_at_utc,
+            "mood_date": mood_date,
+            "feeling": payload.feeling,
+            "energy": payload.energy,
+            "notes": payload.notes,
+            "context_chips": payload.context_chips,
+            "source": "ios_shortcut",
+            "supersedes_log_id": None,
+        },
+        lock_timeout_seconds=MOOD_WRITE_LOCK_TIMEOUT_SECONDS,
+    )
 
     return MoodLogResponse(log_id=entry.log_id, mood_date=entry.mood_date, status="ok")
 

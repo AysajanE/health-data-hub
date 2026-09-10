@@ -93,11 +93,23 @@ If you wanted a coach in your pocket, that's not this. The Autopilot tier (actio
 
 **If you just want to understand the system** — open [`docs/keel-walkthrough_v1.html`](docs/keel-walkthrough_v1.html) in a browser. It's the click-through tour of how Keel + AutoKeel build a real feature end to end.
 
-**If you want to run the product on your own data** — there is no honest Quickstart yet. S11 must first clear its non-paid activation/isolation control stop and then prove the real phone/LAN form. S12 must then build and prove the production Oura sync. Watch the slice ledger:
+**If you want to run the product on your own data** — daily mood logging works today (see [Log your mood](#log-your-mood-every-evening) below). The production Oura sync, the explainer page, and backups are being built directly on `main`.
 
-```bash
-python -m ops.autonomy.autokeel --status --failures
-```
+## Log your mood (every evening)
+
+The mood log is the only part of the product that needs you every day. It is a small Streamlit page served only on your home Wi-Fi, and it writes straight into the local DuckDB warehouse.
+
+1. Put `LAN_BIND_IP` (the Mac's home Wi-Fi address), `MOOD_FORM_TOKEN` (any private string), and `HOME_TIMEZONE` in `.env.local`. That file is never committed.
+2. Start the form on the Mac and leave it running:
+
+   ```bash
+   .venv/bin/python scripts/run_mood_form.py
+   ```
+
+3. On the phone, on the same Wi-Fi, open `http://<LAN_BIND_IP>:8501`, enter the token once, pick a number from 1 to 10 for *"How did I feel overall today?"*, and tap **Save**. Energy, context, and notes are optional.
+4. Log in the evening. Anything saved between midnight and 4:00 AM counts for the day that just ended. Saving twice for the same day replaces the rating and keeps the earlier one in history.
+
+`.venv/bin/python scripts/run_mood_form.py --check` validates the settings without starting the server.
 
 **If you want to study the autonomous build** — read on.
 

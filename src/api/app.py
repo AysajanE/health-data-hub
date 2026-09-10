@@ -19,6 +19,7 @@ from src.api.security import (
     build_same_host_read_middleware,
     enforce_post_rate_limit,
 )
+from src.warehouse.locking import WarehouseLockTimeout
 
 
 def create_app(
@@ -54,6 +55,8 @@ def create_app(
             return persistence(normalized_payload, mood_date)
         except NotImplementedError as exc:
             raise HTTPException(status_code=503, detail="Mood persistence unavailable") from exc
+        except WarehouseLockTimeout as exc:
+            raise HTTPException(status_code=503, detail="Warehouse busy") from exc
 
     @app.get("/api/health", dependencies=[Depends(require_token)])
     async def get_health() -> dict[str, object]:
