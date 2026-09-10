@@ -70,6 +70,52 @@ class BuildPlistsTest(unittest.TestCase):
             self.assertEqual(set(payload["EnvironmentVariables"]), {"PATH", "PYTHONUNBUFFERED"})
 
 
+class BootstrapRetryTest(unittest.TestCase):
+    def test_retries_transient_io_error_then_succeeds(self) -> None:
+        from subprocess import CompletedProcess
+        from unittest.mock import patch
+
+        from scripts import install_launchd
+
+        outcomes = iter(
+            [
+                CompletedProcess(["launchctl", "bootout"], 0, stdout="", stderr=""),
+                CompletedProcess(["launchctl", "bootstrap"], 5, stdout="", stderr="Bootstrap failed: 5: Input/output error"),
+                CompletedProcess(["launchctl", "bootstrap"], 5, stdout="", stderr="Bootstrap failed: 5: Input/output error"),
+                CompletedProcess(["launchctl", "bootstrap"], 0, stdout="", stderr=""),
+            ]
+        )
+        with patch.object(install_launchd, "_launchctl", side_effect=lambda *args: next(outcomes)), patch.object(
+            install_launchd.time, "sleep"
+        ) as sleep:
+            result = install_launchd.bootstrap("com.healthhub.mood-form", Path("/tmp/x.plist"))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["attempts"], 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_non_transient_failure_is_not_retried(self) -> None:
+        from subprocess import CompletedProcess
+        from unittest.mock import patch
+
+        from scripts import install_launchd
+
+        outcomes = iter(
+            [
+                CompletedProcess(["launchctl", "bootout"], 0, stdout="", stderr=""),
+                CompletedProcess(["launchctl", "bootstrap"], 1, stdout="", stderr="Bootstrap failed: 1: Operation not permitted"),
+            ]
+        )
+        with patch.object(install_launchd, "_launchctl", side_effect=lambda *args: next(outcomes)), patch.object(
+            install_launchd.time, "sleep"
+        ) as sleep:
+            result = install_launchd.bootstrap("com.healthhub.mood-form", Path("/tmp/x.plist"))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["attempts"], 1)
+        self.assertEqual(sleep.call_count, 0)
+
+
 class WritePlistsTest(unittest.TestCase):
     def test_writes_parseable_plists(self) -> None:
         plists = build_plists(

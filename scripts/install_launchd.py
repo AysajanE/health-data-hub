@@ -22,6 +22,7 @@ from pathlib import Path
 import plistlib
 import subprocess
 import sys
+import time
 from typing import Any
 
 
@@ -134,14 +135,28 @@ def _domain() -> str:
     return f"gui/{os.getuid()}"
 
 
-def bootstrap(label: str, path: Path) -> dict[str, Any]:
-    """(Re)load one agent; bootout first so edited plists take effect."""
+BOOTSTRAP_ATTEMPTS = 6
+BOOTSTRAP_RETRY_SECONDS = 1.5
+
+
+def bootstrap(label: str, path: Path, *, attempts: int = BOOTSTRAP_ATTEMPTS) -> dict[str, Any]:
+    """(Re)load one agent; bootout first so edited plists take effect.
+
+    launchd briefly reports "Input/output error" (code 5) while a booted-out
+    KeepAlive job is still tearing down, so bootstrap is retried a few times.
+    """
 
     _launchctl("bootout", f"{_domain()}/{label}")
     result = _launchctl("bootstrap", _domain(), str(path))
+    attempt = 1
+    while result.returncode != 0 and attempt < attempts and "Input/output error" in (result.stderr + result.stdout):
+        time.sleep(BOOTSTRAP_RETRY_SECONDS)
+        result = _launchctl("bootstrap", _domain(), str(path))
+        attempt += 1
     return {
         "label": label,
         "ok": result.returncode == 0,
+        "attempts": attempt,
         "detail": (result.stderr or result.stdout).strip()[:200],
     }
 
