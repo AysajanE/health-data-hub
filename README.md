@@ -136,7 +136,21 @@ The card's "model-estimated change in your past data" line comes from the retros
 .venv/bin/python scripts/run_explainer.py
 ```
 
-Four per-user launchd agents keep everything running on an always-on Mac: the mood form and the explainer page (kept alive), the Oura sync at 08:00 and 19:30, and the model retrain at 23:00 after the evening log.
+## Backups and restore
+
+Every night at 23:30 the data plane (the DuckDB warehouse after a checkpoint, the Oura token file, the sync status, and the model evaluation log) is packed with a names-and-digests manifest, encrypted with the system OpenSSL (AES-256, PBKDF2) under a private passphrase, and written to iCloud Drive under `HealthDataHub/snapshots/`. The newest 30 snapshots are kept. Quarantine payloads and `.env.local` are excluded by default.
+
+```bash
+.venv/bin/python scripts/backup_snapshot.py --init-key           # once; then copy data/secrets/backup_passphrase into your password manager
+.venv/bin/python scripts/backup_snapshot.py --json               # take a snapshot now
+.venv/bin/python scripts/restore_snapshot.py --snapshot latest --verify-only
+```
+
+The passphrase is never printed by any command. Without a copy of it outside this Mac, the snapshots cannot be opened after a disk loss.
+
+Restore never touches the live data by default. It decrypts the newest snapshot into a fresh directory under `data/restore/`, verifies every digest, and prints aggregate counts. To point the explainer at a restored copy, set `HEALTH_HUB_DATABASE_PATH` and `HEALTH_HUB_MODEL_DIR` to that directory. Replacing the live data plane requires `--in-place --force`, which first moves the current files aside.
+
+Five per-user launchd agents keep everything running on an always-on Mac: the mood form and the explainer page (kept alive), the Oura sync at 08:00 and 19:30, the model retrain at 23:00 after the evening log, and the encrypted backup at 23:30.
 
 ```bash
 .venv/bin/python scripts/install_launchd.py --install

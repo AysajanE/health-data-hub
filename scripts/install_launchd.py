@@ -7,6 +7,7 @@ Three per-user agents keep the product running on an always-on Mac:
 - ``com.healthhub.explainer``: the loopback-only retrospective page, kept alive.
 - ``com.healthhub.oura-sync``: the Oura sleep sync, morning and early evening.
 - ``com.healthhub.retrain``: the nightly model retrain after the evening log.
+- ``com.healthhub.backup``: the nightly encrypted snapshot to iCloud Drive.
 
 Plists are generated from this file so paths always match the checkout. Logs
 go to ``~/Library/Logs`` and never contain tokens or health values because the
@@ -35,8 +36,10 @@ MOOD_FORM_LABEL = f"{LABEL_PREFIX}mood-form"
 EXPLAINER_LABEL = f"{LABEL_PREFIX}explainer"
 OURA_SYNC_LABEL = f"{LABEL_PREFIX}oura-sync"
 RETRAIN_LABEL = f"{LABEL_PREFIX}retrain"
+BACKUP_LABEL = f"{LABEL_PREFIX}backup"
 SYNC_TIMES = ({"Hour": 8, "Minute": 0}, {"Hour": 19, "Minute": 30})
 RETRAIN_TIME = {"Hour": 23, "Minute": 0}
+BACKUP_TIME = {"Hour": 23, "Minute": 30}
 MINIMAL_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 
@@ -95,11 +98,22 @@ def build_plists(
     )
     retrain.update({"RunAtLoad": False, "StartCalendarInterval": dict(RETRAIN_TIME)})
 
+    # Encrypted snapshot to iCloud Drive after the retrain; --notify raises a
+    # macOS notification on failure with no detail text.
+    backup = _base_plist(
+        BACKUP_LABEL,
+        [str(python), str(repo_root / "scripts" / "backup_snapshot.py"), "--json", "--notify"],
+        repo_root=repo_root,
+        log_dir=log_dir,
+    )
+    backup.update({"RunAtLoad": False, "StartCalendarInterval": dict(BACKUP_TIME)})
+
     return {
         MOOD_FORM_LABEL: mood_form,
         EXPLAINER_LABEL: explainer,
         OURA_SYNC_LABEL: oura_sync,
         RETRAIN_LABEL: retrain,
+        BACKUP_LABEL: backup,
     }
 
 

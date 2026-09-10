@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from scripts.install_launchd import (
+    BACKUP_LABEL,
     EXPLAINER_LABEL,
     MOOD_FORM_LABEL,
     OURA_SYNC_LABEL,
@@ -23,11 +24,19 @@ class BuildPlistsTest(unittest.TestCase):
         self.log_dir = Path("/tmp/example-logs")
         self.plists = build_plists(repo_root=self.repo_root, python=self.python, log_dir=self.log_dir)
 
-    def test_four_agents_with_expected_labels(self) -> None:
+    def test_five_agents_with_expected_labels(self) -> None:
         self.assertEqual(
             set(self.plists),
-            {MOOD_FORM_LABEL, EXPLAINER_LABEL, OURA_SYNC_LABEL, RETRAIN_LABEL},
+            {MOOD_FORM_LABEL, EXPLAINER_LABEL, OURA_SYNC_LABEL, RETRAIN_LABEL, BACKUP_LABEL},
         )
+
+    def test_backup_runs_after_the_retrain_with_notification_on_failure(self) -> None:
+        payload = self.plists[BACKUP_LABEL]
+        self.assertFalse(payload["RunAtLoad"])
+        self.assertEqual(payload["StartCalendarInterval"], {"Hour": 23, "Minute": 30})
+        self.assertTrue(payload["ProgramArguments"][1].endswith("scripts/backup_snapshot.py"))
+        self.assertIn("--notify", payload["ProgramArguments"])
+        self.assertIn("--json", payload["ProgramArguments"])
         for label, payload in self.plists.items():
             self.assertEqual(payload["Label"], label)
             self.assertEqual(payload["WorkingDirectory"], str(self.repo_root))
@@ -60,7 +69,7 @@ class BuildPlistsTest(unittest.TestCase):
         self.assertEqual(payload["StartCalendarInterval"], {"Hour": 23, "Minute": 0})
         self.assertTrue(payload["ProgramArguments"][1].endswith("scripts/nightly_retrain.py"))
         self.assertNotIn("--json", payload["ProgramArguments"])
-        for other in (MOOD_FORM_LABEL, EXPLAINER_LABEL, OURA_SYNC_LABEL):
+        for other in (MOOD_FORM_LABEL, EXPLAINER_LABEL, OURA_SYNC_LABEL, BACKUP_LABEL):
             self.assertFalse(
                 any(arg.endswith("retrain_model.py") for arg in self.plists[other]["ProgramArguments"])
             )
