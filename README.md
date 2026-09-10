@@ -138,7 +138,9 @@ The card's "model-estimated change in your past data" line comes from the retros
 
 ## Backups and restore
 
-Every night at 23:30 the data plane (the DuckDB warehouse after a checkpoint, the Oura token file, the sync status, and the model evaluation log) is packed with a names-and-digests manifest, encrypted with the system OpenSSL (AES-256, PBKDF2) under a private passphrase, and written to iCloud Drive under `HealthDataHub/snapshots/`. The newest 30 snapshots are kept. Quarantine payloads and `.env.local` are excluded by default.
+Every night at 23:30 the data plane (the DuckDB warehouse after a checkpoint, the Oura token file, the sync status, and the model evaluation log) is packed with a names-and-digests manifest, encrypted with the system OpenSSL (AES-256, PBKDF2) under a private passphrase, and written to `~/Library/Application Support/HealthDataHub/snapshots/`. It is then mirrored to iCloud Drive under `HealthDataHub/snapshots/` as a best-effort second copy. The newest 30 snapshots are kept in both places. Quarantine payloads and `.env.local` are excluded by default.
+
+macOS privacy protection blocks background jobs from iCloud Drive until the program is granted access. Until then the nightly report shows `mirror=error` and a notification says the mirror failed, while the local snapshot is still taken. To allow the mirror: System Settings, Privacy & Security, Full Disk Access, add the Python interpreter the agents run (`readlink -f .venv/bin/python` prints its path; press Cmd+Shift+G in the file picker to type it). Running the backup by hand from a terminal that already has iCloud access mirrors fine.
 
 ```bash
 .venv/bin/python scripts/backup_snapshot.py --init-key           # once; then copy data/secrets/backup_passphrase into your password manager

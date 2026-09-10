@@ -18,6 +18,7 @@ class BackupEntrypointsTest(SnapshotFixture):
     def setUp(self):
         super().setUp()
         self.seed()
+        self.mirror = self.base / "cloud-mirror/snapshots"
         for cli in (backup_cli, restore_cli):
             for name, value in {
                 "REPO_ROOT": self.root, "DEFAULT_DATABASE_PATH": self.database,
@@ -25,6 +26,8 @@ class BackupEntrypointsTest(SnapshotFixture):
             }.items():
                 self.enterContext(patch.object(cli, name, value))
             self.enterContext(patch.object(cli, "OpensslCipher", return_value=self.cipher))
+        # Never let a test mirror into the real iCloud Drive folder.
+        self.enterContext(patch.object(backup_cli, "DEFAULT_MIRROR", self.mirror))
         self.run_process = self.enterContext(patch.object(
             backup_cli.subprocess, "run",
             return_value=subprocess.CompletedProcess([], 0, stdout="abcdef1\n", stderr=""),
@@ -86,9 +89,37 @@ class BackupEntrypointsTest(SnapshotFixture):
         self.assertEqual(report["destination"], str(self.destination))
         self.assertEqual(self.cipher.calls[0][0], "encrypt")
         self.assertEqual(self.run_process.call_args.args[0], ["git", "rev-parse", "--short", "HEAD"])
-        code, output, _ = self.invoke(backup_cli, ["--destination", str(self.base / "second-snapshots"), "--include-env"])
+        self.assertEqual(report["mirror"]["status"], "ok")
+        self.assertEqual(report["mirror"]["destination"], str(self.mirror))
+        self.assertEqual(sha256_file(self.mirror / report["snapshot"]), report["encrypted_sha256"])
+        self.assertTrue((self.mirror / (report["snapshot"] + ".manifest.json")).is_file())
+        code, output, _ = self.invoke(backup_cli, ["--destination", str(self.base / "second-snapshots"), "--include-env", "--no-mirror"])
         self.assertEqual(code, 0)
-        self.assertRegex(output, r"^ok snapshot=hh-snapshot-\d{8}T\d{6}Z.tar.gz.enc files=7 bytes=\d+ kept=1 pruned=0\n$")
+        self.assertRegex(output, r"^ok snapshot=hh-snapshot-\d{8}T\d{6}Z.tar.gz.enc files=7 bytes=\d+ kept=1 pruned=0 mirror=skipped\n$")
+
+    def test_mirror_failure_keeps_the_local_snapshot_and_notifies_without_details(self):
+        import shutil
+
+        original_copy2 = shutil.copy2
+
+        def deny_mirror(source, target):
+            if Path(target).is_relative_to(self.mirror):
+                raise PermissionError("Operation not permitted")
+            return original_copy2(source, target)
+
+        with patch("src.backup.snapshot.shutil.copy2", side_effect=deny_mirror):
+            code, output, errors = self.invoke(backup_cli, ["--json", "--notify"])
+        self.assertEqual((code, errors), (0, ""))
+        report = json.loads(output)
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["mirror"]["status"], "error")
+        self.assertEqual(report["mirror"]["error_type"], "PermissionError")
+        self.assertTrue((self.destination / report["snapshot"]).is_file())
+        self.assertFalse((self.mirror / report["snapshot"]).exists())
+        calls = [call for call in self.run_process.call_args_list if call.args[0][0] == "/usr/bin/osascript"]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].args[0][2], backup_cli.MIRROR_NOTIFICATION)
+        self.assertNotIn("Operation not permitted", output)
 
     def test_errors_are_json_and_raw_exception_details_are_redacted(self):
         code, output, errors = self.invoke(backup_cli, ["--passphrase-file", str(self.base / "missing"), "--json"])

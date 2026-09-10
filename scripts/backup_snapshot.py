@@ -17,6 +17,7 @@ from src.backup.snapshot import (
     DEFAULT_DATABASE_PATH,
     DEFAULT_DESTINATION,
     DEFAULT_KEEP,
+    DEFAULT_MIRROR,
     DEFAULT_PASSPHRASE_PATH,
     OpensslCipher,
     REPO_ROOT,
@@ -24,6 +25,20 @@ from src.backup.snapshot import (
     create_snapshot,
     init_passphrase,
 )
+
+NOTIFY_COMMAND = "/usr/bin/osascript"
+FAILURE_NOTIFICATION = 'display notification "Health Data Hub backup failed" with title "Health Data Hub"'
+MIRROR_NOTIFICATION = (
+    'display notification "Health Data Hub backup saved locally but the iCloud mirror failed" '
+    'with title "Health Data Hub"'
+)
+
+
+def _notify(script: str) -> None:
+    try:
+        subprocess.run([NOTIFY_COMMAND, "-e", script], check=False, capture_output=True)
+    except Exception:
+        pass
 
 
 def _app_commit() -> str | None:
@@ -41,6 +56,8 @@ def _app_commit() -> str | None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, default=DEFAULT_DESTINATION)
+    parser.add_argument("--mirror", type=Path, default=DEFAULT_MIRROR, help="Best-effort second copy (iCloud Drive).")
+    parser.add_argument("--no-mirror", action="store_true", help="Skip the mirror copy.")
     parser.add_argument("--passphrase-file", type=Path, default=DEFAULT_PASSPHRASE_PATH)
     parser.add_argument("--keep", type=int, default=DEFAULT_KEEP)
     parser.add_argument("--include-env", action="store_true")
@@ -64,12 +81,18 @@ def main(argv: list[str] | None = None) -> int:
             root=REPO_ROOT, destination=args.destination.expanduser(), passphrase_file=passphrase_file,
             cipher=OpensslCipher(), keep=args.keep, include_env=args.include_env,
             app_commit=_app_commit(), database=args.database.expanduser(),
+            mirror=None if args.no_mirror else args.mirror.expanduser(),
         )
+        mirror = report.get("mirror")
+        mirror_state = "skipped" if mirror is None else mirror["status"]
         if args.json:
             print(json.dumps(report, sort_keys=True))
         else:
             print(f"ok snapshot={report['snapshot']} files={report['file_count']} "
-                  f"bytes={report['encrypted_size']} kept={report['kept']} pruned={report['pruned']}")
+                  f"bytes={report['encrypted_size']} kept={report['kept']} pruned={report['pruned']} "
+                  f"mirror={mirror_state}")
+        if args.notify and mirror_state == "error":
+            _notify(MIRROR_NOTIFICATION)
         return 0
     except Exception as error:
         print(json.dumps({
@@ -77,13 +100,7 @@ def main(argv: list[str] | None = None) -> int:
             "message": str(error) if isinstance(error, SnapshotError) else "backup failed",
         }, sort_keys=True))
         if args.notify:
-            try:
-                subprocess.run([
-                    "/usr/bin/osascript", "-e",
-                    'display notification "Health Data Hub backup failed" with title "Health Data Hub"',
-                ], check=False, capture_output=True)
-            except Exception:
-                pass
+            _notify(FAILURE_NOTIFICATION)
         return 1
 
 

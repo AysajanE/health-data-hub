@@ -35,7 +35,11 @@ from src.warehouse.warehouse import (
 
 SNAPSHOT_SCHEMA = "hh_snapshot.v1"
 SNAPSHOT_PREFIX = "hh-snapshot-"
-DEFAULT_DESTINATION = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "HealthDataHub" / "snapshots"
+# The primary destination is a local folder that background launchd jobs can
+# always write. iCloud Drive is macOS-privacy-protected for background
+# processes, so it is a best-effort mirror whose failure is reported, not fatal.
+DEFAULT_DESTINATION = Path.home() / "Library" / "Application Support" / "HealthDataHub" / "snapshots"
+DEFAULT_MIRROR = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "HealthDataHub" / "snapshots"
 DEFAULT_PASSPHRASE_PATH = REPO_ROOT / "data" / "secrets" / "backup_passphrase"
 DEFAULT_KEEP = 30
 OPENSSL_PATH = "/usr/bin/openssl"
@@ -436,16 +440,76 @@ def _fsync(path: Path, *, directory=False) -> None:
 
 def create_snapshot(*, root: Path, destination: Path, passphrase_file: Path, cipher: Cipher,
                     keep: int = DEFAULT_KEEP, include_env=False, now: datetime | None = None,
-                    app_commit: str | None = None, database: Path = DEFAULT_DATABASE_PATH) -> dict:
+                    app_commit: str | None = None, database: Path = DEFAULT_DATABASE_PATH,
+                    mirror: Path | None = None) -> dict:
     _validate_passphrase(passphrase_file)
     if type(keep) is not int or keep < 1:
         raise SnapshotError("keep must be at least 1")
+    if mirror is not None and mirror.absolute() == destination.absolute():
+        raise SnapshotError("mirror must differ from the destination")
     _private_directory(destination)
     with _DestinationLock(destination):
-        return _create_snapshot_locked(
+        report = _create_snapshot_locked(
             root=root, destination=destination, passphrase_file=passphrase_file, cipher=cipher,
             keep=keep, include_env=include_env, now=now, app_commit=app_commit, database=database,
         )
+        if mirror is not None:
+            report["mirror"] = mirror_snapshot(
+                destination / report["snapshot"], mirror, keep=keep,
+                expected_sha256=report["encrypted_sha256"],
+            )
+        return report
+
+
+def mirror_snapshot(snapshot: Path, mirror: Path, *, keep: int, expected_sha256: str) -> dict:
+    """Best-effort copy of a published snapshot and its sidecar to a mirror folder.
+
+    Failures (typically macOS privacy protection denying a background job access
+    to iCloud Drive) are returned as a typed report, never raised, so the local
+    snapshot remains the source of truth and the caller can surface the gap.
+    """
+    result = {"status": "error", "destination": str(mirror), "error_type": None, "kept": 0, "pruned": 0}
+    try:
+        _refuse_symlinks(snapshot)
+        _private_directory(mirror)
+        # The mirror may be shared by backups with different local destinations,
+        # so it carries its own lock across publication and pruning.
+        with _DestinationLock(mirror):
+            existing = mirror / snapshot.name
+            _refuse_symlinks(existing)
+            if existing.exists() and sha256_file(existing) != expected_sha256:
+                raise SnapshotError("mirror already holds a different snapshot with this name")
+            for source in (snapshot, _sidecar(snapshot)):
+                if not source.is_file():
+                    raise SnapshotError("snapshot file missing before mirroring")
+                target = mirror / source.name
+                temporary = mirror / f".{source.name}.{secrets.token_hex(8)}.tmp"
+                _refuse_symlinks(target)
+                _refuse_symlinks(temporary)
+                try:
+                    shutil.copy2(source, temporary)
+                    temporary.chmod(0o600)
+                    if source == snapshot and sha256_file(temporary) != expected_sha256:
+                        raise SnapshotError("mirror copy digest mismatch")
+                    _fsync(temporary)
+                    os.replace(temporary, target)
+                    target.chmod(0o600)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            mirrored = list_snapshots(mirror)
+            pruned = 0
+            for old in mirrored[keep:]:
+                _refuse_symlinks(_sidecar(old))
+                old.unlink()
+                _sidecar(old).unlink(missing_ok=True)
+                pruned += 1
+            _fsync(mirror, directory=True)
+        result.update(status="ok", kept=len(mirrored) - pruned, pruned=pruned)
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            raise
+        result["error_type"] = type(error).__name__
+    return result
 
 
 def _create_snapshot_locked(*, root: Path, destination: Path, passphrase_file: Path, cipher: Cipher,

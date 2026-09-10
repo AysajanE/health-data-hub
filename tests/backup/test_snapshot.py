@@ -250,6 +250,71 @@ class PassphraseAndCollectionTest(SnapshotFixture):
         self.assertEqual(self.key.read_bytes(), original)
         self.assertEqual([p.name for p in self.key.parent.iterdir() if p.name.endswith((".previous", ".tmp"))], [])
 
+    def test_mirror_copies_both_files_verifies_digest_and_prunes(self):
+        self.seed()
+        mirror = self.base / "cloud-mirror/snapshots"
+        snapshot, report = self.backup(mirror=mirror, keep=1)
+        self.assertEqual(report["mirror"]["status"], "ok")
+        self.assertEqual(sha256_file(mirror / snapshot.name), report["encrypted_sha256"])
+        for path in (mirror / snapshot.name, mirror / (snapshot.name + ".manifest.json")):
+            self.assertEqual(S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual(S_IMODE(mirror.stat().st_mode), 0o700)
+        second, report = self.backup(mirror=mirror, keep=1, now=NOW + timedelta(days=1))
+        self.assertEqual(report["mirror"], {"status": "ok", "destination": str(mirror), "error_type": None, "kept": 1, "pruned": 1})
+        self.assertEqual(list_snapshots(mirror), [mirror / second.name])
+        self.assertEqual([p.name for p in mirror.iterdir() if p.name.endswith(".tmp")], [])
+        with self.assertRaisesRegex(SnapshotError, "^mirror must differ from the destination$"):
+            self.backup(mirror=self.destination, now=NOW + timedelta(days=2))
+
+    def test_mirror_is_locked_and_refuses_a_conflicting_same_name_snapshot(self):
+        self.seed()
+        mirror = self.base / "cloud-mirror/snapshots"
+        mirror.mkdir(parents=True, mode=0o700)
+        holder = os.open(mirror / ".backup.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            snapshot, report = self.backup(mirror=mirror)
+        finally:
+            fcntl.flock(holder, fcntl.LOCK_UN)
+            os.close(holder)
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["mirror"]["status"], "error")
+        self.assertEqual(report["mirror"]["error_type"], "SnapshotError")
+        self.assertFalse((mirror / snapshot.name).exists())
+
+        # A different snapshot already published under the same name (another
+        # local destination, same timestamp) must be left untouched.
+        foreign = mirror / snapshot.name
+        foreign.write_bytes(b"foreign-ciphertext")
+        foreign_digest = sha256_file(foreign)
+        snapshot2, report = self.backup(mirror=mirror, destination=self.base / "other-local")
+        self.assertEqual(snapshot2.name, snapshot.name)
+        self.assertEqual(report["mirror"]["status"], "error")
+        self.assertEqual(report["mirror"]["error_type"], "SnapshotError")
+        self.assertEqual(sha256_file(foreign), foreign_digest)
+        self.assertFalse((mirror / (snapshot.name + ".manifest.json")).exists())
+
+    def test_mirror_failure_is_reported_not_raised_and_local_snapshot_survives(self):
+        self.seed()
+        mirror = self.base / "cloud-mirror/snapshots"
+        original_copy2 = shutil.copy2
+
+        def deny_mirror(source, target):
+            # Simulate macOS privacy protection: only the mirror is unwritable.
+            if Path(target).is_relative_to(mirror):
+                raise PermissionError("Operation not permitted")
+            return original_copy2(source, target)
+
+        with patch.object(module.shutil, "copy2", side_effect=deny_mirror):
+            snapshot, report = self.backup(mirror=mirror)
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["mirror"]["status"], "error")
+        self.assertEqual(report["mirror"]["error_type"], "PermissionError")
+        self.assertTrue(snapshot.is_file())
+        self.assertEqual(self.verify(snapshot)[0].entries[0].relative_path, "data/oura_sync_status.json")
+        self.assertFalse((mirror / snapshot.name).exists())
+        self.assertEqual([p.name for p in mirror.iterdir() if p.name.endswith(".tmp")], [])
+
     def test_concurrent_backups_are_serialized_by_the_destination_lock(self):
         self.seed()
         self.destination.mkdir(parents=True, mode=0o700)
