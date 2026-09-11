@@ -169,6 +169,19 @@ class SyncTest(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_requests_one_day_past_the_window_because_oura_end_date_is_exclusive(self):
+        # Regression: with end_date=D Oura omits the night whose day is D, so
+        # the sync must ask through D + 1 while reporting the logical window.
+        transport = FakeTransport([sleep_record()], [])
+        report = self.sync(transport=transport)
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.end_date, DAY)
+        for url, _, _ in transport.calls:
+            query = parse_qs(urlsplit(url).query)
+            self.assertEqual(query["start_date"], [(DAY - timedelta(days=14)).isoformat()])
+            self.assertEqual(query["end_date"], [(DAY + timedelta(days=1)).isoformat()])
+        self.assertEqual(len(transport.calls), 2)
+
     def test_idempotent_upserts_preserve_eight_sleep_and_exclude_it_from_features(self):
         conn = connect_duckdb(self.database, apply_schema=True)
         eight = map_sleep_record(sleep_record(), home_tz=TZ, ingested_at_utc=NOW, sleep_score=None)

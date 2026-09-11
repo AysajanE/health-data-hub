@@ -341,9 +341,14 @@ def sync_oura(
         tokens = ensure_access_token(store, credentials, transport, now=started)
         fetched: dict[str, list[dict]] = {}
         refreshed = False
+        # Oura's end_date is exclusive (verified live 2026-09-11): a request
+        # ending on D omits the night whose day is D. Ask through D + 1 so the
+        # night that ended this morning is included; the report keeps the
+        # logical window end.
+        request_end = end_date + timedelta(days=1)
         for collection in ("sleep", "daily_sleep"):
             try:
-                records = fetch_collection(transport, tokens.access_token, collection, start_date, end_date)
+                records = fetch_collection(transport, tokens.access_token, collection, start_date, request_end)
             except OuraAuthError:
                 if refreshed:
                     raise
@@ -351,7 +356,7 @@ def sync_oura(
                 tokens = ensure_access_token(
                     store, credentials, transport, now=started, force_refresh=True,
                 )
-                records = fetch_collection(transport, tokens.access_token, collection, start_date, end_date)
+                records = fetch_collection(transport, tokens.access_token, collection, start_date, request_end)
             fetched[collection] = records
         report.records_fetched = len(fetched["sleep"])
         report.daily_scores_fetched = len(fetched["daily_sleep"])
