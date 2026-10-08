@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 
 SleepSource = Literal["oura", "8sleep"]
-MoodEntrySource = Literal["ios_shortcut", "manual", "backfill"]
+MoodEntrySource = Literal["ios_shortcut", "manual", "backfill", "grokbot"]
 ContextChip = Literal[
     "sick",
     "travel",
