@@ -1,11 +1,11 @@
 # Health Data Hub
 
 > **Your sleep, your mood, your model — all on your Mac.**
-> A personal health app that learns which patterns in your past nights *correlate* with how you actually felt — built end to end by an autonomous agent that keeps a truthful audit trail of its own work.
+> A personal health app that learns which patterns in your past nights *correlate* with how you actually felt.
 
 You wear an Oura Ring. Maybe an 8 Sleep cover. You feel different from day to day and you wish *something* could tell you which of last night's numbers usually tracks with how you feel. Vendor apps can't: Oura sees only Oura, 8 Sleep sees only 8 Sleep, and none of them know how you actually rated the day.
 
-Health Data Hub fuses those signals with a one-tap evening mood log and gives you a single, honest explainer card on your own machine. No cloud. No account. No coach trying to sell you anything.
+Health Data Hub fuses those signals with a one-tap evening mood log and gives you a single, honest explainer card on your own machine. No hosted backend. No account. No coach trying to sell you anything.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────┐
@@ -27,80 +27,93 @@ Health Data Hub fuses those signals with a one-tap evening mood log and gives yo
 
 That card is the product. Everything else in this repo exists to render it honestly.
 
-## Two things in one repo
+## Status
 
-1. **The product — Health Data Hub v1.** A local-first **Sleep + Mood Retrospective Explainer**. Oura → DuckDB on your Mac → a small model → a Streamlit page that explains yesterday. 8 Sleep is fallback-only and inactive in the current v1 provider path. Nothing leaves your machine.
-2. **The experiment — AutoKeel.** A zero-human supervisor that drives the [Keel](https://github.com/AysajanE/keel) toolchain to build the product, slice by slice, and writes a truthful audit trail of where it succeeded, where it failed, and why. AutoKeel never approves a human gate. Manual gates are substituted with deterministic verification + review artifacts, not faked.
+v1 is built and runs every day on an always-on Mac: the Oura sync, the evening mood form, the nightly retrain with its baseline gate and sleep counterfactual, the explainer page, and encrypted backups, all scheduled by launchd.
 
-You can run the app without caring about AutoKeel. You can study AutoKeel without using the app. Most readers care about one of these; pick yours.
+What v1 still needs is time. The model says nothing until it has 37 model-ready days, and then it speaks only on nights when it beats two simple baselines. The week-16 evaluation described in the design doc has not been run yet.
 
-## The product, at a glance
+The first five slices were built by AutoKeel, an experiment in fully autonomous development. Since 2026-09-10 the project is built directly on `main` with ordinary tests and code review. See [History: AutoKeel](#history-autokeel).
+
+## How it works
 
 ```text
-       Your devices                  Your Mac (everything below stays local)
-   ┌────────────────┐         ┌─────────────────────────────────────────────┐
-   │  Oura Ring     │ ──┐     │  Ingestion → Warehouse → Features → Model   │
-   │  8 Sleep       │ ──┼──▶  │  (launchd 8am)   (DuckDB)   (Ridge + SHAP)  │
-   └────────────────┘   │     │                                       │     │
-                        │     │                                       ▼     │
-   ┌────────────────┐   │     │              FastAPI (token-gated, LAN)     │
-   │  iPhone        │ ──┘     │                       │                     │
-   │  one-tap mood  │         │                       ▼                     │
-   │  iOS Shortcut  │ ──────▶ │              Streamlit explainer card       │
-   └────────────────┘         │              localhost:8501                 │
-                              └─────────────────────────────────────────────┘
-                              encrypted snapshots → iCloud Drive backups
+Oura Ring ──▶ Oura API v2
+                  │   scripts/sync_oura.py, 08:00 and 19:30
+                  ▼
+Phone ──▶ mood form ──▶ DuckDB warehouse ──▶ daily features
+          :8501, home Wi-Fi                      │
+                                                 ▼   scripts/nightly_retrain.py, 23:00
+                        ridge model ──▶ baseline gate ──▶ sleep counterfactual
+                                                 │
+                                                 ▼
+                                         models/eval.jsonl
+                                                 │
+                                                 ▼
+                                explainer page :8502, this Mac only
+
+23:30: warehouse + tokens + eval log ──▶ encrypted snapshot in
+       ~/Library/Application Support/HealthDataHub ──▶ best-effort copy to iCloud Drive
 ```
 
-The diagram is the target shape of the original Shortcut branch. The active
-tripwire recovery uses a tiny Streamlit mobile form and defers FastAPI to v1.1;
-8 Sleep remains inactive. S12 owns the still-unbuilt production Oura sync for
-this private, single-user personal tool.
+| Part | Code | What it does |
+|---|---|---|
+| Oura ingestion | [`src/ingestion/`](src/ingestion/), [`scripts/sync_oura.py`](scripts/sync_oura.py), [`scripts/oura_authorize.py`](scripts/oura_authorize.py) | Signs in with OAuth and rotates tokens on every refresh. Keeps one main sleep per night, dated by the morning you woke up in your home timezone. Never writes Oura's raw responses to disk. |
+| Warehouse | [`src/db/schema.sql`](src/db/schema.sql), [`src/warehouse/`](src/warehouse/) | Five DuckDB tables behind one shared write lock. Mood corrections add a new row instead of overwriting. Invalid rows are set aside in a private quarantine folder. Features use only past data: the HRV z-score compares a night with the nights before it, never with itself. |
+| Model | [`src/model/`](src/model/), [`scripts/retrain_model.py`](scripts/retrain_model.py) | Ridge regression on four inputs: total sleep, HRV z-score, deep sleep %, and yesterday's rating. Checks that each input's direction holds across 200 resamples, runs the baseline gate and the counterfactual, then appends one record to `models/eval.jsonl`. |
+| Pages | [`app/mood_form.py`](app/mood_form.py), [`app/explainer.py`](app/explainer.py) | Streamlit. The mood form listens on the home Wi-Fi address and asks for a token. The explainer listens on `127.0.0.1` only. |
+| Backups | [`src/backup/snapshot.py`](src/backup/snapshot.py), [`scripts/backup_snapshot.py`](scripts/backup_snapshot.py), [`scripts/restore_snapshot.py`](scripts/restore_snapshot.py) | Encrypted, fingerprinted snapshots of the data plane, with a verified restore path. |
+| Scheduling | [`scripts/install_launchd.py`](scripts/install_launchd.py) | Five per-user launchd agents. |
 
-- **Local-first.** DuckDB file on your laptop. No hosted backend. No SaaS.
+- **Local-first.** A DuckDB file on your Mac. No hosted backend. No SaaS. Your data stays on your Mac and your home network; the only copy that goes further is an encrypted snapshot in your own iCloud Drive.
 - **You own the model.** It learns your baseline from your own data. Nobody else's.
-- **Honest by design.** Until the model beats two trivial baselines on walk-forward evaluation, the UI shows *"Collecting model-ready days"* — not made-up insights.
-- **Words chosen carefully.** `top model contributors`, `patterns associated with this rating`, `correlation, not proven causation`. Never `drivers`, `caused`, `you should`, `tomorrow prediction`. Hyper-health-conscious users deserve to not be nocebo'd by their own app.
-
-## What's in v1, and where we are
-
-v1 currently has eleven required slices: the original S01–S09, the S11 mood-logging recovery inserted after the real transport tripwire fired, and S12 for the previously unowned production Oura sync. The slice ledger (`ops/autonomy/slices.json`) is the truth; this table is a snapshot. “Recorded complete” means its code/control-plane slice passed its historical gate, not that the full product is operational on real data.
-
-| | Slice | What you get when it ships | Status |
-|---|---|---|---|
-| ✅ | **S01** Warehouse foundation | DuckDB schema, validated ingestion, quarantine for bad payloads | recorded complete |
-| ✅ | **S02** Mood API loop | Tested FastAPI mood validation/persistence surface; real Shortcut/LAN activation was not proven | recorded complete |
-| ✅ | **S03** Ingestion provider decision | Oura-only v1 decision and provider evidence; no production Oura-to-warehouse sync yet | recorded complete |
-| ✅ | **S04** Feature engineering | Daily features your model trains on (`total_sleep_min`, `hrv_z`, `deep_sleep_pct`, `prior_day_feeling`) | recorded complete; continuation lineage requires canonical reconciliation |
-| ✅ | **S05** Model lifecycle + gates | The model — but only allowed to speak after it beats baselines | recorded complete |
-| ☐ | **S11** Tripwire recovery | Tiny authenticated Streamlit form, real mobile/LAN persistence, typed compliance evidence, and an independently verified collecting-state guard | next required slice |
-| ☐ | **S12** Oura production sync | Private OAuth, wake-date/DST mapping, locked warehouse sync, chronological recompute, and aggregate attestation | pending behind S11 |
-| ☐ | **S06** Counterfactual generator | The "a sleep duration nearer your usual upper range was associated with…" line | pending |
-| ☐ | **S07** Read API + Streamlit UI | The explainer card you saw at the top, rendered against your data | pending |
-| ☐ | **S08** Backups + restore | launchd-scheduled encrypted snapshots to iCloud, verified restore path | pending |
-| ☐ | **S09** Testing + v1 evaluation | The end-to-end gate that says v1 is real | pending |
+- **Honest by design.** Until there are 37 model-ready days, the page shows *"Collecting model-ready days"*. After that, the model is shown only when, on days it hasn't seen, it beats two simple guesses: yesterday's rating and the 7-day average. Any input whose direction isn't consistent across resamples is hidden.
+- **Words chosen carefully.** `top model contributors`, `patterns associated with this rating`, `correlation, not proven causation`. Never `drivers`, `caused`, `you should`, `tomorrow prediction`. Tests in `tests/ui/` and `tests/model/` enforce this. Hyper-health-conscious users deserve to not be nocebo'd by their own app.
+- **Oura only.** 8 Sleep is inactive in v1. Its rows, if any, are recorded as diagnostics and never used as model inputs.
 
 ## What this is not
 
 - **Not medical advice.** v1 explains correlations in *your* past data. It does not predict your future, recommend interventions, or make any clinical claim.
 - **Not a hosted service.** Everything runs on your Mac, against your data, with your credentials on your filesystem.
 - **Not multi-tenant.** Single user, single device, single dataset by design.
-- **Not finished.** S01–S05 are recorded complete. Before S11 may spend on compilation, the control plane still needs a trusted outer activation validator and enforceable isolation from repo-local secrets; S11 then needs real mobile evidence. S12 is ordinary unfinished product work and follows S11 in dependency order.
 
 If you wanted a coach in your pocket, that's not this. The Autopilot tier (action features, N-of-1 experiments, prospective recommendations) lives in the v2+ vision — explicitly out of scope here because at this data scale, prospective recommendations are exactly where false precision and nocebo loops do the most damage.
 
-## Start here
+## Setup
 
-**If you just want to understand the system** — open [`docs/keel-walkthrough_v1.html`](docs/keel-walkthrough_v1.html) in a browser. It's the click-through tour of how Keel + AutoKeel build a real feature end to end.
+You need macOS, Python 3.12+, an Oura account, and an Oura API application (client ID and secret).
 
-**If you want to run the product on your own data** — daily mood logging works today (see [Log your mood](#log-your-mood-every-evening) below). The production Oura sync, the explainer page, and backups are being built directly on `main`.
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+Settings live in `.env.local`, which is never committed. Each script reads only the keys it needs.
+
+| Key | Used for |
+|---|---|
+| `OURA_CLIENT_ID`, `OURA_CLIENT_SECRET` | Your Oura API application |
+| `OURA_REDIRECT_URI` | Optional. Defaults to `http://localhost:8765/oauth/oura/callback` |
+| `LAN_BIND_IP` | The Mac's home Wi-Fi address, where the mood form listens |
+| `MOOD_FORM_TOKEN` | Any private string. The mood form asks for it, and so does the explainer when you log a rating there |
+| `HOME_TIMEZONE` | For example `America/Toronto`. Decides which day a night or a rating belongs to |
+| `HEALTH_HUB_DATABASE_PATH`, `HEALTH_HUB_MODEL_DIR` | Leave these out of `.env.local`. The Oura sync and the pages would follow them, but the scheduled retrain refuses a non-default database and the backup always snapshots `data/warehouse.duckdb`. They exist for viewing a restored copy from one hand-started explainer (see [Backups and restore](#backups-and-restore)) |
+
+First run, in order:
+
+```bash
+.venv/bin/python scripts/oura_authorize.py                # once, in a browser
+.venv/bin/python scripts/sync_oura.py --start 2026-01-01  # one-time history backfill
+.venv/bin/python scripts/backup_snapshot.py --init-key    # once; copy the passphrase somewhere safe
+.venv/bin/python scripts/install_launchd.py --install     # start the five agents
+```
 
 ## Log your mood (every evening)
 
 The mood log is the only part of the product that needs you every day. It is a small Streamlit page served only on your home Wi-Fi, and it writes straight into the local DuckDB warehouse.
 
-1. Put `LAN_BIND_IP` (the Mac's home Wi-Fi address), `MOOD_FORM_TOKEN` (any private string), and `HOME_TIMEZONE` in `.env.local`. That file is never committed.
-2. Start the form on the Mac and leave it running:
+1. Set `LAN_BIND_IP`, `MOOD_FORM_TOKEN`, and `HOME_TIMEZONE` in `.env.local`.
+2. The launchd agent keeps the form running. To run it by hand instead:
 
    ```bash
    .venv/bin/python scripts/run_mood_form.py
@@ -109,11 +122,13 @@ The mood log is the only part of the product that needs you every day. It is a s
 3. On the phone, on the same Wi-Fi, open `http://<LAN_BIND_IP>:8501`, enter the token once, pick a number from 1 to 10 for *"How did I feel overall today?"*, and tap **Save**. Energy, context, and notes are optional.
 4. Log in the evening. Anything saved between midnight and 4:00 AM counts for the day that just ended. Saving twice for the same day replaces the rating and keeps the earlier one in history.
 
+A day is model-ready when it has your rating, the previous evening's rating, and a full Oura night. One missed evening therefore costs up to two model-ready days.
+
 `.venv/bin/python scripts/run_mood_form.py --check` validates the settings without starting the server.
 
-## Oura sync and scheduling
+## Oura sync
 
-The Oura sync pulls your own sleep records from the Oura API v2, keeps only the main sleep episode per wake date, and writes normalized rows into the warehouse. Raw responses are never written to disk. Tokens live only in `data/secrets/oura_tokens.json` (mode 0600) and rotate on every refresh.
+The Oura sync pulls your own sleep records from the Oura API v2, keeps only the main sleep episode per wake date, and writes normalized rows into the warehouse. Raw responses are never written to disk. Tokens live only in `data/secrets/oura_tokens.json` (mode 0600) and rotate on every refresh. After each sync, daily features are rebuilt in date order over the last 45 days, because Oura sometimes re-delivers older nights.
 
 ```bash
 .venv/bin/python scripts/sync_oura.py --json            # last 14 days, recompute features
@@ -128,7 +143,7 @@ If the sync exits with `auth_required`, the refresh token is dead. Re-authorize 
 
 ## The explainer page
 
-The retrospective card lives on a second Streamlit page that binds to `127.0.0.1` only, so it is readable on the Mac and nowhere else. Open `http://127.0.0.1:8502`. If today's rating is missing, the page shows the mood form first and hides model output for today until you rate it. Until 37 model-ready days exist it shows "Collecting model-ready days", and after that it only shows contributors on nights when the model beats the simple baselines.
+The retrospective card lives on a second Streamlit page that binds to `127.0.0.1` only, so it is readable on the Mac and nowhere else. Open `http://127.0.0.1:8502`. If today's rating is missing, the page shows the mood form first and hides model output for today until you rate it. Until 37 model-ready days exist it shows "Collecting model-ready days", and after that it only shows contributors on nights when the model beats the simple baselines. It warns when the newest Oura night is more than 36 hours old.
 
 The card's "model-estimated change in your past data" line comes from the retrospective counterfactual generator in `src/model/counterfactual.py`, run by the nightly retrain. It varies exactly one feature, total sleep, increase-only and never below 7 hours, only among candidates that resemble nights you have actually had, and only reports a bootstrapped delta interval that excludes zero and a median change of at least half a rating point. Otherwise the card says why it stayed quiet. It is a description of association in your own past data, never a prediction or a recommendation.
 
@@ -150,7 +165,19 @@ macOS privacy protection blocks background jobs from iCloud Drive until the prog
 
 The passphrase is never printed by any command. Without a copy of it outside this Mac, the snapshots cannot be opened after a disk loss.
 
-Restore never touches the live data by default. It decrypts the newest snapshot into a fresh directory under `data/restore/`, verifies every digest, and prints aggregate counts. To point the explainer at a restored copy, set `HEALTH_HUB_DATABASE_PATH` and `HEALTH_HUB_MODEL_DIR` to that directory. Replacing the live data plane requires `--in-place --force`, which first moves the current files aside.
+Restore never touches the live data by default. It decrypts the newest snapshot into a fresh directory under `data/restore/`, verifies every digest, and prints aggregate counts. To look at a restored copy, start a second explainer on another port with the overrides set for that one process only. Don't put them in `.env.local`, where the scheduled sync would start writing into the restored copy and the retrain would stop:
+
+```bash
+HEALTH_HUB_DATABASE_PATH="$PWD/data/restore/<restore-dir>/data/warehouse.duckdb" \
+HEALTH_HUB_MODEL_DIR="$PWD/data/restore/<restore-dir>/models" \
+  .venv/bin/python scripts/run_explainer.py --port 8503
+```
+
+Don't log a rating on that page. If the restored copy has no rating for today, the page offers the mood form, and a save there goes into the restored copy, not your live data.
+
+Replacing the live data plane requires `--in-place --force`, which first moves the current files aside.
+
+## Scheduling
 
 Five per-user launchd agents keep everything running on an always-on Mac: the mood form and the explainer page (kept alive), the Oura sync at 08:00 and 19:30, the model retrain at 23:00 after the evening log, and the encrypted backup at 23:30.
 
@@ -161,106 +188,73 @@ Five per-user launchd agents keep everything running on an always-on Mac: the mo
 
 Logs go to `~/Library/Logs/healthhub-*.log` and contain no tokens or health values.
 
-**If you want to study the autonomous build** — read on.
+## Development
 
-## The honest-AI-build experiment
-
-If you've tried running coding agents autonomously, you've seen the same failure: agents declare victory. They auto-approve gates that were meant for a human. They mark work done without verification. They fabricate evidence when reality doesn't cooperate. The audit trail you wanted as proof of safety becomes proof that the experiment was lying.
-
-AutoKeel addresses each one with structural rules, not prompts.
-
-- **Never simulate a human gate.** Reaching `awaiting_human_gate` is recorded as a `manual_gate_leak` failure. The slice is replanned, not approved. AutoKeel does not call `keel-run mark-manual-gate`. Ever.
-- **Verification is the source of truth.** A slice is complete only when `scripts/verify_slice.py <SLICE_ID> --json` passes. Self-reports do not count.
-- **Evidence is real or it is absent.** It's collected from local sources, written under `private/evidence/`, or sanitized into `docs/evidence/`. Fabricating evidence is its own failure class.
-- **State lives outside the agent.** `slices.json`, `autonomy_state.json`, `events.jsonl`, `failure_ledger.jsonl`. Every decision is replay-able from files alone — never from chat memory.
-
-Inside that scaffolding, Keel's safety boundaries are unchanged: isolated git worktrees per slice, dual independent audit (Codex + Claude) on the same evidence, fail-closed verification before any ship.
-
-```text
-   slices.json ──▶ AutoKeel ──▶ Keel pipeline ──▶ verify_slice.py ──▶ slice done
-                  (picks the    (gstack → compile                    (or failure
-                   next slice)   → plan-orchestrator                  recorded
-                                 → ship)                              + replan)
-
-                    events.jsonl  ·  failure_ledger.jsonl  ·  slices.json
-                          every decision lands in a file — never in chat memory
-```
-
-### Run a single iteration
+Work lands directly on `main`. Every change comes with tests, and changes are reviewed before they count as done.
 
 ```bash
-pip install -r requirements.txt
-
-# Preflight — verify environment + Keel wiring
-python -m ops.autonomy.autokeel --doctor
-python scripts/verify_autonomy_preflight.py --json
-
-# Dry-run one iteration (pick next slice, plan, don't execute)
-python -m ops.autonomy.autokeel --once --dry-run
-
-# Run one real iteration
-python -m ops.autonomy.autokeel --once
-
-# Inspect what happened
-python -m ops.autonomy.autokeel --status --failures
-python -m ops.autonomy.autokeel --replay-events
+.venv/bin/python -m pytest -q                            # full suite
+.venv/bin/python -m pytest -q --ignore=tests/autonomy    # product tests only
+.venv/bin/python scripts/check_no_tracked_data.py        # no health data or secrets tracked
 ```
 
-One iteration touches exactly one slice. AutoKeel reads `policy.yaml`, picks the next pending slice, ensures its brief exists, compiles a playbook with Keel, runs it under plan-orchestrator's supervisor, decides whether to ship. Every decision lands in `events.jsonl`. Every failure is classified in `failure_ledger.jsonl`.
-
-### Requirements
-
-- macOS, Python 3.12+
-- [Keel](https://github.com/AysajanE/keel) installed and on PATH
-- Codex CLI and Claude Code, installed and authenticated
-- An Oura account and credentials are needed only when the future production
-  sync is activated. Deterministic development and tests must use fake
-  transports and must never expose real credentials.
+Tests use fake network transports and temporary directories, and never need real Oura credentials.
 
 ## Non-negotiables
 
-The experiment is meaningful only if it stays honest.
+- No raw health data, tokens, DuckDB files, snapshots, quarantine payloads, or provider payloads are tracked. `data/`, `models/`, `private/`, `.env*`, `*.duckdb`, `*.sqlite`, and `*.parquet` are gitignored.
+- Logs carry counts and statuses, never health values or tokens.
+- The model gates, the mood-first rule, and the UI language rules are never weakened to make the page more interesting.
+- Required UI language (`patterns associated with this rating`, `correlation, not proven causation`, `insufficient stable signal`) is used; causal language (`drivers`, `caused`, `tomorrow prediction`, `you would have felt`) is rejected by tests.
 
-- AutoKeel never calls `keel-run mark-manual-gate`, and never approves a human gate by any other path.
-- A slice is complete only when `scripts/verify_slice.py <SLICE_ID> --json` passes — not because an agent says so.
-- Evidence is real local evidence under `private/evidence/`, or sanitized evidence under `docs/evidence/`. Never fabricated.
-- No raw health data, tokens, DuckDB files, snapshots, quarantine payloads, or provider payloads are tracked — `data/`, `private/`, `.env*`, `*.duckdb`, `*.sqlite`, `*.parquet` are gitignored.
-- Required UI language (`patterns associated with this rating`, `correlation, not proven causation`, `insufficient stable signal`) is enforced. Causal language (`drivers`, `caused`, `tomorrow prediction`, `you would have felt`) is rejected at gate time.
-
-The full safety contract is in [`AGENTS.md`](AGENTS.md).
+The full rules for anyone, human or agent, changing this code are in [`AGENTS.md`](AGENTS.md).
 
 ## Repository layout
 
 ```text
 health-data-hub/
-├── ops/autonomy/             AutoKeel supervisor + policy + state + event/failure logs
+├── app/                  Streamlit pages: mood_form.py (home Wi-Fi), explainer.py (this Mac only)
 ├── src/
-│   ├── db/schema.sql         DuckDB schema (S01, shipped)
-│   └── warehouse/            warehouse.py, models.py — insert / aggregate / validate
-├── tests/
-│   ├── warehouse/            warehouse-layer tests (schema, quarantine, mood correction)
-│   └── autonomy/             AutoKeel itself is tested
-├── scripts/                  verification, preflight, dashboard, evidence collectors
-├── docs/
-│   ├── briefs/               slice briefs (input to Keel compile)
-│   ├── gstack/               promoted design/autoplan artifacts
-│   ├── playbooks/            generated Keel playbooks
-│   ├── reviews/              sanitized autonomous review artifacts
-│   ├── evidence/             sanitized external evidence
-│   ├── local/                local-only docs (gitignored except README)
-│   ├── health_data_hub_full_autonomous_design.md   the autonomous-mode research
-│   └── keel-walkthrough_v*.html                    interactive Keel walkthroughs
-├── private/evidence/         local sensitive evidence (never committed)
-├── data/                     DuckDB warehouse and raw payloads (never committed)
-├── AGENTS.md                 canonical agent/operator doc
-└── CLAUDE.md                 Claude Code's project memory
+│   ├── config/           .env.local reader
+│   ├── ingestion/        Oura OAuth and sync
+│   ├── db/schema.sql     DuckDB schema
+│   ├── warehouse/        writes, reads, write lock, daily features
+│   ├── model/            ridge model, baseline gate, counterfactual, display states, eval log
+│   ├── backup/           encrypted snapshots and restore
+│   └── api/              mood-date rule; the FastAPI mood endpoint is kept but not served
+├── scripts/              product entry points, plus the historical AutoKeel verifiers
+├── tests/                product tests; tests/autonomy/ covers the historical AutoKeel code
+├── ops/autonomy/         historical AutoKeel state and logs (decisions/ and slices.json are still read at runtime)
+├── docs/                 design doc, legal, and the AutoKeel-era briefs, playbooks, reviews, evidence
+├── data/ models/ private/   warehouse, secrets, model output, sensitive evidence (never committed)
+├── AGENTS.md             rules for anyone changing this code
+└── CLAUDE.md             Claude Code project memory
 ```
 
-## Read next
+## History: AutoKeel
 
-- **[`AGENTS.md`](AGENTS.md)** — operator doc. Repository layout, every safety rule, every failure class, full command catalogue. Start here if you're about to run AutoKeel.
-- **[`docs/keel-walkthrough_v1.html`](docs/keel-walkthrough_v1.html)** — interactive end-to-end walkthrough of the Keel toolchain AutoKeel drives. Open in a browser; click anything.
+From May to August 2026 this repo was also an experiment: could an autonomous supervisor build a real product end to end without lying about it? AutoKeel drove the [Keel](https://github.com/AysajanE/keel) toolchain one slice at a time. It never approved a human gate, marked a slice complete only when `scripts/verify_slice.py` passed, and wrote every decision and failure to files instead of chat memory.
 
----
+It completed S01–S05. On 2026-09-10 the project switched to building directly on `main`, and the rest of v1 was built that way:
 
-Built on [Keel](https://github.com/AysajanE/keel) with autonomous gate substitution — a research test of whether an AI operator can drive a real build end to end without lying about it.
+| Slice | What it covers | Built by | Code |
+|---|---|---|---|
+| S01 | Warehouse foundation | AutoKeel | `src/db/`, `src/warehouse/` |
+| S02 | Mood API | AutoKeel | `src/api/` (not served; the S11 form replaced it) |
+| S03 | Ingestion provider decision: Oura only | AutoKeel | `ops/autonomy/decisions/` |
+| S04 | Feature engineering | AutoKeel | `src/warehouse/features.py` |
+| S05 | Model lifecycle and gates | AutoKeel | `src/model/ridge.py`, `src/model/baseline_gate.py` |
+| S11 | Mood logging | directly on `main` | `app/mood_form.py` |
+| S12 | Oura production sync | directly on `main` | `src/ingestion/` |
+| S06 | Counterfactual generator | directly on `main` | `src/model/counterfactual.py` |
+| S07 | Explainer page | directly on `main` | `app/explainer.py` |
+| S08 | Backups, restore, launchd | directly on `main` | `src/backup/`, `scripts/install_launchd.py` |
+| S09 | Testing and v1 evaluation | tests on `main`; week-16 evaluation not yet run | `tests/` |
+
+The record stays in the repo, unchanged:
+
+- `ops/autonomy/events.jsonl`: 1,550 events.
+- `ops/autonomy/failure_ledger.jsonl`: 85 classified failures, with a write-up for each in `ops/autonomy/failures/`. 84 were closed with local evidence. One is still open: an S12 `provider_terms_conflict` note from 2026-08-16 about whether the Oura API agreement allows API data to feed a local model.
+- `ops/autonomy/slices.json` and `autonomy_state.json` were not updated after the switch. They still show S06–S12 as pending; the code on `main` is the truth. `slices.json` must stay anyway: the nightly retrain's provider-policy preflight checks that S03 and S04 are complete.
+
+The supervisor itself, `ops/autonomy/autokeel.py`, is no longer run. Its tests remain in the full suite. For a click-through tour of how Keel and AutoKeel built a slice, open [`docs/keel-walkthrough_v1.html`](docs/keel-walkthrough_v1.html) in a browser; the operator notes are in [`ops/autonomy/README.md`](ops/autonomy/README.md).

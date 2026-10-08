@@ -1,60 +1,68 @@
-# AGENTS.md — Health Data Hub + AutoKeel
+# AGENTS.md — Health Data Hub
 
-This repository builds **Health Data Hub v1** through the **Keel** toolchain using the **AutoKeel autonomous supervisor**.
+This repository is **Health Data Hub v1**, a local-first Sleep + Mood Retrospective Explainer. v1 is built and runs every day on the owner's Mac under five launchd agents. [`README.md`](README.md) describes the product and its architecture; this file is the set of rules for anyone, human or agent, changing it.
 
-The goal is not just to produce code. The goal is to produce a local-first, auditable, zero-human build trail that shows what the autonomous operator did, where it failed, and why each slice was allowed to continue.
+## How work happens
 
-## Repository Layout
+Since 2026-09-10 the project is built directly on `main`: a change, its tests, and a review before it counts as done.
 
-Important paths:
+The AutoKeel slice workflow is retired. Do not:
 
-- `ops/autonomy/autokeel.py` — AutoKeel supervisor.
-- `ops/autonomy/policy.yaml` — autonomous operating policy.
-- `ops/autonomy/authorization_policy.yaml` — deterministic zero-human authorization criteria for SWR repair, PO repair, and terminal recovery.
-- `ops/autonomy/slices.json` — durable slice/task state.
-- `ops/autonomy/autonomy_state.json` — runtime state.
-- `ops/autonomy/events.jsonl` — append-only event log.
-- `ops/autonomy/failure_ledger.jsonl` — append-only failure ledger.
-- `ops/autonomy/prompts/` — operator/reviewer/failure-diagnoser prompts.
-- `ops/autonomy/schemas/` — policy/state/slice schemas.
-- `scripts/` — verification, status, preflight, dashboard, and project checks.
-- `scripts/evidence/` — external evidence collectors.
-- `docs/reviews/` — autonomous review artifacts.
-- `docs/local/` — local-only docs, scratch notes, and non-public review inputs; ignored except for its README.
-- `docs/briefs/` — slice briefs.
-- `docs/playbooks/` — Keel playbooks.
-- `docs/gstack/` — promoted design/autoplan artifacts.
-- `private/evidence/` — local sensitive evidence, never committed.
-- `data/` — health data, secrets, warehouse, quarantine, snapshots; never committed.
+- run `ops/autonomy/autokeel.py`, Keel compile, SWR, or plan-orchestrator;
+- route work through `slices.json`, slice briefs, playbooks, readiness verifiers, activation acceptance, or receipt refreshes;
+- edit the historical ledgers (`slices.json`, `autonomy_state.json`, `events.jsonl`, `failure_ledger.jsonl`, `progress.md`) to bring them up to date. The retrain still reads `slices.json`.
 
-## Absolute Safety Rules
+See [Historical: AutoKeel control plane](#historical-autokeel-control-plane) for what must stay in place.
 
-Follow these rules every time:
+## Repository layout
 
-1. Never call `keel-run mark-manual-gate`.
-2. Never represent an AI decision as a human approval.
-3. Never clear or simulate a human manual gate.
-4. If PO reaches `awaiting_human_gate`, record `manual_gate_leak`, mark the slice for replan, and stop using that playbook.
-5. Autonomous gate substitution means: deterministic verification + review artifacts + event/failure logs. It does not mean fake human signoff.
-6. External evidence must be real local evidence under `private/evidence/` or sanitized evidence under `docs/evidence/`.
-7. Do not fabricate device/API/browser evidence.
-8. Do not commit or log raw health data, provider payloads, tokens, `.env`, DuckDB files, snapshots, quarantine payloads, or secrets.
-9. Do not weaken Health Data Hub model gates, security gates, mood-first gates, or UI-language gates.
-10. Work one slice at a time.
+Product:
 
-## Product Scope: Health Data Hub v1
+- `app/mood_form.py` — Streamlit mood form, bound to `LAN_BIND_IP`, token-gated.
+- `app/explainer.py` — Streamlit explainer page, bound to `127.0.0.1`.
+- `src/config/env_file.py` — reads named keys from `.env.local`.
+- `src/ingestion/` — Oura OAuth (`oura_auth.py`) and sync (`oura_sync.py`).
+- `src/db/schema.sql` — DuckDB schema (five tables).
+- `src/warehouse/` — writes, reads, the shared write lock, daily features, chronological recompute.
+- `src/model/` — ridge model, baseline gate, counterfactual generator, display states, eval log.
+- `src/backup/snapshot.py` — encrypted snapshots, mirror, verify, restore.
+- `src/api/` — `mood_date.py` (the 4 AM cutoff rule, used by both pages) and the FastAPI mood endpoint, which is kept for v1.1 and not served.
+- `scripts/` — product entry points: `sync_oura.py`, `oura_authorize.py`, `retrain_model.py`, `nightly_retrain.py`, `run_mood_form.py`, `run_explainer.py`, `backup_snapshot.py`, `restore_snapshot.py`, `install_launchd.py`, `setup_permissions.py`, `check_no_tracked_data.py`, plus `verify_s05_provider_policy.py` (the retrain preflight). Most other scripts belong to AutoKeel.
+- `tests/` — product tests; `tests/autonomy/` covers the historical AutoKeel code.
+
+Local only, never committed:
+
+- `data/` — warehouse, `secrets/` (Oura tokens, backup passphrase), quarantine, sync status, restores.
+- `models/` — `eval.jsonl` and the nightly model pickles.
+- `private/` — sensitive local evidence.
+- `.env.local` — settings and Oura client credentials.
+- `docs/local/` — scratch notes and non-public review inputs (except its README).
+
+## Absolute safety rules
+
+1. Never commit or log raw health data, provider payloads, tokens, `.env*`, DuckDB files, snapshots, quarantine payloads, or the backup passphrase.
+2. Logs (`~/Library/Logs/healthhub*.log`) carry counts and statuses only. Provider and database errors are reported with fixed messages, because exception text can embed rows, URLs, or tokens. The launchd wrappers print redacted summaries, but `scripts/retrain_model.py` run directly prints the latest feature values and rating, and can print raw DuckDB errors: treat its output as health data and keep it out of logs, issues, commits, and review artifacts.
+3. Oura tokens and the backup passphrase live only in `data/secrets/` with mode 0600; the Oura client ID and secret live only in `.env.local`. No command prints a token, a client secret, or the passphrase.
+4. Private files are 0600 and private directories 0700. Warehouse, token, and snapshot paths refuse symlinks.
+5. Every warehouse write goes through `warehouse_write_lock`, and the DuckDB connection is opened only while the lock is held and closed before it is released. Open connections with `connect_duckdb`, which sets the session to UTC.
+6. Do not weaken the model gates, the mood-first gate, the UI language rules, or the network bindings (mood form on the LAN address with a token; explainer on `127.0.0.1`).
+7. Tests use fake transports and temporary directories. They never use real credentials, the network, or the live `data/` and `models/` directories.
+8. Do not touch the live data plane or the running agents unless the owner asks: `data/`, `models/`, `~/Library/LaunchAgents/com.healthhub.*`, and the snapshot folders. Restores go to a fresh directory under `data/restore/` unless `--in-place --force` is explicitly requested.
+9. Do not fabricate device, API, or browser evidence, and do not say something works without having run it.
+
+## Product scope: Health Data Hub v1
 
 v1 is a **Sleep + Mood Retrospective Explainer**.
 
-Required in v1:
+In v1:
 
-- Oura + mood log.
-- 8 Sleep fallback-only under the active S03 provider decision; Oura direct API v2 is the first-class sleep source.
-- Local-first DuckDB storage.
-- FastAPI mood endpoint if mood Shortcut path survives tripwire.
-- Streamlit retrospective UI.
-- No hosted backend.
-- No multi-tenant infrastructure.
+- Oura sleep data and a manual evening mood log.
+- 8 Sleep inactive: fallback-only under the S03 provider decision.
+- Local DuckDB storage.
+- Mood logging through the Streamlit form. The FastAPI endpoint is deferred to v1.1.
+- A Streamlit retrospective page.
+- Encrypted local snapshots with a best-effort iCloud Drive mirror.
+- No hosted backend. No multi-tenant infrastructure.
 
 Out of scope for v1:
 
@@ -66,12 +74,14 @@ Out of scope for v1:
 - Medical advice.
 - Causal claims.
 
-## Health Data Hub Invariants
+Oura data use: an S12 `provider_terms_conflict` entry about the Oura API agreement is still open in the failure ledger. Do not widen how Oura data is used (new collections, new destinations, sharing, or hosted processing) without the owner's decision.
 
-Preserve these invariants:
+## Health Data Hub invariants
 
-- v1 target is same-day evening `feeling[D]`.
-- Sleep features for `feeling[D]` come from sleep ending on morning `D`.
+Model and features:
+
+- The v1 target is same-day evening `feeling[D]`.
+- Sleep features for `feeling[D]` come from sleep ending on the morning of `D`.
 - `prior_day_feeling` is `feeling[D-1]`.
 - Model features are exactly:
   - `total_sleep_min`
@@ -79,15 +89,30 @@ Preserve these invariants:
   - `deep_sleep_pct`
   - `prior_day_feeling`
 - `hrv_avg_ms` is display metadata only.
-- `hrv_z` must be prior-only and persisted.
+- `hrv_z` is prior-only (never includes day `D`) and persisted.
 - No sleep forward-fill for training.
-- Mood labels are never imputed.
-- UI must not show model output for date `D` until `feeling[D]` exists.
-- Counterfactuals may vary only mutable/recommendable features.
-- In v1, the only counterfactual feature is `total_sleep_min`.
-- Sleep counterfactual is increase-only and must respect the safe floor.
+- Mood labels are never imputed. Rows with an imputed `prior_day_feeling` are excluded from training.
+- The model is shown only after 37 model-ready days and only when the walk-forward baseline gate passes. Contributors with sign stability below 80% are hidden.
+- The UI must not show model output for date `D` until `feeling[D]` exists.
 
-## Required UI Language
+Counterfactual:
+
+- Counterfactuals may vary only mutable, recommendable features. In v1 that is only `total_sleep_min`.
+- The sleep counterfactual is increase-only and never goes below the 7-hour safe floor.
+- It is reported only when the bootstrapped delta interval excludes zero and the median change is at least 0.5 points; otherwise it records a suppression reason.
+
+Data and time:
+
+- A rating saved before 04:00 local time counts for the previous day (`src/api/mood_date.py`).
+- Mood history is append-only. A correction inserts a new `mood_entries` row that links to the one it replaces, and `mood_current` points to the live entry.
+- An Oura night's `sleep_date` is its wake date in `HOME_TIMEZONE`. Only the longest `long_sleep` record per wake date is kept.
+- Oura's `end_date` query parameter is exclusive, so the sync requests through `end_date + 1`.
+- After writing, the sync recomputes daily features in date order over at least the last 45 days.
+- Stored timestamps are naive UTC.
+
+8 Sleep: feature construction ignores 8 Sleep rows even if they exist in the warehouse. Diagnostics may record that they were present and ignored. 8 Sleep must not be averaged, blended, reconciled, used as fallback HRV or sleep-stage source, or counted as an active sleep source unless a future explicit provider decision supersedes S03.
+
+## Required UI language
 
 Use:
 
@@ -110,267 +135,96 @@ Do not use:
 - `recommendations today`
 - prospective intervention language in v1
 
-## AutoKeel Operating Loop
-
-AutoKeel must preserve Keel as the execution kernel.
-
-Expected loop:
-
-1. Read `ops/autonomy/policy.yaml`.
-2. Read `ops/autonomy/slices.json`.
-3. Read `ops/autonomy/autonomy_state.json`.
-4. Run `scripts/verify_v1.py`.
-5. Select the next actionable required slice.
-6. Ensure slice brief exists.
-7. Ensure autoplan exists or generate/record missing autoplan evidence.
-8. Compile playbook with Keel or SWR according to lane.
-9. Validate playbook with `scripts/validate_playbook_autonomous.py`.
-10. Run real PO `list-items` and `doctor` contract validation before PO.
-11. Run PO under supervision.
-12. Inspect PO status with `scripts/keel_status_digest.py`.
-13. Handle terminal states:
-    - `passed` → create ship branch → run `scripts/verify_slice.py` → mark complete only if verification passes.
-    - `blocked_external` → collect/request local evidence; do not fabricate evidence.
-    - `awaiting_human_gate` → record `manual_gate_leak`; replan under autonomous gate policy.
-    - `escalated` → record failure; diagnose; replan.
-14. Append `events.jsonl`, `failure_ledger.jsonl`, and `progress.md`.
-15. Continue until `scripts/verify_v1.py` passes.
+Tests in `tests/ui/` and `tests/model/test_display_gate.py` enforce these rules.
 
 ## Commands
 
-Run from repository root.
+Run from the repository root.
 
-Preflight:
-
-```bash
-python -m ops.autonomy.autokeel --doctor
-python -m ops.autonomy.autokeel --doctor --strict
-python -m ops.autonomy.autokeel --doctor --strict-swr S05
-python scripts/verify_autonomy_preflight.py --json
-python scripts/verify_failure_ledger.py --json
-python scripts/verify_autokeel_invariants.py --json
-python scripts/verify_s03_readiness.py --json
-python scripts/validate_provider_decisions.py S03 --json
-python scripts/verify_s04_readiness.py --json
-```
-
-One dry-run iteration:
+Tests and checks (safe at any time):
 
 ```bash
-python -m ops.autonomy.autokeel --once --dry-run
+.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q --ignore=tests/autonomy
+.venv/bin/python scripts/check_no_tracked_data.py
+.venv/bin/python scripts/run_explainer.py --check
+.venv/bin/python scripts/install_launchd.py --status
+.venv/bin/python scripts/install_launchd.py --dry-run
+.venv/bin/python scripts/restore_snapshot.py --snapshot latest --verify-only
 ```
 
-One real iteration:
+These write to the live data plane or the running agents. Run them only when the owner asks. `run_mood_form.py --check` is here because it resets the permissions on `data/`, `models/`, and `private/` before it checks the settings.
 
 ```bash
-python -m ops.autonomy.autokeel --once
+.venv/bin/python scripts/run_mood_form.py --check
+.venv/bin/python scripts/sync_oura.py --json
+.venv/bin/python scripts/nightly_retrain.py
+.venv/bin/python scripts/backup_snapshot.py --json
+.venv/bin/python scripts/install_launchd.py --install
+.venv/bin/python scripts/oura_authorize.py
 ```
 
-Status:
-
-```bash
-python -m ops.autonomy.autokeel --status --failures
-python -m ops.autonomy.autokeel --replay-events
-```
-
-Tests:
-
-```bash
-python -m pytest tests/autonomy -q
-python -m pytest -q
-```
-
-Project safety checks:
-
-```bash
-python scripts/check_no_tracked_data.py
-python scripts/verify_failure_ledger.py --json
-python scripts/verify_autokeel_invariants.py --json
-python scripts/verify_v1.py --json
-```
-
-Playbook validation:
-
-```bash
-python scripts/validate_playbook_autonomous.py docs/playbooks/s01-warehouse.playbook.md --json
-python automation/run_plan_orchestrator.py list-items --playbook docs/playbooks/s01-warehouse.playbook.md --format json
-python automation/run_plan_orchestrator.py doctor --playbook docs/playbooks/s01-warehouse.playbook.md --format json
-python scripts/validate_swr_review_bundle.py <bundle>.json --json
-python scripts/verify_run_retarget_evidence.py docs/evidence/<slice>-run-retarget-<timestamp>.json --json
-```
-
-Provider decisions and retarget evidence:
-
-```bash
-python scripts/validate_provider_decisions.py S03 --json
-python scripts/verify_run_retarget_evidence.py docs/evidence/S03-run-retarget-20260529T1824.json --json
-python scripts/verify_s04_readiness.py --json
-```
-
-Slice verification:
-
-```bash
-python scripts/verify_slice.py S01 --json
-python scripts/verify_ship_invariants.py S01 --json
-```
-
-S04 must not start unless `python scripts/verify_s04_readiness.py --json`
-passes. S04 must consume the active S03 provider decision, treat Oura-only v1
-as first-class, and must not require pyEight evidence. 8 Sleep / pyEight is
-fallback-only for v1. Feature construction must ignore 8 Sleep rows for v1
-model features even if 8 Sleep rows exist in the warehouse. Diagnostics may
-record that 8 Sleep rows were present and ignored under fallback. 8 Sleep must
-not be averaged, blended, reconciled, used as fallback HRV, used as fallback
-sleep stage source, or counted as an active sleep source unless a future
-explicit provider-reopening slice supersedes S03.
-
-S05 must run `python scripts/verify_s05_provider_policy.py --json` before
-model training. S09 must run `python scripts/verify_v1_provider_policy.py
---json` before final v1 completion.
-
-Close a failure only with local evidence:
-
-```bash
-python -m ops.autonomy.autokeel --close-failure S01 manual_gate_leak \
-  --closure-evidence docs/reviews/<evidence>.md \
-  --closure-note "Why this failure is now resolved."
-```
-
-## Coding Conventions
+## Coding conventions
 
 Use simple Python first.
 
 Prefer:
 
-* small functions
-* explicit return dictionaries for scripts
-* JSON output with `--json`
-* deterministic checks
-* no shell=True
-* no broad filesystem writes
-* no hidden network calls in verification scripts unless the script is explicitly an evidence collector
+- small functions
+- explicit return dictionaries for scripts
+- JSON output with `--json`
+- deterministic checks
+- injected transports, clocks, and paths, so tests never need the network or live data
+- no `shell=True`
+- no broad filesystem writes
+- no network calls outside `src/ingestion/`
 
-When changing AutoKeel:
+When changing product code:
 
-* update tests in `tests/autonomy/`
-* update `ops/autonomy/README.md` if operator behavior changes
-* update `policy.yaml` if new policy is required
-* update `slices.json` only if slice workflow changes
-* preserve event and failure logging
+- add or update the tests next to it (`tests/warehouse/`, `tests/ingestion/`, `tests/model/`, `tests/ui/`, `tests/backup/`, or `tests/test_*.py`);
+- keep the full suite passing;
+- update `README.md` when user-visible behavior, settings, or schedules change.
 
-## Verification Expectations
-
-A slice is not complete because an agent says it is complete.
-
-A slice is complete only when:
-
-1. PO reaches `passed`.
-2. A ship branch exists.
-3. `scripts/verify_slice.py <SLICE_ID> --json` passes.
-4. Required review artifacts pass validation.
-5. No tracked health data or secrets are detected.
-6. AutoKeel records the completion in `slices.json`, `autonomy_state.json`, `events.jsonl`, and `progress.md`.
-
-The full project is complete only when:
-
-```bash
-python scripts/verify_v1.py --json
-```
-
-returns success.
-
-## Failure Handling
-
-When a failure occurs:
-
-1. Classify it.
-2. Record it in `ops/autonomy/failure_ledger.jsonl`.
-3. Create a Markdown failure artifact under `ops/autonomy/failures/`.
-4. Do not silently retry the same failed artifact forever.
-5. Do not close the failure without local evidence.
-6. Do not continue through manual gates.
-
-Failure classes include:
-
-* `manual_gate_leak`
-* `blocked_external_missing_evidence`
-* `provider_auth_failure`
-* `test_failure`
-* `audit_failure`
-* `unsafe_write_root`
-* `secret_leak_risk`
-* `forbidden_ui_language`
-* `model_gate_failed`
-* `tripwire_triggered`
-* `stale_run`
-* `agent_false_done`
-* `state_divergence`
-* `ship_failure`
-* `compile_failure`
-
-## External Evidence
-
-Evidence collectors must not fabricate success.
-
-Evidence reports must state one of:
-
-* `ok`
-* `blocked_external`
-* `error`
-* `fallback_accepted`
-
-Evidence must be written under:
-
-```text
-private/evidence/
-```
-
-or, if sanitized and safe:
-
-```text
-docs/evidence/
-```
-
-Secrets must be redacted. Evidence files containing sensitive local data should use file mode `0600`.
-
-## Git and Data Rules
+## Git and data rules
 
 Never track:
 
-* `data/`
-* `private/`
-* `.env`
-* `*.duckdb`
-* `*.duckdb.wal`
-* `*.sqlite`
-* `*.parquet`
-* `ops/autonomy/.autokeel.lock`
-* raw provider payloads
-* quarantine payloads
-* snapshots
-* tokens
+- `data/`
+- `models/`
+- `private/`
+- `.env*`
+- `*.duckdb`
+- `*.duckdb.wal`
+- `*.sqlite`
+- `*.parquet`
+- raw provider payloads
+- quarantine payloads
+- snapshots
+- tokens
 
-Treat optional 8 Sleep credential names as sensitive if they are present:
-`PYEIGHT_EMAIL`, `PYEIGHT_PASSWORD`, `PYEIGHT_CLIENT_ID`,
-`PYEIGHT_CLIENT_SECRET`, `EIGHT_SLEEP_TOKEN`, and `EIGHT_SLEEP_PASSWORD`.
-Their absence must not fail v1.
+Treat optional 8 Sleep credential names as sensitive if they are present: `PYEIGHT_EMAIL`, `PYEIGHT_PASSWORD`, `PYEIGHT_CLIENT_ID`, `PYEIGHT_CLIENT_SECRET`, `EIGHT_SLEEP_TOKEN`, and `EIGHT_SLEEP_PASSWORD`. Their absence must not fail v1.
 
-Before any ship/complete decision, run:
+Before committing, run:
 
 ```bash
-python scripts/check_no_tracked_data.py
+.venv/bin/python scripts/check_no_tracked_data.py
 ```
 
-## What Not To Do
+## Historical: AutoKeel control plane
 
-Do not:
+From May to August 2026 an autonomous supervisor, AutoKeel (`ops/autonomy/autokeel.py`), drove the Keel toolchain slice by slice and completed S01–S05. S11, S12, S06, S07, and S08 were later built directly on `main`. S09's code-level tests are on `main`, but its week-16 evaluation from the design doc has not run; that is the remaining v1 work. There is no S10. The control plane is kept as a record and is not run.
 
-* bypass Keel by directly building large features outside playbooks
-* run multiple active slices in parallel
-* approve human gates
-* convert missing evidence into success
-* weaken statistical gates to make the UI more interesting
-* add v2 features to v1 model
-* commit runtime lock files
-* mark slices complete without `verify_slice.py`
-* mark v1 complete without `verify_v1.py`
+Three pieces are still on the live path and must stay as they are:
+
+- `ops/autonomy/decisions/`: `load_sleep_provider_policy` in `src/warehouse/features.py` reads the active S03 decision from it. The Oura sync and the retrain fail if it is missing or conflicting.
+- `scripts/verify_s05_provider_policy.py`: `scripts/retrain_model.py` runs it as a preflight before every retrain and imports its checks.
+- `ops/autonomy/slices.json`: that preflight requires S03 and S04 to show `complete`. Removing or rewriting the file stops the nightly retrain.
+
+Everything else is a record:
+
+- `ops/autonomy/` (policy, state, events, failure ledger, failure write-ups, prompts, schemas), `docs/briefs/`, `docs/playbooks/`, `docs/reviews/`, `docs/evidence/`, `docs/gstack/`, and the other AutoKeel scripts in `scripts/` (the `verify_*`, `swr_*`, `autokeel_*`, slice, lane, tripwire, and evidence scripts) are historical. Do not edit or delete them unless the owner asks.
+- `slices.json` still lists S06–S12 as pending. That is expected; the code on `main` is the truth.
+- `tests/autonomy/` still runs in the full suite. Some of its tests intermittently fail while deleting a temporary git repository (`OSError: [Errno 66] Directory not empty`); a different test fails each time and a rerun passes. Any other failure there after a product change: report it and ask the owner before changing or deleting the historical test.
+- The one open failure-ledger entry, S12 `provider_terms_conflict`, is the owner's to resolve. Do not close it or edit it.
+
+`ops/autonomy/README.md` and `docs/keel-walkthrough_v1.html` describe how the supervisor worked.
