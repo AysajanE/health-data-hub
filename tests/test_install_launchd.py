@@ -9,6 +9,7 @@ from scripts.install_launchd import (
     BACKUP_LABEL,
     EXPLAINER_LABEL,
     MOOD_FORM_LABEL,
+    MOOD_PROMPT_LABEL,
     OURA_SYNC_LABEL,
     RETRAIN_LABEL,
     build_plists,
@@ -24,11 +25,23 @@ class BuildPlistsTest(unittest.TestCase):
         self.log_dir = Path("/tmp/example-logs")
         self.plists = build_plists(repo_root=self.repo_root, python=self.python, log_dir=self.log_dir)
 
-    def test_five_agents_with_expected_labels(self) -> None:
+    def test_six_agents_with_expected_labels(self) -> None:
         self.assertEqual(
             set(self.plists),
-            {MOOD_FORM_LABEL, EXPLAINER_LABEL, OURA_SYNC_LABEL, RETRAIN_LABEL, BACKUP_LABEL},
+            {MOOD_FORM_LABEL, EXPLAINER_LABEL, OURA_SYNC_LABEL, RETRAIN_LABEL, BACKUP_LABEL, MOOD_PROMPT_LABEL},
         )
+
+    def test_mood_prompt_asks_early_and_late_evening(self) -> None:
+        payload = self.plists[MOOD_PROMPT_LABEL]
+        self.assertFalse(payload["RunAtLoad"])
+        self.assertNotIn("KeepAlive", payload)
+        self.assertEqual(payload["ProcessType"], "Interactive")
+        self.assertEqual(
+            payload["StartCalendarInterval"],
+            [{"Hour": 18, "Minute": 20}, {"Hour": 21, "Minute": 30}],
+        )
+        self.assertTrue(payload["ProgramArguments"][1].endswith("scripts/mood_prompt.py"))
+        self.assertEqual(payload["StandardOutPath"], "/tmp/example-logs/healthhub-mood-prompt.log")
 
     def test_backup_runs_after_the_retrain_with_notification_on_failure(self) -> None:
         payload = self.plists[BACKUP_LABEL]
@@ -123,6 +136,30 @@ class BootstrapRetryTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["attempts"], 1)
         self.assertEqual(sleep.call_count, 0)
+
+
+class OnlyFlagTest(unittest.TestCase):
+    def test_only_limits_install_to_the_named_agent(self) -> None:
+        from unittest.mock import patch
+
+        from scripts import install_launchd
+
+        with TemporaryDirectory() as tempdir, patch.object(
+            install_launchd, "bootstrap", side_effect=lambda label, path: {"label": label, "ok": True}
+        ) as boot, patch.object(install_launchd, "LOG_DIR", Path(tempdir) / "logs"):
+            code = install_launchd.main(
+                ["--install", "--only", MOOD_PROMPT_LABEL, "--launch-agents-dir", tempdir]
+            )
+            written = sorted(path.name for path in Path(tempdir).glob("*.plist"))
+
+        self.assertEqual(code, 0)
+        self.assertEqual([call.args[0] for call in boot.call_args_list], [MOOD_PROMPT_LABEL])
+        self.assertEqual(written, [f"{MOOD_PROMPT_LABEL}.plist"])
+
+    def test_unknown_label_is_rejected(self) -> None:
+        from scripts import install_launchd
+
+        self.assertEqual(install_launchd.main(["--status", "--only", "com.healthhub.nope"]), 2)
 
 
 class WritePlistsTest(unittest.TestCase):

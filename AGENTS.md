@@ -1,6 +1,6 @@
 # AGENTS.md — Health Data Hub
 
-This repository is **Health Data Hub v1**, a local-first Sleep + Mood Retrospective Explainer. v1 is built and runs every day on the owner's Mac under five launchd agents. [`README.md`](README.md) describes the product and its architecture; this file is the set of rules for anyone, human or agent, changing it.
+This repository is **Health Data Hub v1**, a local-first Sleep + Mood Retrospective Explainer. v1 is built and runs every day on the owner's Mac under six launchd agents. [`README.md`](README.md) describes the product and its architecture; this file is the set of rules for anyone, human or agent, changing it.
 
 ## How work happens
 
@@ -27,7 +27,7 @@ Product:
 - `src/model/` — ridge model, baseline gate, counterfactual generator, display states, eval log.
 - `src/backup/snapshot.py` — encrypted snapshots, mirror, verify, restore.
 - `src/api/` — `mood_date.py` (the 4 AM cutoff rule, used by both pages) and the FastAPI mood endpoint, which is kept for v1.1 and not served.
-- `scripts/` — product entry points: `sync_oura.py`, `oura_authorize.py`, `retrain_model.py`, `nightly_retrain.py`, `run_mood_form.py`, `run_explainer.py`, `backup_snapshot.py`, `restore_snapshot.py`, `install_launchd.py`, `setup_permissions.py`, `check_no_tracked_data.py`, plus `verify_s05_provider_policy.py` (the retrain preflight). Most other scripts belong to AutoKeel.
+- `scripts/` — product entry points: `sync_oura.py`, `oura_authorize.py`, `retrain_model.py`, `nightly_retrain.py`, `run_mood_form.py`, `run_explainer.py`, `backup_snapshot.py`, `restore_snapshot.py`, `install_launchd.py`, `log_mood.py` and `mood_prompt.py` (the chat and dialog mood loggers), `setup_permissions.py`, `check_no_tracked_data.py`, plus `verify_s05_provider_policy.py` (the retrain preflight). Most other scripts belong to AutoKeel.
 - `tests/` — product tests; `tests/autonomy/` covers the historical AutoKeel code.
 
 Local only, never committed:

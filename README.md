@@ -63,7 +63,7 @@ Phone ──▶ mood form ──▶ DuckDB warehouse ──▶ daily features
 | Model | [`src/model/`](src/model/), [`scripts/retrain_model.py`](scripts/retrain_model.py) | Ridge regression on four inputs: total sleep, HRV z-score, deep sleep %, and yesterday's rating. Checks that each input's direction holds across 200 resamples, runs the baseline gate and the counterfactual, then appends one record to `models/eval.jsonl`. |
 | Pages | [`app/mood_form.py`](app/mood_form.py), [`app/explainer.py`](app/explainer.py) | Streamlit. The mood form listens on the home Wi-Fi address and asks for a token. The explainer listens on `127.0.0.1` only. |
 | Backups | [`src/backup/snapshot.py`](src/backup/snapshot.py), [`scripts/backup_snapshot.py`](scripts/backup_snapshot.py), [`scripts/restore_snapshot.py`](scripts/restore_snapshot.py) | Encrypted, fingerprinted snapshots of the data plane, with a verified restore path. |
-| Scheduling | [`scripts/install_launchd.py`](scripts/install_launchd.py) | Five per-user launchd agents. |
+| Scheduling | [`scripts/install_launchd.py`](scripts/install_launchd.py) | Six per-user launchd agents. |
 
 - **Local-first.** A DuckDB file on your Mac. No hosted backend. No SaaS. Your data stays on your Mac and your home network; the only copy that goes further is an encrypted snapshot in your own iCloud Drive.
 - **You own the model.** It learns your baseline from your own data. Nobody else's.
@@ -105,7 +105,7 @@ First run, in order:
 .venv/bin/python scripts/oura_authorize.py                # once, in a browser
 .venv/bin/python scripts/sync_oura.py --start 2026-01-01  # one-time history backfill
 .venv/bin/python scripts/backup_snapshot.py --init-key    # once; copy the passphrase somewhere safe
-.venv/bin/python scripts/install_launchd.py --install     # start the five agents
+.venv/bin/python scripts/install_launchd.py --install     # start the six agents
 ```
 
 ## Log your mood (every evening)
@@ -125,6 +125,15 @@ The mood log is the only part of the product that needs you every day. It is a s
 A day is model-ready when it has your rating, the previous evening's rating, and a full Oura night. One missed evening therefore costs up to two model-ready days.
 
 `.venv/bin/python scripts/run_mood_form.py --check` validates the settings without starting the server.
+
+### Evening reminder dialog
+
+So the log does not depend on remembering the form, the `com.healthhub.mood-prompt` agent runs [`scripts/mood_prompt.py`](scripts/mood_prompt.py) at 18:20 and 21:30. If today already has a rating it exits silently. Otherwise it plays a sound and shows a native dialog: type the feeling and energy scores (`7 6`, `7,6`, or `7/6`), optionally followed by a short note, and press **Log**. The rating is saved through [`scripts/log_mood.py`](scripts/log_mood.py), the same locked write path, and a notification confirms the date and the model-ready count. **Later** or no answer within 30 minutes closes it; the 21:30 run asks again if the day is still missing. If the Mac is asleep at the scheduled time, launchd runs it on wake.
+
+```bash
+.venv/bin/python scripts/mood_prompt.py          # ask now if today is not logged
+.venv/bin/python scripts/log_mood.py --status    # today's logging state, read-only
+```
 
 ## Oura sync
 
@@ -179,11 +188,12 @@ Replacing the live data plane requires `--in-place --force`, which first moves t
 
 ## Scheduling
 
-Five per-user launchd agents keep everything running on an always-on Mac: the mood form and the explainer page (kept alive), the Oura sync at 08:00 and 19:30, the model retrain at 23:00 after the evening log, and the encrypted backup at 23:30.
+Six per-user launchd agents keep everything running on an always-on Mac: the mood form and the explainer page (kept alive), the Oura sync at 08:00 and 19:30, the mood reminder dialog at 18:20 and 21:30, the model retrain at 23:00 after the evening log, and the encrypted backup at 23:30.
 
 ```bash
 .venv/bin/python scripts/install_launchd.py --install
 .venv/bin/python scripts/install_launchd.py --status
+.venv/bin/python scripts/install_launchd.py --install --only com.healthhub.mood-prompt   # one agent, others untouched
 ```
 
 Logs go to `~/Library/Logs/healthhub-*.log` and contain no tokens or health values.

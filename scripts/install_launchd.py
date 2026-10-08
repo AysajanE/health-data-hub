@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Install, inspect, or remove the Health Data Hub launchd agents.
 
-Three per-user agents keep the product running on an always-on Mac:
+Six per-user agents keep the product running on an always-on Mac:
 
 - ``com.healthhub.mood-form``: the LAN-only Streamlit mood form, kept alive.
 - ``com.healthhub.explainer``: the loopback-only retrospective page, kept alive.
 - ``com.healthhub.oura-sync``: the Oura sleep sync, morning and early evening.
 - ``com.healthhub.retrain``: the nightly model retrain after the evening log.
 - ``com.healthhub.backup``: the nightly encrypted snapshot to iCloud Drive.
+- ``com.healthhub.mood-prompt``: a native dialog asking for the day's mood at
+  18:20 and 21:30, shown only when the day is not logged yet.
 
 Plists are generated from this file so paths always match the checkout. Logs
 go to ``~/Library/Logs`` and never contain tokens or health values because the
@@ -37,9 +39,11 @@ EXPLAINER_LABEL = f"{LABEL_PREFIX}explainer"
 OURA_SYNC_LABEL = f"{LABEL_PREFIX}oura-sync"
 RETRAIN_LABEL = f"{LABEL_PREFIX}retrain"
 BACKUP_LABEL = f"{LABEL_PREFIX}backup"
+MOOD_PROMPT_LABEL = f"{LABEL_PREFIX}mood-prompt"
 SYNC_TIMES = ({"Hour": 8, "Minute": 0}, {"Hour": 19, "Minute": 30})
 RETRAIN_TIME = {"Hour": 23, "Minute": 0}
 BACKUP_TIME = {"Hour": 23, "Minute": 30}
+MOOD_PROMPT_TIMES = ({"Hour": 18, "Minute": 20}, {"Hour": 21, "Minute": 30})
 MINIMAL_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 
@@ -61,7 +65,7 @@ def build_plists(
     python: Path = PYTHON,
     log_dir: Path = LOG_DIR,
 ) -> dict[str, dict[str, Any]]:
-    """Return the three agent definitions keyed by label."""
+    """Return the agent definitions keyed by label."""
 
     mood_form = _base_plist(
         MOOD_FORM_LABEL,
@@ -108,12 +112,29 @@ def build_plists(
     )
     backup.update({"RunAtLoad": False, "StartCalendarInterval": dict(BACKUP_TIME)})
 
+    # The evening mood dialog. It exits silently when the day is already
+    # logged; Interactive keeps launchd from throttling a job the user waits on.
+    mood_prompt = _base_plist(
+        MOOD_PROMPT_LABEL,
+        [str(python), str(repo_root / "scripts" / "mood_prompt.py")],
+        repo_root=repo_root,
+        log_dir=log_dir,
+    )
+    mood_prompt.update(
+        {
+            "RunAtLoad": False,
+            "ProcessType": "Interactive",
+            "StartCalendarInterval": [dict(item) for item in MOOD_PROMPT_TIMES],
+        }
+    )
+
     return {
         MOOD_FORM_LABEL: mood_form,
         EXPLAINER_LABEL: explainer,
         OURA_SYNC_LABEL: oura_sync,
         RETRAIN_LABEL: retrain,
         BACKUP_LABEL: backup,
+        MOOD_PROMPT_LABEL: mood_prompt,
     }
 
 
@@ -206,11 +227,23 @@ def main(argv: list[str] | None = None) -> int:
     action.add_argument("--uninstall", action="store_true", help="Unload the agents and delete the plists.")
     action.add_argument("--status", action="store_true", help="Show whether each agent is loaded.")
     parser.add_argument("--launch-agents-dir", default=str(LAUNCH_AGENTS_DIR))
+    parser.add_argument(
+        "--only",
+        action="append",
+        metavar="LABEL",
+        help="Limit the action to this agent (repeatable), leaving the others running untouched.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     launch_agents_dir = Path(args.launch_agents_dir).expanduser()
     plists = build_plists()
+    if args.only:
+        unknown = sorted(set(args.only) - set(plists))
+        if unknown:
+            print(json.dumps({"status": "error", "errors": [f"unknown label: {label}" for label in unknown]}, indent=2))
+            return 2
+        plists = {label: payload for label, payload in plists.items() if label in args.only}
 
     if args.dry_run:
         print(json.dumps(plists, indent=2, sort_keys=True))
